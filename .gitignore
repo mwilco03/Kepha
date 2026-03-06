@@ -1,0 +1,5 @@
+bin/
+*.db
+*.tar.zst
+*.key
+scripts/fetch-deps.sh
