@@ -1,4 +1,6 @@
 bin/
+gatekeeperd
+gk
 *.db
 *.tar.zst
 *.key
