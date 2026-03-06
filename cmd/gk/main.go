@@ -57,6 +57,12 @@ func main() {
 		err = cmdDiff(client, os.Args[2:])
 	case "export":
 		err = cmdExport(client)
+	case "import":
+		err = cmdImport(client, os.Args[2:])
+	case "wg":
+		err = cmdWG(client, os.Args[2:])
+	case "leases":
+		err = cmdLeases(client)
 	case "help", "--help", "-h":
 		printUsage()
 		return
@@ -331,6 +337,74 @@ func cmdExport(c *cli.Client) error {
 	return printJSON(data)
 }
 
+func cmdImport(c *cli.Client, args []string) error {
+	if len(args) < 1 {
+		return fmt.Errorf("usage: gk import <file.json>")
+	}
+	data, err := os.ReadFile(args[0])
+	if err != nil {
+		return fmt.Errorf("read file: %w", err)
+	}
+	var snap any
+	if err := json.Unmarshal(data, &snap); err != nil {
+		return fmt.Errorf("invalid JSON: %w", err)
+	}
+	result, err := c.Post("/api/v1/config/import", snap)
+	if err != nil {
+		return err
+	}
+	return printJSON(result)
+}
+
+func cmdWG(c *cli.Client, args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("usage: gk wg <peers|add-peer|remove-peer>")
+	}
+	switch args[0] {
+	case "peers":
+		data, err := c.Get("/api/v1/wg/peers")
+		if err != nil {
+			return err
+		}
+		return printJSON(data)
+	case "add-peer":
+		fs := flag.NewFlagSet("wg add-peer", flag.ExitOnError)
+		pubKey := fs.String("pubkey", "", "Peer public key")
+		allowedIPs := fs.String("allowed-ips", "", "Allowed IPs (e.g. 10.50.0.2/32)")
+		name := fs.String("name", "", "Peer name")
+		_ = fs.Parse(args[1:])
+		if *pubKey == "" || *allowedIPs == "" {
+			return fmt.Errorf("usage: gk wg add-peer --pubkey <key> --allowed-ips <cidr> [--name <name>]")
+		}
+		data, err := c.Post("/api/v1/wg/peers", map[string]string{
+			"public_key": *pubKey, "allowed_ips": *allowedIPs, "name": *name,
+		})
+		if err != nil {
+			return err
+		}
+		return printJSON(data)
+	case "remove-peer":
+		if len(args) < 2 {
+			return fmt.Errorf("usage: gk wg remove-peer <pubkey>")
+		}
+		data, err := c.Delete("/api/v1/wg/peers/"+args[1], nil)
+		if err != nil {
+			return err
+		}
+		return printJSON(data)
+	default:
+		return fmt.Errorf("unknown wg command: %s", args[0])
+	}
+}
+
+func cmdLeases(c *cli.Client) error {
+	data, err := c.Get("/api/v1/diag/leases")
+	if err != nil {
+		return err
+	}
+	return printJSON(data)
+}
+
 func printJSON(data []byte) error {
 	var v any
 	if err := json.Unmarshal(data, &v); err != nil {
@@ -360,6 +434,9 @@ Commands:
   rollback    Rollback to a previous revision
   diff        Show config differences between revisions
   export      Export configuration as JSON
+  import      Import configuration from JSON file
+  wg          Manage WireGuard peers (peers, add-peer, remove-peer)
+  leases      Show DHCP leases
   version     Show version
 
 Environment:

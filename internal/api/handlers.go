@@ -13,8 +13,10 @@ import (
 )
 
 type handlers struct {
-	store *config.Store
-	nft   *driver.NFTables
+	store   *config.Store
+	nft     *driver.NFTables
+	wg      *driver.WireGuard
+	dnsmasq *driver.Dnsmasq
 }
 
 // --- Zones ---
@@ -515,6 +517,68 @@ func (h *handlers) dryRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"ruleset": text})
+}
+
+// --- WireGuard ---
+
+func (h *handlers) listWGPeers(w http.ResponseWriter, r *http.Request) {
+	if h.wg == nil {
+		writeError(w, http.StatusServiceUnavailable, "wireguard not configured")
+		return
+	}
+	writeJSON(w, http.StatusOK, h.wg.ListPeers())
+}
+
+func (h *handlers) addWGPeer(w http.ResponseWriter, r *http.Request) {
+	if h.wg == nil {
+		writeError(w, http.StatusServiceUnavailable, "wireguard not configured")
+		return
+	}
+	var peer driver.WGPeer
+	if err := readJSON(r, &peer); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if peer.PublicKey == "" || peer.AllowedIPs == "" {
+		writeError(w, http.StatusBadRequest, "public_key and allowed_ips required")
+		return
+	}
+	if err := h.wg.AddPeer(peer); err != nil {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, peer)
+}
+
+func (h *handlers) removeWGPeer(w http.ResponseWriter, r *http.Request) {
+	if h.wg == nil {
+		writeError(w, http.StatusServiceUnavailable, "wireguard not configured")
+		return
+	}
+	pubkey := r.PathValue("pubkey")
+	if err := h.wg.RemovePeer(pubkey); err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "removed"})
+}
+
+// --- DHCP Leases ---
+
+func (h *handlers) diagLeases(w http.ResponseWriter, r *http.Request) {
+	if h.dnsmasq == nil {
+		writeJSON(w, http.StatusOK, []driver.Lease{})
+		return
+	}
+	leases, err := h.dnsmasq.ParseLeaseFile("/var/lib/misc/dnsmasq.leases")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if leases == nil {
+		leases = []driver.Lease{}
+	}
+	writeJSON(w, http.StatusOK, leases)
 }
 
 // --- Helpers ---

@@ -8,6 +8,16 @@ import (
 	"github.com/gatekeeper-firewall/gatekeeper/internal/driver"
 )
 
+// RouterConfig holds all dependencies for the API router.
+type RouterConfig struct {
+	Store   *config.Store
+	NFT     *driver.NFTables
+	WG      *driver.WireGuard
+	Dnsmasq *driver.Dnsmasq
+	APIKey  string
+	Metrics *Metrics
+}
+
 // NewRouter creates the HTTP handler for the Gatekeeper API.
 func NewRouter(store *config.Store) http.Handler {
 	return NewRouterWithDriver(store, nil, "")
@@ -15,12 +25,34 @@ func NewRouter(store *config.Store) http.Handler {
 
 // NewRouterWithDriver creates the HTTP handler with an optional nftables driver.
 func NewRouterWithDriver(store *config.Store, nft *driver.NFTables, apiKey string) http.Handler {
-	h := &handlers{store: store, nft: nft}
+	return NewRouterWithConfig(&RouterConfig{
+		Store:  store,
+		NFT:    nft,
+		APIKey: apiKey,
+	})
+}
+
+// NewRouterWithConfig creates the full API router from config.
+func NewRouterWithConfig(cfg *RouterConfig) http.Handler {
+	h := &handlers{
+		store:   cfg.Store,
+		nft:     cfg.NFT,
+		wg:      cfg.WG,
+		dnsmasq: cfg.Dnsmasq,
+	}
+
+	metrics := cfg.Metrics
+	if metrics == nil {
+		metrics = NewMetrics()
+	}
 
 	mux := http.NewServeMux()
 
 	// Status (unauthenticated).
 	mux.HandleFunc("GET /api/v1/status", handleStatus)
+
+	// Metrics (unauthenticated).
+	mux.HandleFunc("GET /api/v1/metrics", metrics.Handler())
 
 	// Zones.
 	mux.HandleFunc("GET /api/v1/zones", h.listZones)
@@ -64,15 +96,22 @@ func NewRouterWithDriver(store *config.Store, nft *driver.NFTables, apiKey strin
 	mux.HandleFunc("POST /api/v1/config/import", h.importConfig)
 	mux.HandleFunc("POST /api/v1/config/confirm", h.confirmApply)
 
+	// WireGuard.
+	mux.HandleFunc("GET /api/v1/wg/peers", h.listWGPeers)
+	mux.HandleFunc("POST /api/v1/wg/peers", h.addWGPeer)
+	mux.HandleFunc("DELETE /api/v1/wg/peers/{pubkey}", h.removeWGPeer)
+
 	// Diagnostics.
 	mux.HandleFunc("GET /api/v1/diag/interfaces", h.diagInterfaces)
+	mux.HandleFunc("GET /api/v1/diag/leases", h.diagLeases)
 	mux.HandleFunc("GET /api/v1/diag/dry-run", h.dryRun)
 
 	// Apply middleware stack.
 	var handler http.Handler = mux
-	if apiKey != "" {
-		handler = AuthMiddleware(apiKey, handler)
+	if cfg.APIKey != "" {
+		handler = AuthMiddleware(cfg.APIKey, handler)
 	}
+	handler = metrics.CountingMiddleware(handler)
 	handler = LoggingMiddleware(handler)
 
 	return handler
