@@ -18,11 +18,13 @@ import (
 )
 
 var (
-	version    = "dev"
-	listen     = flag.String("listen", ":8080", "API listen address")
-	dbPath     = flag.String("db", "/var/lib/gatekeeper/gatekeeper.db", "SQLite database path")
-	apiKey     = flag.String("api-key", "", "API key for authentication (empty = no auth)")
-	rulesetDir = flag.String("ruleset-dir", "/var/lib/gatekeeper/rulesets", "Directory for nftables rulesets")
+	version     = "dev"
+	listen      = flag.String("listen", ":8080", "API listen address")
+	dbPath      = flag.String("db", "/var/lib/gatekeeper/gatekeeper.db", "SQLite database path")
+	apiKey      = flag.String("api-key", "", "API key for authentication (empty = no auth)")
+	rulesetDir  = flag.String("ruleset-dir", "/var/lib/gatekeeper/rulesets", "Directory for nftables rulesets")
+	dnsmasqDir  = flag.String("dnsmasq-dir", "/etc/dnsmasq.d", "Directory for dnsmasq config")
+	wgInterface = flag.String("wg-interface", "", "WireGuard interface name (empty = disabled)")
 )
 
 func main() {
@@ -53,7 +55,26 @@ func main() {
 	}
 
 	nft := driver.NewNFTables(store, *rulesetDir)
-	apiHandler := api.NewRouterWithDriver(store, nft, *apiKey)
+	dnsmasq := driver.NewDnsmasq(store, *dnsmasqDir)
+
+	var wg *driver.WireGuard
+	if *wgInterface != "" {
+		wg = driver.NewWireGuard("/etc/wireguard", *wgInterface)
+		if err := wg.Init(); err != nil {
+			slog.Error("failed to initialize wireguard", "error", err)
+			os.Exit(1)
+		}
+	}
+
+	metrics := api.NewMetrics()
+	apiHandler := api.NewRouterWithConfig(&api.RouterConfig{
+		Store:   store,
+		NFT:     nft,
+		WG:      wg,
+		Dnsmasq: dnsmasq,
+		APIKey:  *apiKey,
+		Metrics: metrics,
+	})
 	webHandler := web.Handler(store)
 
 	// Combine: /api/* goes to API, everything else to web UI.
