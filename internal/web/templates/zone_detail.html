@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <title>{{.Title}} - Gatekeeper</title>
+    {{template "head" .}}
+</head>
+<body>
+    {{template "nav" .}}
+    <div class="container">
+        <h1>{{.Zone.Name}}
+            {{if eq .Zone.TrustLevel "full"}}<span class="badge badge-green">full trust</span>
+            {{else if eq .Zone.TrustLevel "none"}}<span class="badge badge-red">no trust</span>
+            {{else}}<span class="badge badge-yellow">{{.Zone.TrustLevel}}</span>{{end}}
+        </h1>
+        <div class="meta-block">
+            Interface: {{.Zone.Interface}}<br>
+            Network: {{.Zone.NetworkCIDR}}<br>
+            {{if .Zone.Description}}Description: {{.Zone.Description}}{{end}}
+        </div>
+
+        <h2>Profiles</h2>
+        {{if .Profiles}}
+        <table>
+            <thead><tr><th>Name</th><th>Policy</th><th>Description</th></tr></thead>
+            <tbody>
+            {{range .Profiles}}<tr><td>{{.Name}}</td><td>{{.PolicyName}}</td><td>{{.Description}}</td></tr>{{end}}
+            </tbody>
+        </table>
+        {{else}}<p class="text-muted">No profiles in this zone.</p>{{end}}
+
+        <h2>Devices</h2>
+        {{if .Devices}}
+        <table>
+            <thead><tr><th>IP</th><th>MAC</th><th>Hostname</th></tr></thead>
+            <tbody>
+            {{range .Devices}}<tr><td>{{.IP}}</td><td>{{.MAC}}</td><td>{{.Hostname}}</td></tr>{{end}}
+            </tbody>
+        </table>
+        {{else}}<p class="text-muted">No devices assigned to this zone.</p>{{end}}
+    </div>
+</body>
+</html>

@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <title>{{.Title}} - Gatekeeper</title>
+    {{template "head" .}}
+</head>
+<body>
+    {{template "nav" .}}
+    <div class="container">
+        <h1>Dashboard</h1>
+        <div class="grid">
+            <div class="card">
+                <div class="label">Zones</div>
+                <div class="value blue">{{.ZoneCount}}</div>
+            </div>
+            <div class="card">
+                <div class="label">Devices</div>
+                <div class="value green">{{.DeviceCount}}</div>
+            </div>
+            <div class="card">
+                <div class="label">Aliases</div>
+                <div class="value blue">{{.AliasCount}}</div>
+            </div>
+            <div class="card">
+                <div class="label">Last Commit</div>
+                <div class="value" style="font-size: 1rem;">{{if .LastCommit}}{{.LastCommit}}{{else}}None{{end}}</div>
+            </div>
+        </div>
+
+        <h2>Zones</h2>
+        <table>
+            <thead><tr><th>Name</th><th>Interface</th><th>Network</th><th>Trust</th></tr></thead>
+            <tbody>
+            {{range .Zones}}
+            <tr>
+                <td><a href="/zones/{{.Name}}">{{.Name}}</a></td>
+                <td>{{.Interface}}</td>
+                <td>{{.NetworkCIDR}}</td>
+                <td>
+                    {{if eq .TrustLevel "full"}}<span class="badge badge-green">full</span>
+                    {{else if eq .TrustLevel "none"}}<span class="badge badge-red">none</span>
+                    {{else}}<span class="badge badge-yellow">{{.TrustLevel}}</span>{{end}}
+                </td>
+            </tr>
+            {{end}}
+            </tbody>
+        </table>
+    </div>
+</body>
+</html>

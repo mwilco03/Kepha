@@ -1,0 +1,723 @@
+openapi: "3.1.0"
+info:
+  title: Gatekeeper Firewall API
+  version: "1.0.0"
+  description: |
+    REST API for the Gatekeeper network firewall control plane.
+    All mutation endpoints require API key authentication via `X-API-Key` header.
+  license:
+    name: MIT
+
+servers:
+  - url: http://localhost:8080
+    description: Local development
+
+security:
+  - apiKey: []
+
+components:
+  securitySchemes:
+    apiKey:
+      type: apiKey
+      in: header
+      name: X-API-Key
+
+  schemas:
+    Zone:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        interface:
+          type: string
+        network_cidr:
+          type: string
+        trust_level:
+          type: string
+          enum: [none, low, medium, full]
+        description:
+          type: string
+      required: [name]
+
+    Alias:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        type:
+          type: string
+          enum: [host, network, port, mac, nested, external_url]
+        description:
+          type: string
+        members:
+          type: array
+          items:
+            type: string
+      required: [name, type]
+
+    Policy:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        description:
+          type: string
+        default_action:
+          type: string
+          enum: [allow, deny, reject, log]
+        rules:
+          type: array
+          items:
+            $ref: "#/components/schemas/Rule"
+      required: [name, default_action]
+
+    Rule:
+      type: object
+      properties:
+        id:
+          type: integer
+        policy_id:
+          type: integer
+        order:
+          type: integer
+        src_alias:
+          type: string
+        dst_alias:
+          type: string
+        protocol:
+          type: string
+        ports:
+          type: string
+        action:
+          type: string
+          enum: [allow, deny, reject, log]
+        log:
+          type: boolean
+        description:
+          type: string
+
+    Profile:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        description:
+          type: string
+        zone_id:
+          type: integer
+        policy_name:
+          type: string
+      required: [name, zone_id]
+
+    DeviceAssignment:
+      type: object
+      properties:
+        id:
+          type: integer
+        ip:
+          type: string
+        mac:
+          type: string
+        hostname:
+          type: string
+        profile_id:
+          type: integer
+        assigned_at:
+          type: string
+          format: date-time
+      required: [ip]
+
+    WGPeer:
+      type: object
+      properties:
+        public_key:
+          type: string
+        allowed_ips:
+          type: string
+        endpoint:
+          type: string
+        name:
+          type: string
+      required: [public_key, allowed_ips]
+
+    ConfigRevision:
+      type: object
+      properties:
+        rev_number:
+          type: integer
+        timestamp:
+          type: string
+        message:
+          type: string
+
+    Lease:
+      type: object
+      properties:
+        expiry:
+          type: string
+        mac:
+          type: string
+        ip:
+          type: string
+        hostname:
+          type: string
+
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+      required: [error]
+
+paths:
+  /api/v1/status:
+    get:
+      summary: Health check
+      security: []
+      responses:
+        "200":
+          description: Service status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  service:
+                    type: string
+
+  /api/v1/zones:
+    get:
+      summary: List all zones
+      responses:
+        "200":
+          description: Zone list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Zone"
+    post:
+      summary: Create a zone
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Zone"
+      responses:
+        "201":
+          description: Zone created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Zone"
+        "409":
+          description: Conflict
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/zones/{name}:
+    parameters:
+      - name: name
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      summary: Get a zone by name
+      responses:
+        "200":
+          description: Zone details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Zone"
+        "404":
+          description: Not found
+    put:
+      summary: Update a zone
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Zone"
+      responses:
+        "200":
+          description: Zone updated
+    delete:
+      summary: Delete a zone
+      responses:
+        "200":
+          description: Zone deleted
+
+  /api/v1/aliases:
+    get:
+      summary: List all aliases
+      responses:
+        "200":
+          description: Alias list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Alias"
+    post:
+      summary: Create an alias
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Alias"
+      responses:
+        "201":
+          description: Alias created
+
+  /api/v1/aliases/{name}:
+    parameters:
+      - name: name
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      summary: Get alias by name
+      responses:
+        "200":
+          description: Alias details
+        "404":
+          description: Not found
+    put:
+      summary: Update alias
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Alias"
+      responses:
+        "200":
+          description: Alias updated
+    delete:
+      summary: Delete alias
+      responses:
+        "200":
+          description: Alias deleted
+
+  /api/v1/aliases/{name}/members:
+    parameters:
+      - name: name
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      summary: Add member to alias
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                member:
+                  type: string
+              required: [member]
+      responses:
+        "200":
+          description: Member added
+    delete:
+      summary: Remove member from alias
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                member:
+                  type: string
+              required: [member]
+      responses:
+        "200":
+          description: Member removed
+        "404":
+          description: Not found
+
+  /api/v1/profiles:
+    get:
+      summary: List profiles
+      responses:
+        "200":
+          description: Profile list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Profile"
+    post:
+      summary: Create profile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Profile"
+      responses:
+        "201":
+          description: Profile created
+
+  /api/v1/profiles/{name}:
+    parameters:
+      - name: name
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      summary: Get profile
+      responses:
+        "200":
+          description: Profile details
+    put:
+      summary: Update profile
+      responses:
+        "200":
+          description: Profile updated
+    delete:
+      summary: Delete profile
+      responses:
+        "200":
+          description: Profile deleted
+
+  /api/v1/policies:
+    get:
+      summary: List policies
+      responses:
+        "200":
+          description: Policy list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Policy"
+    post:
+      summary: Create policy with rules
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Policy"
+      responses:
+        "201":
+          description: Policy created
+
+  /api/v1/policies/{name}:
+    parameters:
+      - name: name
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      summary: Get policy with rules
+      responses:
+        "200":
+          description: Policy details
+    put:
+      summary: Update policy and rules
+      responses:
+        "200":
+          description: Policy updated
+    delete:
+      summary: Delete policy
+      responses:
+        "200":
+          description: Policy deleted
+
+  /api/v1/policies/{name}/rules:
+    parameters:
+      - name: name
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      summary: Add rule to policy
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Rule"
+      responses:
+        "201":
+          description: Rule created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Rule"
+
+  /api/v1/rules/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+    delete:
+      summary: Delete a rule by ID
+      responses:
+        "200":
+          description: Rule deleted
+
+  /api/v1/devices:
+    get:
+      summary: List device assignments
+      responses:
+        "200":
+          description: Device list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/DeviceAssignment"
+
+  /api/v1/assign:
+    post:
+      summary: Assign device to profile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                ip:
+                  type: string
+                mac:
+                  type: string
+                hostname:
+                  type: string
+                profile:
+                  type: string
+                profile_id:
+                  type: integer
+              required: [ip]
+      responses:
+        "201":
+          description: Device assigned
+
+  /api/v1/unassign:
+    delete:
+      summary: Unassign device
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                ip:
+                  type: string
+              required: [ip]
+      responses:
+        "200":
+          description: Device unassigned
+
+  /api/v1/config/commit:
+    post:
+      summary: Commit current config as a new revision
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+      responses:
+        "200":
+          description: Commit successful
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  rev:
+                    type: integer
+                  message:
+                    type: string
+
+  /api/v1/config/rollback/{rev}:
+    post:
+      summary: Rollback to a previous revision
+      parameters:
+        - name: rev
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Rollback successful
+
+  /api/v1/config/revisions:
+    get:
+      summary: List config revisions
+      responses:
+        "200":
+          description: Revision list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ConfigRevision"
+
+  /api/v1/config/diff:
+    get:
+      summary: Diff between two revisions
+      parameters:
+        - name: rev1
+          in: query
+          required: true
+          schema:
+            type: integer
+        - name: rev2
+          in: query
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Diff result
+
+  /api/v1/config/export:
+    get:
+      summary: Export current config as JSON snapshot
+      responses:
+        "200":
+          description: Config snapshot
+
+  /api/v1/config/import:
+    post:
+      summary: Import config from JSON snapshot
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          description: Config imported
+
+  /api/v1/config/confirm:
+    post:
+      summary: Confirm pending apply (stops auto-rollback timer)
+      responses:
+        "200":
+          description: Apply confirmed
+
+  /api/v1/wg/peers:
+    get:
+      summary: List WireGuard peers
+      responses:
+        "200":
+          description: Peer list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/WGPeer"
+    post:
+      summary: Add WireGuard peer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WGPeer"
+      responses:
+        "201":
+          description: Peer added
+
+  /api/v1/wg/peers/{pubkey}:
+    delete:
+      summary: Remove WireGuard peer
+      parameters:
+        - name: pubkey
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Peer removed
+
+  /api/v1/diag/interfaces:
+    get:
+      summary: List network interfaces and zone mappings
+      responses:
+        "200":
+          description: Interface list
+
+  /api/v1/diag/leases:
+    get:
+      summary: List current DHCP leases
+      responses:
+        "200":
+          description: Lease list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Lease"
+
+  /api/v1/diag/dry-run:
+    get:
+      summary: Generate nftables ruleset without applying
+      responses:
+        "200":
+          description: Generated ruleset
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ruleset:
+                    type: string
+
+  /api/v1/metrics:
+    get:
+      summary: Prometheus metrics
+      security: []
+      responses:
+        "200":
+          description: Metrics in Prometheus text format
+          content:
+            text/plain:
+              schema:
+                type: string

@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <title>{{.Title}} - Gatekeeper</title>
+    {{template "head" .}}
+</head>
+<body>
+    {{template "nav" .}}
+    <div class="container" style="max-width: 600px;">
+        <h1>Assign Device</h1>
+        <form hx-post="/api/v1/assign" hx-target="#result" hx-swap="innerHTML">
+            <div class="field">
+                <label for="ip">IP Address</label>
+                <input type="text" id="ip" name="ip" placeholder="10.10.0.50" required>
+            </div>
+            <div class="field">
+                <label for="hostname">Hostname</label>
+                <input type="text" id="hostname" name="hostname" placeholder="workstation-1">
+            </div>
+            <div class="field">
+                <label for="mac">MAC Address</label>
+                <input type="text" id="mac" name="mac" placeholder="aa:bb:cc:dd:ee:ff">
+            </div>
+            <div class="field">
+                <label for="profile">Profile</label>
+                <select id="profile" name="profile">
+                {{range .Profiles}}
+                    <option value="{{.Name}}">{{.Name}}</option>
+                {{end}}
+                </select>
+            </div>
+            <button type="submit">Assign</button>
+        </form>
+        <div id="result"></div>
+    </div>
+</body>
+</html>

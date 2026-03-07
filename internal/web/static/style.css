@@ -1,0 +1,10 @@
+/* Gatekeeper Web UI - Supplemental styles */
+/* Base styles are defined in _base.html and shared via {{template "head"}} */
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    nav { flex-wrap: wrap; gap: 0.5rem; }
+    .grid { grid-template-columns: 1fr; }
+    table { font-size: 0.8rem; }
+    th, td { padding: 0.5rem; }
+}

@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <title>{{.Title}} - Gatekeeper</title>
+    {{template "head" .}}
+</head>
+<body>
+    {{template "nav" .}}
+    <div class="container">
+        <h1>Configuration</h1>
+
+        <h2>Revision History</h2>
+        {{if .Revisions}}
+        <table>
+            <thead><tr><th>Rev</th><th>Timestamp</th><th>Message</th></tr></thead>
+            <tbody>
+            {{range .Revisions}}
+            <tr><td>{{.RevNumber}}</td><td>{{.Timestamp}}</td><td>{{.Message}}</td></tr>
+            {{end}}
+            </tbody>
+        </table>
+        {{else}}<p class="text-muted">No commits yet.</p>{{end}}
+
+        <h2>Current Config (JSON Export)</h2>
+        <pre>{{.Snapshot}}</pre>
+    </div>
+</body>
+</html>

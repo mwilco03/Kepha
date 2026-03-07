@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <title>{{.Title}} - Gatekeeper</title>
+    {{template "head" .}}
+</head>
+<body>
+    {{template "nav" .}}
+    <div class="container">
+        <h1>Zones</h1>
+        <div class="grid grid-wide">
+        {{range .Zones}}
+            <a href="/zones/{{.Name}}" style="text-decoration:none;color:inherit">
+            <div class="card">
+                <h3>{{.Name}}
+                    {{if eq .TrustLevel "full"}}<span class="badge badge-green">full trust</span>
+                    {{else if eq .TrustLevel "none"}}<span class="badge badge-red">no trust</span>
+                    {{else}}<span class="badge badge-yellow">{{.TrustLevel}}</span>{{end}}
+                </h3>
+                <div class="meta">
+                    {{if .Interface}}iface: {{.Interface}}<br>{{end}}
+                    {{if .NetworkCIDR}}net: {{.NetworkCIDR}}<br>{{end}}
+                    {{if .Description}}{{.Description}}{{end}}
+                </div>
+            </div>
+            </a>
+        {{else}}
+            <p class="empty">No zones configured.</p>
+        {{end}}
+        </div>
+    </div>
+</body>
+</html>

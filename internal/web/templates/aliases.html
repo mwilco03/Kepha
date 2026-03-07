@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <title>{{.Title}} - Gatekeeper</title>
+    {{template "head" .}}
+</head>
+<body>
+    {{template "nav" .}}
+    <div class="container">
+        <h1>Aliases</h1>
+        {{if .Aliases}}
+        <table>
+            <thead><tr><th>Name</th><th>Type</th><th>Members</th><th>Description</th></tr></thead>
+            <tbody>
+            {{range .Aliases}}
+            <tr>
+                <td>{{.Name}}</td>
+                <td><span class="badge badge-blue">{{.Type}}</span></td>
+                <td class="text-muted">{{range $i, $m := .Members}}{{if $i}}, {{end}}{{$m}}{{end}}</td>
+                <td>{{.Description}}</td>
+            </tr>
+            {{end}}
+            </tbody>
+        </table>
+        {{else}}<p class="empty">No aliases defined.</p>{{end}}
+    </div>
+</body>
+</html>

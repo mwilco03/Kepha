@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <title>{{.Title}} - Gatekeeper</title>
+    {{template "head" .}}
+</head>
+<body>
+    {{template "nav" .}}
+    <div class="container">
+        <h1>Policies</h1>
+        {{range .Policies}}
+        <h2>{{.Name}}
+            {{if eq (printf "%s" .DefaultAction) "allow"}}<span class="badge badge-green">default: allow</span>
+            {{else}}<span class="badge badge-red">default: {{.DefaultAction}}</span>{{end}}
+        </h2>
+        {{if .Description}}<p class="text-muted" style="margin-bottom: 0.5rem;">{{.Description}}</p>{{end}}
+        {{if .Rules}}
+        <table>
+            <thead><tr><th>#</th><th>Source</th><th>Dest</th><th>Proto</th><th>Ports</th><th>Action</th><th>Log</th></tr></thead>
+            <tbody>
+            {{range .Rules}}
+            <tr>
+                <td>{{.Order}}</td>
+                <td>{{if .SrcAlias}}{{.SrcAlias}}{{else}}any{{end}}</td>
+                <td>{{if .DstAlias}}{{.DstAlias}}{{else}}any{{end}}</td>
+                <td>{{if .Protocol}}{{.Protocol}}{{else}}any{{end}}</td>
+                <td>{{if .Ports}}{{.Ports}}{{else}}all{{end}}</td>
+                <td>{{if eq (printf "%s" .Action) "allow"}}<span class="badge badge-green">allow</span>
+                    {{else}}<span class="badge badge-red">{{.Action}}</span>{{end}}</td>
+                <td>{{if .Log}}yes{{else}}-{{end}}</td>
+            </tr>
+            {{end}}
+            </tbody>
+        </table>
+        {{else}}<p class="text-muted" style="margin-bottom: 1rem;">No explicit rules (default action applies).</p>{{end}}
+        {{end}}
+    </div>
+</body>
+</html>

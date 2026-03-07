@@ -1,0 +1,7 @@
+bin/
+/gatekeeperd
+/gk
+*.db
+*.tar.zst
+*.key
+scripts/fetch-deps.sh

@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <title>{{.Title}} - Gatekeeper</title>
+    {{template "head" .}}
+</head>
+<body>
+    {{template "nav" .}}
+    <div class="container">
+        <h1>Devices</h1>
+        {{if .Devices}}
+        <table>
+            <thead><tr><th>IP</th><th>MAC</th><th>Hostname</th><th>Profile</th><th>Assigned</th></tr></thead>
+            <tbody>
+            {{range .Devices}}
+            <tr>
+                <td>{{.IP}}</td>
+                <td>{{.MAC}}</td>
+                <td>{{.Hostname}}</td>
+                <td>{{.ProfileName}}</td>
+                <td>{{.AssignedAt.Format "2006-01-02 15:04"}}</td>
+            </tr>
+            {{end}}
+            </tbody>
+        </table>
+        {{else}}<p class="empty">No devices assigned. <a href="/assign">Assign a device</a>.</p>{{end}}
+    </div>
+</body>
+</html>
