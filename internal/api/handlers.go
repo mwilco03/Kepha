@@ -764,6 +764,51 @@ func (h *handlers) removeWGPeer(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "removed"})
 }
 
+func (h *handlers) generateWGClientConfig(w http.ResponseWriter, r *http.Request) {
+	if h.wg == nil {
+		writeError(w, http.StatusServiceUnavailable, "wireguard not configured")
+		return
+	}
+	var body struct {
+		PublicKey      string `json:"public_key"`
+		ServerEndpoint string `json:"server_endpoint"`
+	}
+	if err := readJSON(r, &body); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if body.PublicKey == "" || body.ServerEndpoint == "" {
+		writeError(w, http.StatusBadRequest, "public_key and server_endpoint required")
+		return
+	}
+
+	// Find the peer.
+	var found *driver.WGPeer
+	for _, p := range h.wg.ListPeers() {
+		if p.PublicKey == body.PublicKey {
+			found = &p
+			break
+		}
+	}
+	if found == nil {
+		writeError(w, http.StatusNotFound, "peer not found")
+		return
+	}
+
+	// Generate a client private key for the config.
+	clientPrivKey, clientPubKey, err := driver.GenerateKeyPair()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "key generation failed: "+err.Error())
+		return
+	}
+
+	config := h.wg.GenerateClientConfig(clientPrivKey, body.ServerEndpoint, *found)
+	writeJSON(w, http.StatusOK, map[string]string{
+		"config":     config,
+		"public_key": clientPubKey,
+	})
+}
+
 // --- DHCP Leases ---
 
 func (h *handlers) diagLeases(w http.ResponseWriter, r *http.Request) {

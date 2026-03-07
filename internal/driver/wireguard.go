@@ -197,6 +197,16 @@ func (w *WireGuard) writeConfig() error {
 	return os.WriteFile(confPath, []byte(b.String()), 0o600)
 }
 
+// GenerateKeyPair generates a WireGuard private/public key pair.
+func GenerateKeyPair() (privateKey, publicKey string, err error) {
+	priv, err := generatePrivateKey()
+	if err != nil {
+		return "", "", err
+	}
+	pub := publicKeyFromPrivate(priv)
+	return priv, pub, nil
+}
+
 func generatePrivateKey() (string, error) {
 	var key [32]byte
 	if _, err := rand.Read(key[:]); err != nil {
