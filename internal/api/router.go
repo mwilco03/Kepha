@@ -101,10 +101,15 @@ func NewRouterWithConfig(cfg *RouterConfig) http.Handler {
 	mux.HandleFunc("POST /api/v1/wg/peers", h.addWGPeer)
 	mux.HandleFunc("DELETE /api/v1/wg/peers/{pubkey}", h.removeWGPeer)
 
+	// Path test.
+	mux.HandleFunc("POST /api/v1/test", h.pathTest)
+
 	// Diagnostics.
 	mux.HandleFunc("GET /api/v1/diag/interfaces", h.diagInterfaces)
 	mux.HandleFunc("GET /api/v1/diag/leases", h.diagLeases)
 	mux.HandleFunc("GET /api/v1/diag/dry-run", h.dryRun)
+	mux.HandleFunc("GET /api/v1/diag/ping/{target}", h.diagPing)
+	mux.HandleFunc("GET /api/v1/diag/connections", h.diagConnections)
 
 	// Apply middleware stack.
 	var handler http.Handler = mux

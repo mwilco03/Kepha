@@ -1,0 +1,27 @@
+[Unit]
+Description=Gatekeeper Firewall Control Plane
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/gatekeeperd \
+    --listen :8080 \
+    --db /var/lib/gatekeeper/gatekeeper.db \
+    --ruleset-dir /var/lib/gatekeeper/rulesets \
+    --dnsmasq-dir /etc/dnsmasq.d \
+    --api-key-file /var/lib/gatekeeper/api.key
+EnvironmentFile=-/etc/gatekeeper/gatekeeperd.env
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65536
+
+# Security hardening.
+ProtectSystem=strict
+ReadWritePaths=/var/lib/gatekeeper /etc/dnsmasq.d /etc/wireguard /var/lib/misc
+ProtectHome=yes
+NoNewPrivileges=no
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE
+
+[Install]
+WantedBy=multi-user.target

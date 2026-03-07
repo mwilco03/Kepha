@@ -59,6 +59,27 @@ func (s *Store) UpdateZone(z *model.Zone) error {
 	return err
 }
 
+func (s *Store) ListZonesPaginated(p Pagination) ([]model.Zone, int, error) {
+	var total int
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM zones").Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	rows, err := s.db.Query("SELECT id, name, interface, network_cidr, trust_level, description FROM zones ORDER BY id LIMIT ? OFFSET ?", p.Limit, p.Offset)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	var zones []model.Zone
+	for rows.Next() {
+		var z model.Zone
+		if err := rows.Scan(&z.ID, &z.Name, &z.Interface, &z.NetworkCIDR, &z.TrustLevel, &z.Description); err != nil {
+			return nil, 0, err
+		}
+		zones = append(zones, z)
+	}
+	return zones, total, rows.Err()
+}
+
 func (s *Store) DeleteZone(name string) error {
 	_, err := s.db.Exec("DELETE FROM zones WHERE name = ?", name)
 	return err

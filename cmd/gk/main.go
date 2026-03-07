@@ -63,6 +63,10 @@ func main() {
 		err = cmdWG(client, os.Args[2:])
 	case "leases":
 		err = cmdLeases(client)
+	case "test":
+		err = cmdTest(client, os.Args[2:])
+	case "ping":
+		err = cmdPing(client, os.Args[2:])
 	case "help", "--help", "-h":
 		printUsage()
 		return
@@ -405,6 +409,36 @@ func cmdLeases(c *cli.Client) error {
 	return printJSON(data)
 }
 
+func cmdTest(c *cli.Client, args []string) error {
+	fs := flag.NewFlagSet("test", flag.ExitOnError)
+	srcIP := fs.String("src", "", "Source IP")
+	dstIP := fs.String("dst", "", "Destination IP")
+	proto := fs.String("proto", "tcp", "Protocol (tcp, udp, icmp)")
+	port := fs.Int("port", 0, "Destination port")
+	_ = fs.Parse(args)
+	if *srcIP == "" || *dstIP == "" {
+		return fmt.Errorf("usage: gk test --src <ip> --dst <ip> [--proto tcp] [--port 80]")
+	}
+	data, err := c.Post("/api/v1/test", map[string]any{
+		"src_ip": *srcIP, "dst_ip": *dstIP, "protocol": *proto, "dst_port": *port,
+	})
+	if err != nil {
+		return err
+	}
+	return printJSON(data)
+}
+
+func cmdPing(c *cli.Client, args []string) error {
+	if len(args) < 1 {
+		return fmt.Errorf("usage: gk ping <target>")
+	}
+	data, err := c.Get("/api/v1/diag/ping/" + args[0])
+	if err != nil {
+		return err
+	}
+	return printJSON(data)
+}
+
 func printJSON(data []byte) error {
 	var v any
 	if err := json.Unmarshal(data, &v); err != nil {
@@ -437,6 +471,8 @@ Commands:
   import      Import configuration from JSON file
   wg          Manage WireGuard peers (peers, add-peer, remove-peer)
   leases      Show DHCP leases
+  test        Test packet path (--src <ip> --dst <ip> [--proto tcp] [--port 80])
+  ping        Ping a target host
   version     Show version
 
 Environment:

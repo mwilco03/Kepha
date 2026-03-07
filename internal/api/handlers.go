@@ -4,9 +4,11 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"os/exec"
 	"strconv"
 	"strings"
 
+	"github.com/gatekeeper-firewall/gatekeeper/internal/compiler"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/config"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/driver"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/model"
@@ -22,6 +24,19 @@ type handlers struct {
 // --- Zones ---
 
 func (h *handlers) listZones(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Query().Has("limit") || r.URL.Query().Has("offset") {
+		p := config.ParsePagination(r.URL.Query().Get("limit"), r.URL.Query().Get("offset"))
+		zones, total, err := h.store.ListZonesPaginated(p)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if zones == nil {
+			zones = []model.Zone{}
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"data": zones, "total": total, "limit": p.Limit, "offset": p.Offset})
+		return
+	}
 	zones, err := h.store.ListZones()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -52,6 +67,10 @@ func (h *handlers) createZone(w http.ResponseWriter, r *http.Request) {
 	}
 	if z.Name == "" {
 		writeError(w, http.StatusBadRequest, "name is required")
+		return
+	}
+	if isDryRun(r) {
+		writeJSON(w, http.StatusOK, map[string]any{"dry_run": true, "action": "create_zone", "data": z})
 		return
 	}
 	if err := h.store.CreateZone(&z); err != nil {
@@ -95,6 +114,19 @@ func (h *handlers) listAliases(w http.ResponseWriter, r *http.Request) {
 	}
 	if aliases == nil {
 		aliases = []model.Alias{}
+	}
+	if r.URL.Query().Has("limit") || r.URL.Query().Has("offset") {
+		p := config.ParsePagination(r.URL.Query().Get("limit"), r.URL.Query().Get("offset"))
+		end := p.Offset + p.Limit
+		if end > len(aliases) {
+			end = len(aliases)
+		}
+		start := p.Offset
+		if start > len(aliases) {
+			start = len(aliases)
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"data": aliases[start:end], "total": len(aliases), "limit": p.Limit, "offset": p.Offset})
+		return
 	}
 	writeJSON(w, http.StatusOK, aliases)
 }
@@ -188,6 +220,19 @@ func (h *handlers) listProfiles(w http.ResponseWriter, r *http.Request) {
 	if profiles == nil {
 		profiles = []model.Profile{}
 	}
+	if r.URL.Query().Has("limit") || r.URL.Query().Has("offset") {
+		p := config.ParsePagination(r.URL.Query().Get("limit"), r.URL.Query().Get("offset"))
+		end := p.Offset + p.Limit
+		if end > len(profiles) {
+			end = len(profiles)
+		}
+		start := p.Offset
+		if start > len(profiles) {
+			start = len(profiles)
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"data": profiles[start:end], "total": len(profiles), "limit": p.Limit, "offset": p.Offset})
+		return
+	}
 	writeJSON(w, http.StatusOK, profiles)
 }
 
@@ -247,6 +292,19 @@ func (h *handlers) listPolicies(w http.ResponseWriter, r *http.Request) {
 	}
 	if policies == nil {
 		policies = []model.Policy{}
+	}
+	if r.URL.Query().Has("limit") || r.URL.Query().Has("offset") {
+		p := config.ParsePagination(r.URL.Query().Get("limit"), r.URL.Query().Get("offset"))
+		end := p.Offset + p.Limit
+		if end > len(policies) {
+			end = len(policies)
+		}
+		start := p.Offset
+		if start > len(policies) {
+			start = len(policies)
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"data": policies[start:end], "total": len(policies), "limit": p.Limit, "offset": p.Offset})
+		return
 	}
 	writeJSON(w, http.StatusOK, policies)
 }
@@ -316,6 +374,19 @@ func (h *handlers) listDevices(w http.ResponseWriter, r *http.Request) {
 	}
 	if devices == nil {
 		devices = []model.DeviceAssignment{}
+	}
+	if r.URL.Query().Has("limit") || r.URL.Query().Has("offset") {
+		p := config.ParsePagination(r.URL.Query().Get("limit"), r.URL.Query().Get("offset"))
+		end := p.Offset + p.Limit
+		if end > len(devices) {
+			end = len(devices)
+		}
+		start := p.Offset
+		if start > len(devices) {
+			start = len(devices)
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"data": devices[start:end], "total": len(devices), "limit": p.Limit, "offset": p.Offset})
+		return
 	}
 	writeJSON(w, http.StatusOK, devices)
 }
@@ -393,6 +464,21 @@ func (h *handlers) commitConfig(w http.ResponseWriter, r *http.Request) {
 	if body.Message == "" {
 		body.Message = "manual commit"
 	}
+
+	if isDryRun(r) {
+		if h.nft != nil {
+			text, err := h.nft.DryRun()
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"dry_run": true, "ruleset": text})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"dry_run": true, "message": "no nftables driver"})
+		return
+	}
+
 	rev, err := h.store.Commit(body.Message)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -506,6 +592,38 @@ func (h *handlers) diagInterfaces(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, ifaces)
 }
 
+func (h *handlers) diagPing(w http.ResponseWriter, r *http.Request) {
+	target := r.PathValue("target")
+	if target == "" {
+		writeError(w, http.StatusBadRequest, "target is required")
+		return
+	}
+	// Validate target is an IP or hostname (no shell injection).
+	for _, c := range target {
+		valid := (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '.' || c == '-' || c == ':'
+		if !valid {
+			writeError(w, http.StatusBadRequest, "invalid target")
+			return
+		}
+	}
+	out, err := exec.CommandContext(r.Context(), "ping", "-c", "3", "-W", "2", target).CombinedOutput()
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"target": target, "reachable": false, "output": string(out)})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"target": target, "reachable": true, "output": string(out)})
+}
+
+func (h *handlers) diagConnections(w http.ResponseWriter, r *http.Request) {
+	out, err := exec.CommandContext(r.Context(), "ss", "-tunap").CombinedOutput()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to get connections: "+err.Error())
+		return
+	}
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	writeJSON(w, http.StatusOK, map[string]any{"connections": lines})
+}
+
 func (h *handlers) dryRun(w http.ResponseWriter, r *http.Request) {
 	if h.nft == nil {
 		writeError(w, http.StatusServiceUnavailable, "nftables driver not available")
@@ -581,7 +699,64 @@ func (h *handlers) diagLeases(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, leases)
 }
 
+// --- Path Test ---
+
+func (h *handlers) pathTest(w http.ResponseWriter, r *http.Request) {
+	var req compiler.PathTestRequest
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if req.SrcIP == "" || req.DstIP == "" {
+		writeError(w, http.StatusBadRequest, "src_ip and dst_ip required")
+		return
+	}
+
+	input, err := h.buildCompilerInput()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	result := compiler.PathTest(input, req)
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (h *handlers) buildCompilerInput() (*compiler.Input, error) {
+	zones, err := h.store.ListZones()
+	if err != nil {
+		return nil, err
+	}
+	aliases, err := h.store.ListAliases()
+	if err != nil {
+		return nil, err
+	}
+	policies, err := h.store.ListPolicies()
+	if err != nil {
+		return nil, err
+	}
+	profiles, err := h.store.ListProfiles()
+	if err != nil {
+		return nil, err
+	}
+	devices, err := h.store.ListDevices()
+	if err != nil {
+		return nil, err
+	}
+	return &compiler.Input{
+		Zones:    zones,
+		Aliases:  aliases,
+		Policies: policies,
+		Profiles: profiles,
+		Devices:  devices,
+	}, nil
+}
+
 // --- Helpers ---
+
+func isDryRun(r *http.Request) bool {
+	return r.URL.Query().Get("dry_run") == "true"
+}
 
 func readJSON(r *http.Request, v any) error {
 	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20)) // 1MB limit.

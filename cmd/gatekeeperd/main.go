@@ -25,6 +25,8 @@ var (
 	rulesetDir  = flag.String("ruleset-dir", "/var/lib/gatekeeper/rulesets", "Directory for nftables rulesets")
 	dnsmasqDir  = flag.String("dnsmasq-dir", "/etc/dnsmasq.d", "Directory for dnsmasq config")
 	wgInterface = flag.String("wg-interface", "", "WireGuard interface name (empty = disabled)")
+	tlsCert     = flag.String("tls-cert", "", "TLS certificate file (enables HTTPS)")
+	tlsKey      = flag.String("tls-key", "", "TLS private key file")
 )
 
 func main() {
@@ -94,10 +96,18 @@ func main() {
 	defer stop()
 
 	go func() {
-		slog.Info("listening", "addr", *listen)
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			slog.Error("server error", "error", err)
-			os.Exit(1)
+		if *tlsCert != "" && *tlsKey != "" {
+			slog.Info("listening (TLS)", "addr", *listen)
+			if err := srv.ListenAndServeTLS(*tlsCert, *tlsKey); err != nil && err != http.ErrServerClosed {
+				slog.Error("server error", "error", err)
+				os.Exit(1)
+			}
+		} else {
+			slog.Info("listening", "addr", *listen)
+			if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				slog.Error("server error", "error", err)
+				os.Exit(1)
+			}
 		}
 	}()
 
