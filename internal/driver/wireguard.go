@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/gatekeeper-firewall/gatekeeper/internal/validate"
 	"golang.org/x/crypto/curve25519"
 )
 
@@ -184,6 +185,16 @@ func (w *WireGuard) writeConfig() error {
 	b.WriteString(fmt.Sprintf("ListenPort = %d\n\n", w.config.ListenPort))
 
 	for _, peer := range w.config.Peers {
+		// Skip peers with invalid fields to prevent config injection.
+		if validate.WGPublicKey(peer.PublicKey) != nil {
+			continue
+		}
+		if validate.WGAllowedIPs(peer.AllowedIPs) != nil {
+			continue
+		}
+		if validate.WGEndpoint(peer.Endpoint) != nil {
+			continue
+		}
 		b.WriteString("[Peer]\n")
 		b.WriteString(fmt.Sprintf("PublicKey = %s\n", peer.PublicKey))
 		b.WriteString(fmt.Sprintf("AllowedIPs = %s\n", peer.AllowedIPs))

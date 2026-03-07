@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/gatekeeper-firewall/gatekeeper/internal/model"
+	"github.com/gatekeeper-firewall/gatekeeper/internal/validate"
 )
 
 // CompiledRuleset is the output of the compiler — a complete nftables ruleset.
@@ -23,7 +24,7 @@ type Input struct {
 
 // Compile transforms the config model into an nftables ruleset.
 func Compile(input *Input) (*CompiledRuleset, error) {
-	if err := validate(input); err != nil {
+	if err := validateInput(input); err != nil {
 		return nil, fmt.Errorf("validation: %w", err)
 	}
 
@@ -198,10 +199,16 @@ func compileRule(r model.Rule, srcIface, wanIface string, aliasMap map[string]*m
 	}
 
 	if r.Protocol != "" {
-		parts = append(parts, r.Protocol)
+		if validate.Protocol(r.Protocol) != nil {
+			return "" // Skip rules with invalid protocol.
+		}
+		parts = append(parts, strings.ToLower(r.Protocol))
 	}
 
 	if r.Ports != "" && r.Protocol != "" {
+		if validate.Ports(r.Ports) != nil {
+			return "" // Skip rules with invalid ports.
+		}
 		parts = append(parts, fmt.Sprintf("dport { %s }", r.Ports))
 	}
 
@@ -221,7 +228,10 @@ func compileRule(r model.Rule, srcIface, wanIface string, aliasMap map[string]*m
 		parts = append(parts, fmt.Sprintf("log prefix %q", "gk:"))
 	}
 
-	action := string(r.Action)
+	action := strings.ToLower(string(r.Action))
+	if validate.Action(action) != nil {
+		return "" // Skip rules with invalid action.
+	}
 	parts = append(parts, action)
 
 	return strings.Join(parts, " ")
@@ -233,7 +243,13 @@ func resolveAliasMembers(a *model.Alias, aliasMap map[string]*model.Alias, depth
 	}
 
 	if a.Type != model.AliasTypeNested {
-		return a.Members
+		var safe []string
+		for _, m := range a.Members {
+			if validate.AliasMember(m, string(a.Type)) == nil {
+				safe = append(safe, m)
+			}
+		}
+		return safe
 	}
 
 	var resolved []string
@@ -264,7 +280,7 @@ func sanitizeName(name string) string {
 	return strings.ReplaceAll(strings.ReplaceAll(name, "-", "_"), ".", "_")
 }
 
-func validate(input *Input) error {
+func validateInput(input *Input) error {
 	if len(input.Zones) == 0 {
 		return fmt.Errorf("no zones defined")
 	}

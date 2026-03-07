@@ -10,8 +10,11 @@ import (
 	"sync"
 	"syscall"
 
+	"strconv"
+
 	"github.com/gatekeeper-firewall/gatekeeper/internal/config"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/model"
+	"github.com/gatekeeper-firewall/gatekeeper/internal/validate"
 )
 
 // Dnsmasq manages dnsmasq configuration for DHCP and DNS.
@@ -78,6 +81,9 @@ func (d *Dnsmasq) Reload() error {
 	}
 
 	pid := strings.TrimSpace(string(pidData))
+	if _, err := strconv.Atoi(pid); err != nil {
+		return fmt.Errorf("invalid PID %q in pid file", pid)
+	}
 	slog.Info("reloading dnsmasq", "pid", pid)
 
 	cmd := exec.Command("kill", "-HUP", pid)
@@ -167,7 +173,7 @@ func (d *Dnsmasq) buildMainConfig(zones []model.Zone) string {
 		}
 		// Parse CIDR to generate DHCP range.
 		dhcpRange := deriveDHCPRange(z.NetworkCIDR)
-		if dhcpRange != "" {
+		if dhcpRange != "" && validate.Interface(z.Interface) == nil {
 			b.WriteString(fmt.Sprintf("# Zone: %s\n", z.Name))
 			b.WriteString(fmt.Sprintf("interface=%s\n", z.Interface))
 			b.WriteString(fmt.Sprintf("dhcp-range=%s,%s,12h\n", dhcpRange, z.Interface))
@@ -185,6 +191,17 @@ func (d *Dnsmasq) buildStaticLeases(devices []model.DeviceAssignment) string {
 	b.WriteString("# DO NOT EDIT — managed by gatekeeperd\n\n")
 
 	for _, dev := range devices {
+		// Skip entries with invalid fields.
+		if validate.IP(dev.IP) != nil {
+			continue
+		}
+		if dev.MAC != "" && validate.MAC(dev.MAC) != nil {
+			continue
+		}
+		if dev.Hostname != "" && validate.Hostname(dev.Hostname) != nil {
+			continue
+		}
+
 		if dev.MAC != "" && dev.IP != "" {
 			hostname := dev.Hostname
 			if hostname == "" {

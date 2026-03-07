@@ -13,6 +13,7 @@ import (
 	"github.com/gatekeeper-firewall/gatekeeper/internal/config"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/driver"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/model"
+	"github.com/gatekeeper-firewall/gatekeeper/internal/validate"
 )
 
 type handlers struct {
@@ -74,6 +75,20 @@ func (h *handlers) createZone(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "name must be alphanumeric with hyphens/underscores, max 64 chars")
 		return
 	}
+	if err := validate.Interface(z.Interface); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := validate.CIDR(z.NetworkCIDR); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if z.TrustLevel != "" {
+		if err := validate.TrustLevel(z.TrustLevel); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
 	if isDryRun(r) {
 		writeJSON(w, http.StatusOK, map[string]any{"dry_run": true, "action": "create_zone", "data": z})
 		return
@@ -94,6 +109,20 @@ func (h *handlers) updateZone(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	z.Name = name
+	if err := validate.Interface(z.Interface); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := validate.CIDR(z.NetworkCIDR); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if z.TrustLevel != "" {
+		if err := validate.TrustLevel(z.TrustLevel); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
 	if err := h.store.UpdateZone(&z); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -167,6 +196,16 @@ func (h *handlers) createAlias(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "name must be alphanumeric with hyphens/underscores, max 64 chars")
 		return
 	}
+	if err := validate.AliasType(string(a.Type)); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	for _, m := range a.Members {
+		if err := validate.AliasMember(m, string(a.Type)); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
 	if err := h.store.CreateAlias(&a); err != nil {
 		writeError(w, http.StatusConflict, err.Error())
 		return
@@ -214,6 +253,16 @@ func (h *handlers) addAliasMember(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := readJSON(r, &body); err != nil || body.Member == "" {
 		writeError(w, http.StatusBadRequest, "member is required")
+		return
+	}
+	// Look up alias to validate member against its type.
+	alias, err := h.store.GetAlias(name)
+	if err != nil || alias == nil {
+		writeError(w, http.StatusNotFound, "alias not found")
+		return
+	}
+	if err := validate.AliasMember(body.Member, string(alias.Type)); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	if err := h.store.AddAliasMember(name, body.Member); err != nil {
@@ -424,6 +473,18 @@ func (h *handlers) createRule(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if err := validate.Protocol(rule.Protocol); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := validate.Ports(rule.Ports); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := validate.Action(string(rule.Action)); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	if err := h.store.CreateRule(policyName, &rule); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -486,6 +547,18 @@ func (h *handlers) assignDevice(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.IP == "" {
 		writeError(w, http.StatusBadRequest, "ip is required")
+		return
+	}
+	if err := validate.IP(body.IP); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := validate.MAC(body.MAC); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := validate.Hostname(body.Hostname); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -742,6 +815,18 @@ func (h *handlers) addWGPeer(w http.ResponseWriter, r *http.Request) {
 	}
 	if peer.PublicKey == "" || peer.AllowedIPs == "" {
 		writeError(w, http.StatusBadRequest, "public_key and allowed_ips required")
+		return
+	}
+	if err := validate.WGPublicKey(peer.PublicKey); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := validate.WGAllowedIPs(peer.AllowedIPs); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := validate.WGEndpoint(peer.Endpoint); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	if err := h.wg.AddPeer(peer); err != nil {
