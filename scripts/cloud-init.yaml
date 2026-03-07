@@ -1,0 +1,30 @@
+#cloud-config
+# Gatekeeper cloud-init configuration for headless provisioning.
+# Place this file at /etc/cloud/cloud.cfg.d/99-gatekeeper.cfg
+# or pass it as user-data when creating the LXC container.
+
+package_update: true
+packages:
+  - nftables
+  - dnsmasq
+  - wireguard-tools
+
+write_files:
+  - path: /etc/gatekeeper/gatekeeperd.env
+    owner: root:root
+    permissions: '0600'
+    content: |
+      # Gatekeeper daemon environment.
+      # Override these values for your deployment.
+      # GATEKEEPER_TLS_CERT=/etc/gatekeeper/tls/server.crt
+      # GATEKEEPER_TLS_KEY=/etc/gatekeeper/tls/server.key
+
+  - path: /etc/sysctl.d/99-gatekeeper.conf
+    owner: root:root
+    permissions: '0644'
+    content: |
+      net.ipv4.ip_forward=1
+
+runcmd:
+  - sysctl -p /etc/sysctl.d/99-gatekeeper.conf
+  - /usr/local/bin/gatekeeper-first-boot.sh

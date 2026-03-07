@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -57,6 +59,14 @@ func main() {
 	}
 
 	nft := driver.NewNFTables(store, *rulesetDir)
+
+	// Boot-time safe mode: attempt to apply last known config.
+	// On failure, log the error but continue starting the daemon so the
+	// operator can fix the config via API/CLI rather than losing access.
+	if err := nft.SafeApply(); err != nil {
+		slog.Warn("boot-time rule apply failed, starting in safe mode", "error", err)
+	}
+
 	dnsmasq := driver.NewDnsmasq(store, *dnsmasqDir)
 
 	var wg *driver.WireGuard
@@ -67,6 +77,34 @@ func main() {
 			os.Exit(1)
 		}
 	}
+
+	// Write PID file so the CLI can signal us for applies.
+	pidDir := "/run/gatekeeper"
+	pidFile := filepath.Join(pidDir, "gatekeeperd.pid")
+	if err := os.MkdirAll(pidDir, 0o755); err != nil {
+		slog.Warn("failed to create PID directory", "error", err)
+	} else {
+		if err := os.WriteFile(pidFile, []byte(strconv.Itoa(os.Getpid())), 0o644); err != nil {
+			slog.Warn("failed to write PID file", "error", err)
+		} else {
+			defer os.Remove(pidFile)
+		}
+	}
+
+	// Handle SIGHUP: the CLI sends this after writing a commit/rollback
+	// to the DB, signaling the daemon to re-apply the config.
+	sighupCh := make(chan os.Signal, 1)
+	signal.Notify(sighupCh, syscall.SIGHUP)
+	go func() {
+		for range sighupCh {
+			slog.Info("received SIGHUP, re-applying config")
+			if err := nft.Apply(); err != nil {
+				slog.Error("SIGHUP apply failed", "error", err)
+			} else {
+				slog.Info("config applied successfully via SIGHUP")
+			}
+		}
+	}()
 
 	metrics := api.NewMetrics()
 	apiHandler := api.NewRouterWithConfig(&api.RouterConfig{

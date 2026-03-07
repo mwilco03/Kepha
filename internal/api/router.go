@@ -6,6 +6,7 @@ import (
 
 	"github.com/gatekeeper-firewall/gatekeeper/internal/config"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/driver"
+	"github.com/gatekeeper-firewall/gatekeeper/internal/ops"
 )
 
 // RouterConfig holds all dependencies for the API router.
@@ -16,6 +17,11 @@ type RouterConfig struct {
 	Dnsmasq *driver.Dnsmasq
 	APIKey  string
 	Metrics *Metrics
+
+	// RateLimit controls API rate limiting (requests/sec). 0 = default (100/s).
+	RateLimit int
+	// DiagRateLimit controls diagnostic endpoint rate limiting. 0 = default (5/s).
+	DiagRateLimit int
 }
 
 // NewRouter creates the HTTP handler for the Gatekeeper API.
@@ -34,10 +40,11 @@ func NewRouterWithDriver(store *config.Store, nft *driver.NFTables, apiKey strin
 
 // NewRouterWithConfig creates the full API router from config.
 func NewRouterWithConfig(cfg *RouterConfig) http.Handler {
+	o := ops.New(cfg.Store)
 	h := &handlers{
-		store:   cfg.Store,
+		ops:     o,
+		wgOps:   ops.NewWireGuardOps(cfg.WG),
 		nft:     cfg.NFT,
-		wg:      cfg.WG,
 		dnsmasq: cfg.Dnsmasq,
 	}
 
@@ -48,8 +55,10 @@ func NewRouterWithConfig(cfg *RouterConfig) http.Handler {
 
 	mux := http.NewServeMux()
 
-	// Status (unauthenticated).
+	// Health checks (unauthenticated per OpenAPI spec).
 	mux.HandleFunc("GET /api/v1/status", handleStatus)
+	mux.HandleFunc("GET /api/v1/healthz", handleStatus)           // Liveness: process is running.
+	mux.HandleFunc("GET /api/v1/readyz", h.handleReady)           // Readiness: DB is accessible.
 
 	// Metrics (unauthenticated).
 	mux.HandleFunc("GET /api/v1/metrics", metrics.Handler())
@@ -107,23 +116,48 @@ func NewRouterWithConfig(cfg *RouterConfig) http.Handler {
 	mux.HandleFunc("GET /api/v1/wg/peers", h.listWGPeers)
 	mux.HandleFunc("POST /api/v1/wg/peers", h.addWGPeer)
 	mux.HandleFunc("DELETE /api/v1/wg/peers/{pubkey}", h.removeWGPeer)
+	mux.HandleFunc("POST /api/v1/wg/client-config", h.generateWGClientConfig)
 
-	// Path test.
+	// Path test and explain.
 	mux.HandleFunc("POST /api/v1/test", h.pathTest)
+	mux.HandleFunc("POST /api/v1/explain", h.explainPath)
 
-	// Diagnostics.
-	mux.HandleFunc("GET /api/v1/diag/interfaces", h.diagInterfaces)
-	mux.HandleFunc("GET /api/v1/diag/leases", h.diagLeases)
+	// Audit log.
+	mux.HandleFunc("GET /api/v1/audit", h.listAuditLog)
+
+	// Diagnostics — rate-limited more aggressively since ping/connections
+	// execute system commands and could be abused for resource exhaustion.
+	diagRate := cfg.DiagRateLimit
+	if diagRate <= 0 {
+		diagRate = 5
+	}
+	diagLimiter := NewRateLimiter(diagRate, diagRate*2)
+	diagRL := diagLimiter.Middleware
+
+	mux.HandleFunc("GET /api/v1/diag/interfaces", h.diagInterfaces) // Read-only, no subprocess.
+	mux.HandleFunc("GET /api/v1/diag/leases", h.diagLeases)         // Read-only, file parse.
 	mux.HandleFunc("GET /api/v1/diag/dry-run", h.dryRun)
-	mux.HandleFunc("GET /api/v1/diag/ping/{target}", h.diagPing)
-	mux.HandleFunc("GET /api/v1/diag/connections", h.diagConnections)
+	mux.Handle("GET /api/v1/diag/ping/{target}", diagRL(http.HandlerFunc(h.diagPing)))
+	mux.Handle("GET /api/v1/diag/connections", diagRL(http.HandlerFunc(h.diagConnections)))
 
-	// Apply middleware stack.
+	// Apply middleware stack (outermost first):
+	// 1. Logging — always logs, even rejected requests
+	// 2. Rate limiting — shed load before auth check
+	// 3. Auth — reject unauthenticated
+	// 4. Audit — log mutations (POST/PUT/DELETE)
+	// 5. Metrics counting
 	var handler http.Handler = mux
+	handler = metrics.CountingMiddleware(handler)
+	handler = AuditMiddleware(handler)
 	if cfg.APIKey != "" {
 		handler = AuthMiddleware(cfg.APIKey, handler)
 	}
-	handler = metrics.CountingMiddleware(handler)
+	apiRate := cfg.RateLimit
+	if apiRate <= 0 {
+		apiRate = 100
+	}
+	apiLimiter := NewRateLimiter(apiRate, apiRate*2)
+	handler = apiLimiter.Middleware(handler)
 	handler = LoggingMiddleware(handler)
 
 	return handler
@@ -132,6 +166,21 @@ func NewRouterWithConfig(cfg *RouterConfig) http.Handler {
 func handleStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{
 		"status":  "ok",
+		"service": "gatekeeperd",
+	})
+}
+
+// handleReady checks that the database is accessible (readiness probe).
+func (h *handlers) handleReady(w http.ResponseWriter, r *http.Request) {
+	if err := h.ops.Store().Ping(); err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{
+			"status": "unavailable",
+			"reason": "database unreachable",
+		})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{
+		"status":  "ready",
 		"service": "gatekeeperd",
 	})
 }

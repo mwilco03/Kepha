@@ -1,0 +1,84 @@
+{{template "head" .}}
+<title>{{.Title}} - Gatekeeper</title>
+</head>
+<body>
+{{template "nav" .}}
+<div class="container">
+    <h1>WireGuard VPN</h1>
+
+    <div id="peers-table">
+        <div class="empty">Loading peers...</div>
+    </div>
+
+    <div id="qr-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.8); z-index:100; align-items:center; justify-content:center;">
+        <div style="background:var(--bg2); border:1px solid var(--border); border-radius:0.5rem; padding:2rem; max-width:500px; width:90%; text-align:center;">
+            <h2 id="qr-title" style="margin-bottom:1rem;"></h2>
+            <div id="qr-canvas" style="background:white; display:inline-block; padding:1rem; border-radius:0.5rem; margin-bottom:1rem;"></div>
+            <pre id="qr-config" style="text-align:left; font-size:0.75rem; max-height:200px; overflow:auto;"></pre>
+            <br>
+            <button onclick="closeQR()">Close</button>
+        </div>
+    </div>
+</div>
+
+<script src="https://unpkg.com/qrcode-generator@1.4.4/qrcode.js"></script>
+<script>
+function loadPeers() {
+    fetch('/api/v1/wg/peers')
+    .then(r => { if (r.status === 401) return []; return r.json(); })
+    .then(peers => {
+        var el = document.getElementById('peers-table');
+        if (!peers || peers.length === 0) {
+            el.innerHTML = '<div class="empty">No WireGuard peers configured.</div>';
+            return;
+        }
+        var html = '<table><thead><tr><th>Name</th><th>Public Key</th><th>Allowed IPs</th><th>Config</th></tr></thead><tbody>';
+        peers.forEach(function(p) {
+            var name = p.name || '-';
+            var pk = p.public_key;
+            html += '<tr><td>' + name + '</td><td>' + pk + '</td><td>' + p.allowed_ips + '</td>';
+            html += '<td><button onclick="showQR(\'' + pk + '\', \'' + name + '\')" class="btn" style="padding:0.3rem 0.75rem;font-size:0.8rem;">QR Code</button></td></tr>';
+        });
+        html += '</tbody></table>';
+        el.innerHTML = html;
+    })
+    .catch(function() {
+        document.getElementById('peers-table').innerHTML = '<div class="empty">WireGuard not available. Enable with --wg-interface flag.</div>';
+    });
+}
+
+function showQR(pubkey, name) {
+    fetch('/api/v1/wg/client-config', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({public_key: pubkey, server_endpoint: window.location.hostname})
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.error) { alert(data.error); return; }
+        document.getElementById('qr-title').textContent = 'Config: ' + (name !== '-' ? name : pubkey.substring(0, 8));
+        document.getElementById('qr-config').textContent = data.config;
+
+        var qr = qrcode(0, 'M');
+        qr.addData(data.config);
+        qr.make();
+        document.getElementById('qr-canvas').innerHTML = qr.createSvgTag(4);
+
+        var modal = document.getElementById('qr-modal');
+        modal.style.display = 'flex';
+    })
+    .catch(err => alert('Error generating config: ' + err));
+}
+
+function closeQR() {
+    document.getElementById('qr-modal').style.display = 'none';
+}
+
+document.getElementById('qr-modal').addEventListener('click', function(e) {
+    if (e.target === this) closeQR();
+});
+
+loadPeers();
+</script>
+</body>
+</html>

@@ -33,6 +33,11 @@ func NewStore(dbPath string) (*Store, error) {
 	return &Store{db: db}, nil
 }
 
+// Ping verifies the database connection is alive.
+func (s *Store) Ping() error {
+	return s.db.Ping()
+}
+
 // Close closes the database connection.
 func (s *Store) Close() error {
 	return s.db.Close()

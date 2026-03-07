@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/gatekeeper-firewall/gatekeeper/internal/validate"
 	"golang.org/x/crypto/curve25519"
 )
 
@@ -184,6 +185,16 @@ func (w *WireGuard) writeConfig() error {
 	b.WriteString(fmt.Sprintf("ListenPort = %d\n\n", w.config.ListenPort))
 
 	for _, peer := range w.config.Peers {
+		// Skip peers with invalid fields to prevent config injection.
+		if validate.WGPublicKey(peer.PublicKey) != nil {
+			continue
+		}
+		if validate.WGAllowedIPs(peer.AllowedIPs) != nil {
+			continue
+		}
+		if validate.WGEndpoint(peer.Endpoint) != nil {
+			continue
+		}
 		b.WriteString("[Peer]\n")
 		b.WriteString(fmt.Sprintf("PublicKey = %s\n", peer.PublicKey))
 		b.WriteString(fmt.Sprintf("AllowedIPs = %s\n", peer.AllowedIPs))
@@ -195,6 +206,16 @@ func (w *WireGuard) writeConfig() error {
 
 	confPath := filepath.Join(w.confDir, w.iface+".conf")
 	return os.WriteFile(confPath, []byte(b.String()), 0o600)
+}
+
+// GenerateKeyPair generates a WireGuard private/public key pair.
+func GenerateKeyPair() (privateKey, publicKey string, err error) {
+	priv, err := generatePrivateKey()
+	if err != nil {
+		return "", "", err
+	}
+	pub := publicKeyFromPrivate(priv)
+	return priv, pub, nil
 }
 
 func generatePrivateKey() (string, error) {

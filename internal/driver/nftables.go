@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -151,5 +152,36 @@ func (n *NFTables) applyRuleset(ruleset *compiler.CompiledRuleset) error {
 		return fmt.Errorf("nft apply failed: %s: %w", string(output), err)
 	}
 
+	if err := n.verify(ruleset); err != nil {
+		slog.Warn("post-apply verification failed", "error", err)
+		return fmt.Errorf("post-apply verification: %w", err)
+	}
+
+	return nil
+}
+
+// verify queries nftables after apply to confirm the expected table exists.
+func (n *NFTables) verify(ruleset *compiler.CompiledRuleset) error {
+	out, err := exec.Command("nft", "list", "tables").CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("nft list tables: %s: %w", string(out), err)
+	}
+
+	// Check that the gatekeeper table is present in nftables.
+	if !strings.Contains(string(out), "gatekeeper") {
+		return fmt.Errorf("gatekeeper table not found in nftables after apply")
+	}
+
+	slog.Info("post-apply verification passed")
+	return nil
+}
+
+// SafeApply attempts to compile and apply. On failure, it returns the error
+// without terminating the process, allowing the daemon to start with stale rules.
+func (n *NFTables) SafeApply() error {
+	if err := n.Apply(); err != nil {
+		slog.Error("safe apply failed, continuing with stale rules", "error", err)
+		return err
+	}
 	return nil
 }

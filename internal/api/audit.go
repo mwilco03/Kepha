@@ -3,7 +3,6 @@ package api
 import (
 	"log/slog"
 	"net/http"
-	"strings"
 	"time"
 )
 
@@ -31,11 +30,4 @@ func AuditMiddleware(next http.Handler) http.Handler {
 			)
 		}
 	})
-}
-
-// SanitizeInput strips null bytes and trims whitespace from common attack vectors.
-func SanitizeInput(s string) string {
-	s = strings.ReplaceAll(s, "\x00", "")
-	s = strings.TrimSpace(s)
-	return s
 }

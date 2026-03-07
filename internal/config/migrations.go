@@ -87,6 +87,20 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 );
 `,
 	},
+	{
+		name: "002_audit_log",
+		sql: `
+CREATE TABLE IF NOT EXISTS audit_log (
+	id          INTEGER PRIMARY KEY AUTOINCREMENT,
+	timestamp   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+	action      TEXT NOT NULL,
+	resource    TEXT NOT NULL,
+	resource_id TEXT NOT NULL DEFAULT '',
+	detail      TEXT NOT NULL DEFAULT '',
+	source      TEXT NOT NULL DEFAULT 'api'
+);
+`,
+	},
 }
 
 // Migrate runs all pending schema migrations.

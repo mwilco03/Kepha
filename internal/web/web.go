@@ -36,6 +36,7 @@ func Handler(store *config.Store) http.Handler {
 	mux.HandleFunc("GET /policies", handlePolicies(store))
 	mux.HandleFunc("GET /config", handleConfig(store))
 	mux.HandleFunc("GET /assign", handleAssignForm(store))
+	mux.HandleFunc("GET /wireguard", handleWireGuard())
 
 	return mux
 }
@@ -189,6 +190,14 @@ func handleAssignForm(store *config.Store) http.HandlerFunc {
 		render(w, "assign", map[string]any{
 			"Title":    "Assign Device",
 			"Profiles": profiles,
+		})
+	}
+}
+
+func handleWireGuard() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		render(w, "wireguard", map[string]any{
+			"Title": "WireGuard",
 		})
 	}
 }
