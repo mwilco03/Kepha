@@ -146,6 +146,13 @@ func NewRouterWithConfig(cfg *RouterConfig) http.Handler {
 	// 3. Auth — reject unauthenticated
 	// 4. Audit — log mutations (POST/PUT/DELETE)
 	// 5. Metrics counting
+	// Middleware stack (outermost first):
+	// 1. Logging — always logs, even rejected requests
+	// 2. Security headers — defensive HTTP headers on every response
+	// 3. Rate limiting — shed load before auth check
+	// 4. Auth — reject unauthenticated
+	// 5. Audit — log mutations (POST/PUT/DELETE)
+	// 6. Metrics counting
 	var handler http.Handler = mux
 	handler = metrics.CountingMiddleware(handler)
 	handler = AuditMiddleware(handler)
@@ -158,6 +165,7 @@ func NewRouterWithConfig(cfg *RouterConfig) http.Handler {
 	}
 	apiLimiter := NewRateLimiter(apiRate, apiRate*2)
 	handler = apiLimiter.Middleware(handler)
+	handler = SecurityHeadersMiddleware(handler)
 	handler = LoggingMiddleware(handler)
 
 	return handler
