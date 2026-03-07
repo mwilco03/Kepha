@@ -8,8 +8,15 @@ import (
 )
 
 // AuthMiddleware checks for API key authentication.
+// Status and metrics endpoints are exempted per the OpenAPI spec (security: []).
 func AuthMiddleware(apiKey string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Exempt unauthenticated endpoints.
+		if r.URL.Path == "/api/v1/status" || r.URL.Path == "/api/v1/metrics" {
+			next.ServeHTTP(w, r)
+			return
+		}
+
 		key := r.Header.Get("X-API-Key")
 		if key == "" {
 			// Try Basic auth.

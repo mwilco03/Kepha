@@ -57,6 +57,14 @@ func main() {
 	}
 
 	nft := driver.NewNFTables(store, *rulesetDir)
+
+	// Boot-time safe mode: attempt to apply last known config.
+	// On failure, log the error but continue starting the daemon so the
+	// operator can fix the config via API/CLI rather than losing access.
+	if err := nft.SafeApply(); err != nil {
+		slog.Warn("boot-time rule apply failed, starting in safe mode", "error", err)
+	}
+
 	dnsmasq := driver.NewDnsmasq(store, *dnsmasqDir)
 
 	var wg *driver.WireGuard
