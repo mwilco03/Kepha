@@ -11,8 +11,9 @@ import (
 // Status and metrics endpoints are exempted per the OpenAPI spec (security: []).
 func AuthMiddleware(apiKey string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Exempt unauthenticated endpoints.
-		if r.URL.Path == "/api/v1/status" || r.URL.Path == "/api/v1/metrics" {
+		// Exempt unauthenticated endpoints (health checks, metrics).
+		switch r.URL.Path {
+		case "/api/v1/status", "/api/v1/metrics", "/api/v1/healthz", "/api/v1/readyz":
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -44,11 +45,32 @@ type bucket struct {
 }
 
 // NewRateLimiter creates a rate limiter with the given requests/sec and burst.
+// Stale client entries are cleaned up every 5 minutes to prevent memory growth.
 func NewRateLimiter(rate, burst int) *RateLimiter {
-	return &RateLimiter{
+	rl := &RateLimiter{
 		clients: make(map[string]*bucket),
 		rate:    rate,
 		burst:   burst,
+	}
+	go rl.cleanup()
+	return rl
+}
+
+// cleanup periodically removes stale client entries that haven't been
+// seen in over 5 minutes. Without this, the map grows unbounded with
+// each unique client IP — a slow memory leak under sustained traffic.
+func (rl *RateLimiter) cleanup() {
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+	for range ticker.C {
+		rl.mu.Lock()
+		cutoff := time.Now().Add(-5 * time.Minute)
+		for key, b := range rl.clients {
+			if b.lastCheck.Before(cutoff) {
+				delete(rl.clients, key)
+			}
+		}
+		rl.mu.Unlock()
 	}
 }
 

@@ -55,8 +55,10 @@ func NewRouterWithConfig(cfg *RouterConfig) http.Handler {
 
 	mux := http.NewServeMux()
 
-	// Status (unauthenticated).
+	// Health checks (unauthenticated per OpenAPI spec).
 	mux.HandleFunc("GET /api/v1/status", handleStatus)
+	mux.HandleFunc("GET /api/v1/healthz", handleStatus)           // Liveness: process is running.
+	mux.HandleFunc("GET /api/v1/readyz", h.handleReady)           // Readiness: DB is accessible.
 
 	// Metrics (unauthenticated).
 	mux.HandleFunc("GET /api/v1/metrics", metrics.Handler())
@@ -164,6 +166,21 @@ func NewRouterWithConfig(cfg *RouterConfig) http.Handler {
 func handleStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{
 		"status":  "ok",
+		"service": "gatekeeperd",
+	})
+}
+
+// handleReady checks that the database is accessible (readiness probe).
+func (h *handlers) handleReady(w http.ResponseWriter, r *http.Request) {
+	if err := h.ops.Store().Ping(); err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{
+			"status": "unavailable",
+			"reason": "database unreachable",
+		})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{
+		"status":  "ready",
 		"service": "gatekeeperd",
 	})
 }
