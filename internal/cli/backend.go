@@ -108,7 +108,7 @@ func (d *DirectBackend) AddAliasMember(aliasName, member string) error {
 	return d.o.AddAliasMember(d.actor, aliasName, member)
 }
 func (d *DirectBackend) RemoveAliasMember(aliasName, member string) error {
-	return d.o.RemoveAliasMember(aliasName, member)
+	return d.o.RemoveAliasMember(d.actor, aliasName, member)
 }
 
 func (d *DirectBackend) ListProfiles() ([]model.Profile, error)        { return d.o.ListProfiles() }
