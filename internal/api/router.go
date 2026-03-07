@@ -108,8 +108,12 @@ func NewRouterWithConfig(cfg *RouterConfig) http.Handler {
 	mux.HandleFunc("POST /api/v1/wg/peers", h.addWGPeer)
 	mux.HandleFunc("DELETE /api/v1/wg/peers/{pubkey}", h.removeWGPeer)
 
-	// Path test.
+	// Path test and explain.
 	mux.HandleFunc("POST /api/v1/test", h.pathTest)
+	mux.HandleFunc("POST /api/v1/explain", h.explainPath)
+
+	// Audit log.
+	mux.HandleFunc("GET /api/v1/audit", h.listAuditLog)
 
 	// Diagnostics.
 	mux.HandleFunc("GET /api/v1/diag/interfaces", h.diagInterfaces)

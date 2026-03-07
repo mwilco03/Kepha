@@ -152,6 +152,101 @@ func portMatches(ports string, dstPort int) bool {
 	return false
 }
 
+// ExplainResult gives a detailed breakdown of all rules that apply to a src→dst pair.
+type ExplainResult struct {
+	SrcZone       string        `json:"src_zone"`
+	DstZone       string        `json:"dst_zone"`
+	MatchingRules []ExplainRule `json:"matching_rules"`
+	FinalAction   string        `json:"final_action"`
+	Trace         []string      `json:"trace"`
+}
+
+// ExplainRule describes a single rule that was evaluated.
+type ExplainRule struct {
+	PolicyName  string `json:"policy_name"`
+	ProfileName string `json:"profile_name"`
+	Order       int    `json:"order"`
+	Description string `json:"description"`
+	Protocol    string `json:"protocol,omitempty"`
+	Ports       string `json:"ports,omitempty"`
+	SrcAlias    string `json:"src_alias,omitempty"`
+	DstAlias    string `json:"dst_alias,omitempty"`
+	Action      string `json:"action"`
+	Matches     bool   `json:"matches"`
+}
+
+// Explain returns all rules that apply between a source and destination,
+// showing which match and which don't, unlike PathTest which stops at the first match.
+func Explain(input *Input, req PathTestRequest) *ExplainResult {
+	result := &ExplainResult{
+		FinalAction: "drop",
+	}
+
+	srcZone := findZoneByIP(input.Zones, req.SrcIP)
+	if srcZone == nil {
+		result.Trace = append(result.Trace, fmt.Sprintf("no zone found for source IP %s", req.SrcIP))
+		return result
+	}
+	result.SrcZone = srcZone.Name
+	result.Trace = append(result.Trace, fmt.Sprintf("source zone: %s", srcZone.Name))
+
+	dstZone := findZoneByIP(input.Zones, req.DstIP)
+	if dstZone != nil {
+		result.DstZone = dstZone.Name
+	} else {
+		result.DstZone = "wan"
+	}
+	result.Trace = append(result.Trace, fmt.Sprintf("destination zone: %s", result.DstZone))
+
+	matched := false
+	for _, profile := range input.Profiles {
+		if profile.ZoneID != srcZone.ID {
+			continue
+		}
+		for _, policy := range input.Policies {
+			if policy.Name != profile.PolicyName {
+				continue
+			}
+			result.Trace = append(result.Trace, fmt.Sprintf("evaluating policy %s via profile %s", policy.Name, profile.Name))
+
+			for _, rule := range policy.Rules {
+				matches := ruleMatches(rule, req, input.Aliases)
+				er := ExplainRule{
+					PolicyName:  policy.Name,
+					ProfileName: profile.Name,
+					Order:       rule.Order,
+					Description: rule.Description,
+					Protocol:    rule.Protocol,
+					Ports:       rule.Ports,
+					SrcAlias:    rule.SrcAlias,
+					DstAlias:    rule.DstAlias,
+					Action:      string(rule.Action),
+					Matches:     matches,
+				}
+				result.MatchingRules = append(result.MatchingRules, er)
+				if matches && !matched {
+					result.FinalAction = string(rule.Action)
+					matched = true
+					result.Trace = append(result.Trace, fmt.Sprintf("first match: rule #%d → %s", rule.Order, rule.Action))
+				}
+			}
+
+			if !matched {
+				action := string(policy.DefaultAction)
+				if action == "" {
+					action = "deny"
+				}
+				result.FinalAction = action
+				result.Trace = append(result.Trace, fmt.Sprintf("no rule matched, default action: %s", action))
+			}
+			return result
+		}
+	}
+
+	result.Trace = append(result.Trace, "no matching profile/policy, default: drop")
+	return result
+}
+
 func ipInAlias(ip, aliasName string, aliases []model.Alias) bool {
 	parsed := net.ParseIP(ip)
 	if parsed == nil {

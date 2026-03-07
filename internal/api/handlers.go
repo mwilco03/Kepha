@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"os/exec"
@@ -69,6 +70,10 @@ func (h *handlers) createZone(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "name is required")
 		return
 	}
+	if !validName(z.Name) {
+		writeError(w, http.StatusBadRequest, "name must be alphanumeric with hyphens/underscores, max 64 chars")
+		return
+	}
 	if isDryRun(r) {
 		writeJSON(w, http.StatusOK, map[string]any{"dry_run": true, "action": "create_zone", "data": z})
 		return
@@ -77,6 +82,7 @@ func (h *handlers) createZone(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, err.Error())
 		return
 	}
+	_ = h.store.LogAudit("create", "zone", z.Name, z)
 	writeJSON(w, http.StatusCreated, z)
 }
 
@@ -92,6 +98,7 @@ func (h *handlers) updateZone(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	_ = h.store.LogAudit("update", "zone", z.Name, z)
 	writeJSON(w, http.StatusOK, z)
 }
 
@@ -101,6 +108,7 @@ func (h *handlers) deleteZone(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	_ = h.store.LogAudit("delete", "zone", name, nil)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
@@ -155,10 +163,15 @@ func (h *handlers) createAlias(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "name and type are required")
 		return
 	}
+	if !validName(a.Name) {
+		writeError(w, http.StatusBadRequest, "name must be alphanumeric with hyphens/underscores, max 64 chars")
+		return
+	}
 	if err := h.store.CreateAlias(&a); err != nil {
 		writeError(w, http.StatusConflict, err.Error())
 		return
 	}
+	_ = h.store.LogAudit("create", "alias", a.Name, a)
 	if a.Type == model.AliasTypeNested {
 		if err := h.store.CheckAliasCycles(a.Name); err != nil {
 			_ = h.store.DeleteAlias(a.Name)
@@ -190,6 +203,7 @@ func (h *handlers) deleteAlias(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	_ = h.store.LogAudit("delete", "alias", name, nil)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
@@ -280,6 +294,10 @@ func (h *handlers) createProfile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "name is required")
 		return
 	}
+	if !validName(p.Name) {
+		writeError(w, http.StatusBadRequest, "name must be alphanumeric with hyphens/underscores, max 64 chars")
+		return
+	}
 	if err := h.store.CreateProfile(&p); err != nil {
 		writeError(w, http.StatusConflict, err.Error())
 		return
@@ -360,6 +378,10 @@ func (h *handlers) createPolicy(w http.ResponseWriter, r *http.Request) {
 	}
 	if p.Name == "" {
 		writeError(w, http.StatusBadRequest, "name is required")
+		return
+	}
+	if !validName(p.Name) {
+		writeError(w, http.StatusBadRequest, "name must be alphanumeric with hyphens/underscores, max 64 chars")
 		return
 	}
 	if err := h.store.CreatePolicy(&p); err != nil {
@@ -491,6 +513,7 @@ func (h *handlers) assignDevice(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	_ = h.store.LogAudit("assign", "device", d.IP, d)
 	writeJSON(w, http.StatusCreated, d)
 }
 
@@ -551,6 +574,7 @@ func (h *handlers) commitConfig(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	_ = h.store.LogAudit("commit", "config", fmt.Sprintf("%d", rev), map[string]string{"message": body.Message})
 	writeJSON(w, http.StatusOK, map[string]any{"rev": rev, "message": body.Message})
 }
 
@@ -811,6 +835,49 @@ func (h *handlers) buildCompilerInput() (*compiler.Input, error) {
 	}, nil
 }
 
+// --- Explain ---
+
+func (h *handlers) explainPath(w http.ResponseWriter, r *http.Request) {
+	var req compiler.PathTestRequest
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if req.SrcIP == "" || req.DstIP == "" {
+		writeError(w, http.StatusBadRequest, "src_ip and dst_ip required")
+		return
+	}
+
+	input, err := h.buildCompilerInput()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	result := compiler.Explain(input, req)
+	writeJSON(w, http.StatusOK, result)
+}
+
+// --- Audit Log ---
+
+func (h *handlers) listAuditLog(w http.ResponseWriter, r *http.Request) {
+	limit := 100
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if v, err := strconv.Atoi(l); err == nil && v > 0 {
+			limit = v
+		}
+	}
+	entries, err := h.store.ListAuditLog(limit)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if entries == nil {
+		entries = []config.AuditEntry{}
+	}
+	writeJSON(w, http.StatusOK, entries)
+}
+
 // --- Helpers ---
 
 func isDryRun(r *http.Request) bool {
@@ -823,6 +890,20 @@ func readJSON(r *http.Request, v any) error {
 		return err
 	}
 	return json.Unmarshal(body, v)
+}
+
+// validName checks that a resource name contains only safe characters.
+func validName(name string) bool {
+	if name == "" || len(name) > 64 {
+		return false
+	}
+	for _, c := range name {
+		ok := (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.'
+		if !ok {
+			return false
+		}
+	}
+	return true
 }
 
 func writeError(w http.ResponseWriter, status int, msg string) {

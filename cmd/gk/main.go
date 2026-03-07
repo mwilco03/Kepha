@@ -7,6 +7,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"text/tabwriter"
 
 	"github.com/gatekeeper-firewall/gatekeeper/internal/cli"
 )
@@ -19,8 +20,10 @@ func main() {
 		apiURL = "http://localhost:8080"
 	}
 	apiKey := os.Getenv("GK_API_KEY")
-	// Reserved for future table/json output format toggle.
-	_ = os.Getenv("GK_OUTPUT")
+	outputFmt := os.Getenv("GK_OUTPUT")
+	if outputFmt == "" {
+		outputFmt = "json"
+	}
 
 	if len(os.Args) < 2 {
 		printUsage()
@@ -65,6 +68,10 @@ func main() {
 		err = cmdLeases(client)
 	case "test":
 		err = cmdTest(client, os.Args[2:])
+	case "explain":
+		err = cmdExplain(client, os.Args[2:], outputFmt)
+	case "audit":
+		err = cmdAudit(client, outputFmt)
 	case "ping":
 		err = cmdPing(client, os.Args[2:])
 	case "help", "--help", "-h":
@@ -439,6 +446,92 @@ func cmdPing(c *cli.Client, args []string) error {
 	return printJSON(data)
 }
 
+func cmdExplain(c *cli.Client, args []string, outputFmt string) error {
+	fs := flag.NewFlagSet("explain", flag.ExitOnError)
+	srcIP := fs.String("src", "", "Source IP")
+	dstIP := fs.String("dst", "", "Destination IP")
+	proto := fs.String("proto", "tcp", "Protocol (tcp, udp, icmp)")
+	port := fs.Int("port", 0, "Destination port")
+	_ = fs.Parse(args)
+	if *srcIP == "" || *dstIP == "" {
+		return fmt.Errorf("usage: gk explain --src <ip> --dst <ip> [--proto tcp] [--port 80]")
+	}
+	data, err := c.Post("/api/v1/explain", map[string]any{
+		"src_ip": *srcIP, "dst_ip": *dstIP, "protocol": *proto, "dst_port": *port,
+	})
+	if err != nil {
+		return err
+	}
+
+	if outputFmt == "table" {
+		var result struct {
+			SrcZone       string `json:"src_zone"`
+			DstZone       string `json:"dst_zone"`
+			FinalAction   string `json:"final_action"`
+			MatchingRules []struct {
+				PolicyName string `json:"policy_name"`
+				Order      int    `json:"order"`
+				Protocol   string `json:"protocol"`
+				Ports      string `json:"ports"`
+				Action     string `json:"action"`
+				Matches    bool   `json:"matches"`
+				Desc       string `json:"description"`
+			} `json:"matching_rules"`
+			Trace []string `json:"trace"`
+		}
+		if err := json.Unmarshal(data, &result); err != nil {
+			return printJSON(data)
+		}
+		fmt.Printf("Source zone: %s → Destination zone: %s\n", result.SrcZone, result.DstZone)
+		fmt.Printf("Final action: %s\n\n", result.FinalAction)
+		tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+		fmt.Fprintln(tw, "ORDER\tPOLICY\tPROTO\tPORTS\tACTION\tMATCH\tDESCRIPTION")
+		for _, r := range result.MatchingRules {
+			match := " "
+			if r.Matches {
+				match = "*"
+			}
+			fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\t%s\t%s\n",
+				r.Order, r.PolicyName, r.Protocol, r.Ports, r.Action, match, r.Desc)
+		}
+		tw.Flush()
+		if len(result.Trace) > 0 {
+			fmt.Println("\nTrace:")
+			for _, t := range result.Trace {
+				fmt.Printf("  %s\n", t)
+			}
+		}
+		return nil
+	}
+	return printJSON(data)
+}
+
+func cmdAudit(c *cli.Client, outputFmt string) error {
+	data, err := c.Get("/api/v1/audit")
+	if err != nil {
+		return err
+	}
+	if outputFmt == "table" {
+		var entries []struct {
+			ID        int64  `json:"id"`
+			Timestamp string `json:"timestamp"`
+			Action    string `json:"action"`
+			Resource  string `json:"resource"`
+			ResID     string `json:"resource_id"`
+		}
+		if err := json.Unmarshal(data, &entries); err != nil {
+			return printJSON(data)
+		}
+		tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+		fmt.Fprintln(tw, "ID\tTIMESTAMP\tACTION\tRESOURCE\tRESOURCE_ID")
+		for _, e := range entries {
+			fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\n", e.ID, e.Timestamp, e.Action, e.Resource, e.ResID)
+		}
+		return tw.Flush()
+	}
+	return printJSON(data)
+}
+
 func printJSON(data []byte) error {
 	var v any
 	if err := json.Unmarshal(data, &v); err != nil {
@@ -472,10 +565,13 @@ Commands:
   wg          Manage WireGuard peers (peers, add-peer, remove-peer)
   leases      Show DHCP leases
   test        Test packet path (--src <ip> --dst <ip> [--proto tcp] [--port 80])
+  explain     Show all matching rules for a src→dst pair
+  audit       Show audit log of mutations
   ping        Ping a target host
   version     Show version
 
 Environment:
   GK_API_URL  API base URL (default: http://localhost:8080)
-  GK_API_KEY  API key for authentication`)
+  GK_API_KEY  API key for authentication
+  GK_OUTPUT   Output format: json (default) or table`)
 }
