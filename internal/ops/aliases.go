@@ -54,8 +54,14 @@ func (o *Ops) CreateAlias(actor Actor, a *model.Alias) error {
 	return nil
 }
 
-// UpdateAlias updates an existing alias.
+// UpdateAlias sanitizes and updates an existing alias.
 func (o *Ops) UpdateAlias(actor Actor, a *model.Alias) error {
+	a.Description = validate.Sanitize(a.Description)
+	a.Type = model.AliasType(validate.Sanitize(string(a.Type)))
+	for i := range a.Members {
+		a.Members[i] = validate.Sanitize(a.Members[i])
+	}
+
 	if err := o.store.UpdateAlias(a); err != nil {
 		return err
 	}
@@ -91,10 +97,15 @@ func (o *Ops) AddAliasMember(actor Actor, aliasName, member string) error {
 	return o.store.AddAliasMember(aliasName, member)
 }
 
-// RemoveAliasMember removes a member from an alias.
-func (o *Ops) RemoveAliasMember(aliasName, member string) error {
+// RemoveAliasMember sanitizes and removes a member from an alias.
+func (o *Ops) RemoveAliasMember(actor Actor, aliasName, member string) error {
+	member = validate.Sanitize(member)
 	if member == "" {
 		return fmt.Errorf("member is required")
 	}
-	return o.store.RemoveAliasMember(aliasName, member)
+	if err := o.store.RemoveAliasMember(aliasName, member); err != nil {
+		return err
+	}
+	_ = o.store.LogAudit(actor.Source, "remove_member", "alias", aliasName, map[string]string{"member": member})
+	return nil
 }

@@ -219,7 +219,7 @@ func (h *handlers) removeAliasMember(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "member is required")
 		return
 	}
-	if err := h.ops.RemoveAliasMember(name, body.Member); err != nil {
+	if err := h.ops.RemoveAliasMember(apiActor, name, body.Member); err != nil {
 		if strings.Contains(err.Error(), "not found") {
 			writeError(w, http.StatusNotFound, err.Error())
 		} else {
@@ -802,6 +802,9 @@ func (h *handlers) listAuditLog(w http.ResponseWriter, r *http.Request) {
 		if v, err := strconv.Atoi(l); err == nil && v > 0 {
 			limit = v
 		}
+	}
+	if limit > 1000 {
+		limit = 1000
 	}
 	entries, err := h.ops.ListAuditLog(limit)
 	if err != nil {

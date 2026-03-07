@@ -35,8 +35,10 @@ func (o *Ops) CreatePolicy(actor Actor, p *model.Policy) error {
 	return nil
 }
 
-// UpdatePolicy updates an existing policy.
+// UpdatePolicy sanitizes and updates an existing policy.
 func (o *Ops) UpdatePolicy(actor Actor, p *model.Policy) error {
+	p.Description = validate.Sanitize(p.Description)
+
 	if err := o.store.UpdatePolicy(p); err != nil {
 		return err
 	}

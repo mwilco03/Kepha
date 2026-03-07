@@ -140,12 +140,6 @@ func NewRouterWithConfig(cfg *RouterConfig) http.Handler {
 	mux.Handle("GET /api/v1/diag/ping/{target}", diagRL(http.HandlerFunc(h.diagPing)))
 	mux.Handle("GET /api/v1/diag/connections", diagRL(http.HandlerFunc(h.diagConnections)))
 
-	// Apply middleware stack (outermost first):
-	// 1. Logging — always logs, even rejected requests
-	// 2. Rate limiting — shed load before auth check
-	// 3. Auth — reject unauthenticated
-	// 4. Audit — log mutations (POST/PUT/DELETE)
-	// 5. Metrics counting
 	// Middleware stack (outermost first):
 	// 1. Logging — always logs, even rejected requests
 	// 2. Security headers — defensive HTTP headers on every response

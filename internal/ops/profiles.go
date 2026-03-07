@@ -36,8 +36,11 @@ func (o *Ops) CreateProfile(actor Actor, p *model.Profile) error {
 	return nil
 }
 
-// UpdateProfile updates an existing profile.
+// UpdateProfile sanitizes and updates an existing profile.
 func (o *Ops) UpdateProfile(actor Actor, p *model.Profile) error {
+	p.Description = validate.Sanitize(p.Description)
+	p.PolicyName = validate.Sanitize(p.PolicyName)
+
 	if err := o.store.UpdateProfile(p); err != nil {
 		return err
 	}
