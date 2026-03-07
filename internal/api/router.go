@@ -17,6 +17,11 @@ type RouterConfig struct {
 	Dnsmasq *driver.Dnsmasq
 	APIKey  string
 	Metrics *Metrics
+
+	// RateLimit controls API rate limiting (requests/sec). 0 = default (100/s).
+	RateLimit int
+	// DiagRateLimit controls diagnostic endpoint rate limiting. 0 = default (5/s).
+	DiagRateLimit int
 }
 
 // NewRouter creates the HTTP handler for the Gatekeeper API.
@@ -118,19 +123,39 @@ func NewRouterWithConfig(cfg *RouterConfig) http.Handler {
 	// Audit log.
 	mux.HandleFunc("GET /api/v1/audit", h.listAuditLog)
 
-	// Diagnostics.
-	mux.HandleFunc("GET /api/v1/diag/interfaces", h.diagInterfaces)
-	mux.HandleFunc("GET /api/v1/diag/leases", h.diagLeases)
-	mux.HandleFunc("GET /api/v1/diag/dry-run", h.dryRun)
-	mux.HandleFunc("GET /api/v1/diag/ping/{target}", h.diagPing)
-	mux.HandleFunc("GET /api/v1/diag/connections", h.diagConnections)
+	// Diagnostics — rate-limited more aggressively since ping/connections
+	// execute system commands and could be abused for resource exhaustion.
+	diagRate := cfg.DiagRateLimit
+	if diagRate <= 0 {
+		diagRate = 5
+	}
+	diagLimiter := NewRateLimiter(diagRate, diagRate*2)
+	diagRL := diagLimiter.Middleware
 
-	// Apply middleware stack.
+	mux.HandleFunc("GET /api/v1/diag/interfaces", h.diagInterfaces) // Read-only, no subprocess.
+	mux.HandleFunc("GET /api/v1/diag/leases", h.diagLeases)         // Read-only, file parse.
+	mux.HandleFunc("GET /api/v1/diag/dry-run", h.dryRun)
+	mux.Handle("GET /api/v1/diag/ping/{target}", diagRL(http.HandlerFunc(h.diagPing)))
+	mux.Handle("GET /api/v1/diag/connections", diagRL(http.HandlerFunc(h.diagConnections)))
+
+	// Apply middleware stack (outermost first):
+	// 1. Logging — always logs, even rejected requests
+	// 2. Rate limiting — shed load before auth check
+	// 3. Auth — reject unauthenticated
+	// 4. Audit — log mutations (POST/PUT/DELETE)
+	// 5. Metrics counting
 	var handler http.Handler = mux
+	handler = metrics.CountingMiddleware(handler)
+	handler = AuditMiddleware(handler)
 	if cfg.APIKey != "" {
 		handler = AuthMiddleware(cfg.APIKey, handler)
 	}
-	handler = metrics.CountingMiddleware(handler)
+	apiRate := cfg.RateLimit
+	if apiRate <= 0 {
+		apiRate = 100
+	}
+	apiLimiter := NewRateLimiter(apiRate, apiRate*2)
+	handler = apiLimiter.Middleware(handler)
 	handler = LoggingMiddleware(handler)
 
 	return handler

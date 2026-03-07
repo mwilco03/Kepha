@@ -19,6 +19,13 @@ func (o *Ops) GetAlias(name string) (*model.Alias, error) {
 
 // CreateAlias validates and creates a new alias, checking for nested cycles.
 func (o *Ops) CreateAlias(actor Actor, a *model.Alias) error {
+	a.Name = validate.Sanitize(a.Name)
+	a.Type = model.AliasType(validate.Sanitize(string(a.Type)))
+	a.Description = validate.Sanitize(a.Description)
+	for i := range a.Members {
+		a.Members[i] = validate.Sanitize(a.Members[i])
+	}
+
 	if a.Name == "" || a.Type == "" {
 		return fmt.Errorf("name and type are required")
 	}
@@ -67,6 +74,7 @@ func (o *Ops) DeleteAlias(actor Actor, name string) error {
 
 // AddAliasMember validates and adds a member to an alias.
 func (o *Ops) AddAliasMember(actor Actor, aliasName, member string) error {
+	member = validate.Sanitize(member)
 	if member == "" {
 		return fmt.Errorf("member is required")
 	}

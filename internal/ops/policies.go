@@ -19,6 +19,9 @@ func (o *Ops) GetPolicy(name string) (*model.Policy, error) {
 
 // CreatePolicy validates and creates a new policy.
 func (o *Ops) CreatePolicy(actor Actor, p *model.Policy) error {
+	p.Name = validate.Sanitize(p.Name)
+	p.Description = validate.Sanitize(p.Description)
+
 	if p.Name == "" {
 		return fmt.Errorf("name is required")
 	}
@@ -52,6 +55,12 @@ func (o *Ops) DeletePolicy(actor Actor, name string) error {
 
 // CreateRule validates and creates a rule within a policy.
 func (o *Ops) CreateRule(actor Actor, policyName string, rule *model.Rule) error {
+	rule.Protocol = validate.Sanitize(rule.Protocol)
+	rule.Ports = validate.Sanitize(rule.Ports)
+	rule.SrcAlias = validate.Sanitize(rule.SrcAlias)
+	rule.DstAlias = validate.Sanitize(rule.DstAlias)
+	rule.Description = validate.Sanitize(rule.Description)
+
 	if err := validate.Protocol(rule.Protocol); err != nil {
 		return err
 	}

@@ -19,6 +19,10 @@ func (o *Ops) GetProfile(name string) (*model.Profile, error) {
 
 // CreateProfile validates and creates a new profile.
 func (o *Ops) CreateProfile(actor Actor, p *model.Profile) error {
+	p.Name = validate.Sanitize(p.Name)
+	p.Description = validate.Sanitize(p.Description)
+	p.PolicyName = validate.Sanitize(p.PolicyName)
+
 	if p.Name == "" {
 		return fmt.Errorf("name is required")
 	}

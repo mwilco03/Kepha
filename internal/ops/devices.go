@@ -15,6 +15,11 @@ func (o *Ops) ListDevices() ([]model.DeviceAssignment, error) {
 // AssignDevice validates and creates a device-to-profile assignment.
 // If Profile (name) is given instead of ProfileID, it resolves the ID.
 func (o *Ops) AssignDevice(actor Actor, ip, mac, hostname, profileName string, profileID int64) (*model.DeviceAssignment, error) {
+	ip = validate.Sanitize(ip)
+	mac = validate.Sanitize(mac)
+	hostname = validate.Sanitize(hostname)
+	profileName = validate.Sanitize(profileName)
+
 	if ip == "" {
 		return nil, fmt.Errorf("ip is required")
 	}

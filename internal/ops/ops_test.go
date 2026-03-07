@@ -336,7 +336,9 @@ func TestPathTest_Valid(t *testing.T) {
 
 func TestValidationParity_ZoneName(t *testing.T) {
 	o := newTestOps(t)
-	badNames := []string{"", "a b", "x" + string([]byte{0}), "<script>"}
+	// Note: "x\x00" is NOT in this list because sanitization strips null bytes,
+	// leaving "x" which is a valid name. This is correct — sanitize-then-validate.
+	badNames := []string{"", "a b", "<script>"}
 	for _, name := range badNames {
 		z := &model.Zone{Name: name}
 		if err := o.CreateZone(cliActor, z); err == nil {
@@ -370,5 +372,34 @@ func TestValidationParity_DeviceIP(t *testing.T) {
 		if _, err := o.AssignDevice(apiActor, ip, "", "", "", 1); err == nil {
 			t.Errorf("API: expected error for IP %q", ip)
 		}
+	}
+}
+
+// --- Sanitization Tests ---
+// Verify that null bytes and whitespace are stripped before validation.
+
+func TestSanitization_NullBytesStripped(t *testing.T) {
+	o := newTestOps(t)
+	// A name with embedded null byte should be sanitized to a valid name.
+	z := &model.Zone{Name: "test\x00zone"}
+	if err := o.CreateZone(cliActor, z); err != nil {
+		t.Fatalf("expected null byte to be stripped, got error: %v", err)
+	}
+	// The stored name should have the null byte removed.
+	got, err := o.GetZone("testzone")
+	if err != nil || got == nil {
+		t.Fatal("expected to find zone 'testzone' after null byte sanitization")
+	}
+}
+
+func TestSanitization_WhitespaceStripped(t *testing.T) {
+	o := newTestOps(t)
+	z := &model.Zone{Name: "  trimmed  "}
+	if err := o.CreateZone(cliActor, z); err != nil {
+		t.Fatalf("expected whitespace to be trimmed, got error: %v", err)
+	}
+	got, err := o.GetZone("trimmed")
+	if err != nil || got == nil {
+		t.Fatal("expected to find zone 'trimmed' after whitespace sanitization")
 	}
 }

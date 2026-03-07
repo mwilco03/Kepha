@@ -8,6 +8,14 @@ import (
 	"strings"
 )
 
+// Sanitize strips null bytes and trims whitespace from user input.
+// This should be called on all string fields before validation to
+// prevent null byte injection and whitespace-based bypass attacks.
+func Sanitize(s string) string {
+	s = strings.ReplaceAll(s, "\x00", "")
+	return strings.TrimSpace(s)
+}
+
 var (
 	nameRe      = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$`)
 	ifaceRe     = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9._-]{0,15}$`)

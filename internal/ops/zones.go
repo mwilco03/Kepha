@@ -19,6 +19,13 @@ func (o *Ops) GetZone(name string) (*model.Zone, error) {
 
 // CreateZone validates and creates a new zone, logging the mutation.
 func (o *Ops) CreateZone(actor Actor, z *model.Zone) error {
+	// Sanitize all string inputs before validation.
+	z.Name = validate.Sanitize(z.Name)
+	z.Interface = validate.Sanitize(z.Interface)
+	z.NetworkCIDR = validate.Sanitize(z.NetworkCIDR)
+	z.TrustLevel = validate.Sanitize(z.TrustLevel)
+	z.Description = validate.Sanitize(z.Description)
+
 	if z.Name == "" {
 		return fmt.Errorf("name is required")
 	}
@@ -45,6 +52,11 @@ func (o *Ops) CreateZone(actor Actor, z *model.Zone) error {
 
 // UpdateZone validates and updates an existing zone.
 func (o *Ops) UpdateZone(actor Actor, z *model.Zone) error {
+	z.Interface = validate.Sanitize(z.Interface)
+	z.NetworkCIDR = validate.Sanitize(z.NetworkCIDR)
+	z.TrustLevel = validate.Sanitize(z.TrustLevel)
+	z.Description = validate.Sanitize(z.Description)
+
 	if err := validate.Interface(z.Interface); err != nil {
 		return err
 	}
