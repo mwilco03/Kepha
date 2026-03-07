@@ -14,15 +14,16 @@ type AuditEntry struct {
 }
 
 // LogAudit records a mutation in the audit log.
-func (s *Store) LogAudit(action, resource, resourceID string, detail any) error {
+// The source parameter identifies the origin of the mutation ("api", "cli", etc.).
+func (s *Store) LogAudit(source, action, resource, resourceID string, detail any) error {
 	detailStr := ""
 	if detail != nil {
 		b, _ := json.Marshal(detail)
 		detailStr = string(b)
 	}
 	_, err := s.db.Exec(
-		"INSERT INTO audit_log (action, resource, resource_id, detail) VALUES (?, ?, ?, ?)",
-		action, resource, resourceID, detailStr,
+		"INSERT INTO audit_log (source, action, resource, resource_id, detail) VALUES (?, ?, ?, ?, ?)",
+		source, action, resource, resourceID, detailStr,
 	)
 	return err
 }

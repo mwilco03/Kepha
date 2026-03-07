@@ -6,6 +6,7 @@ import (
 
 	"github.com/gatekeeper-firewall/gatekeeper/internal/config"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/driver"
+	"github.com/gatekeeper-firewall/gatekeeper/internal/ops"
 )
 
 // RouterConfig holds all dependencies for the API router.
@@ -34,10 +35,11 @@ func NewRouterWithDriver(store *config.Store, nft *driver.NFTables, apiKey strin
 
 // NewRouterWithConfig creates the full API router from config.
 func NewRouterWithConfig(cfg *RouterConfig) http.Handler {
+	o := ops.New(cfg.Store)
 	h := &handlers{
-		store:   cfg.Store,
+		ops:     o,
+		wgOps:   ops.NewWireGuardOps(cfg.WG),
 		nft:     cfg.NFT,
-		wg:      cfg.WG,
 		dnsmasq: cfg.Dnsmasq,
 	}
 

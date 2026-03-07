@@ -7,19 +7,20 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"syscall"
 	"text/tabwriter"
 
 	"github.com/gatekeeper-firewall/gatekeeper/internal/cli"
+	"github.com/gatekeeper-firewall/gatekeeper/internal/compiler"
+	"github.com/gatekeeper-firewall/gatekeeper/internal/config"
+	"github.com/gatekeeper-firewall/gatekeeper/internal/driver"
+	"github.com/gatekeeper-firewall/gatekeeper/internal/model"
+	"github.com/gatekeeper-firewall/gatekeeper/internal/ops"
 )
 
 var version = "dev"
 
 func main() {
-	apiURL := os.Getenv("GK_API_URL")
-	if apiURL == "" {
-		apiURL = "http://localhost:8080"
-	}
-	apiKey := os.Getenv("GK_API_KEY")
 	outputFmt := os.Getenv("GK_OUTPUT")
 	if outputFmt == "" {
 		outputFmt = "json"
@@ -30,7 +31,9 @@ func main() {
 		os.Exit(1)
 	}
 
-	client := cli.NewClient(apiURL, apiKey)
+	backend, cleanup := initBackend()
+	defer cleanup()
+
 	cmd := os.Args[1]
 
 	var err error
@@ -39,41 +42,41 @@ func main() {
 		fmt.Printf("gk %s\n", version)
 		return
 	case "status":
-		err = cmdStatus(client)
+		err = cmdStatus(backend)
 	case "zone":
-		err = cmdZone(client, os.Args[2:])
+		err = cmdZone(backend, os.Args[2:])
 	case "alias":
-		err = cmdAlias(client, os.Args[2:])
+		err = cmdAlias(backend, os.Args[2:])
 	case "profile":
-		err = cmdProfile(client, os.Args[2:])
+		err = cmdProfile(backend, os.Args[2:])
 	case "policy":
-		err = cmdPolicy(client, os.Args[2:])
+		err = cmdPolicy(backend, os.Args[2:])
 	case "assign":
-		err = cmdAssign(client, os.Args[2:])
+		err = cmdAssign(backend, os.Args[2:])
 	case "unassign":
-		err = cmdUnassign(client, os.Args[2:])
+		err = cmdUnassign(backend, os.Args[2:])
 	case "commit":
-		err = cmdCommit(client, os.Args[2:])
+		err = cmdCommit(backend, os.Args[2:])
 	case "rollback":
-		err = cmdRollback(client, os.Args[2:])
+		err = cmdRollback(backend, os.Args[2:])
 	case "diff":
-		err = cmdDiff(client, os.Args[2:])
+		err = cmdDiff(backend, os.Args[2:])
 	case "export":
-		err = cmdExport(client)
+		err = cmdExport(backend)
 	case "import":
-		err = cmdImport(client, os.Args[2:])
+		err = cmdImport(backend, os.Args[2:])
 	case "wg":
-		err = cmdWG(client, os.Args[2:])
+		err = cmdWG(backend, os.Args[2:])
 	case "leases":
-		err = cmdLeases(client)
+		err = cmdLeases(backend)
 	case "test":
-		err = cmdTest(client, os.Args[2:])
+		err = cmdTest(backend, os.Args[2:])
 	case "explain":
-		err = cmdExplain(client, os.Args[2:], outputFmt)
+		err = cmdExplain(backend, os.Args[2:], outputFmt)
 	case "audit":
-		err = cmdAudit(client, outputFmt)
+		err = cmdAudit(backend, outputFmt)
 	case "ping":
-		err = cmdPing(client, os.Args[2:])
+		err = cmdPing(os.Args[2:])
 	case "help", "--help", "-h":
 		printUsage()
 		return
@@ -89,34 +92,88 @@ func main() {
 	}
 }
 
-func cmdStatus(c *cli.Client) error {
-	data, err := c.Get("/api/v1/status")
+// initBackend selects the CLI backend based on GK_MODE.
+//   - "api":    uses the HTTP API client (remote or fallback mode)
+//   - "direct": opens the SQLite DB directly via the ops layer (default)
+func initBackend() (cli.Backend, func()) {
+	mode := os.Getenv("GK_MODE")
+	if mode == "" {
+		mode = "direct"
+	}
+
+	if mode == "api" {
+		apiURL := os.Getenv("GK_API_URL")
+		if apiURL == "" {
+			apiURL = "http://localhost:8080"
+		}
+		apiKey := os.Getenv("GK_API_KEY")
+		client := cli.NewClient(apiURL, apiKey)
+		return cli.NewAPIBackend(client), func() {}
+	}
+
+	// Direct mode: open the SQLite database and call ops directly.
+	dbPath := os.Getenv("GK_DB")
+	if dbPath == "" {
+		dbPath = "/var/lib/gatekeeper/gatekeeper.db"
+	}
+	store, err := config.NewStore(dbPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: cannot open database %s: %v\n", dbPath, err)
+		fmt.Fprintf(os.Stderr, "hint: set GK_MODE=api to use the HTTP API instead\n")
+		os.Exit(1)
+	}
+	o := ops.New(store)
+	return cli.NewDirectBackend(o, nil), func() { store.Close() }
+}
+
+// signalDaemon sends SIGHUP to the daemon to trigger a config apply.
+// The CLI writes to the DB, the daemon owns the actual apply.
+func signalDaemon() error {
+	pidFile := "/run/gatekeeper/gatekeeperd.pid"
+	data, err := os.ReadFile(pidFile)
+	if err != nil {
+		return fmt.Errorf("cannot read daemon PID file %s: %w (is gatekeeperd running?)", pidFile, err)
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil {
+		return fmt.Errorf("invalid PID in %s: %w", pidFile, err)
+	}
+	// Use syscall.Kill for signaling — no shell execution, no injection risk.
+	if err := syscall.Kill(pid, syscall.SIGHUP); err != nil {
+		return fmt.Errorf("failed to signal daemon (pid %d): %w", pid, err)
+	}
+	return nil
+}
+
+func cmdStatus(b cli.Backend) error {
+	// Status is a simple health check — list zones as a proxy.
+	zones, err := b.ListZones()
 	if err != nil {
 		return err
 	}
-	return printJSON(data)
+	return printJSON(map[string]any{"status": "ok", "zones": len(zones)})
 }
 
-func cmdZone(c *cli.Client, args []string) error {
+func cmdZone(b cli.Backend, args []string) error {
 	if len(args) == 0 {
 		return fmt.Errorf("usage: gk zone <list|show|create|delete> [options]")
 	}
 	switch args[0] {
 	case "list":
-		data, err := c.Get("/api/v1/zones")
+		zones, err := b.ListZones()
 		if err != nil {
 			return err
 		}
-		return printJSON(data)
+		return printJSON(zones)
 	case "show":
 		if len(args) < 2 {
 			return fmt.Errorf("usage: gk zone show <name>")
 		}
-		data, err := c.Get("/api/v1/zones/" + args[1])
+		zone, err := b.GetZone(args[1])
 		if err != nil {
 			return err
 		}
-		return printJSON(data)
+		return printJSON(zone)
 	case "create":
 		fs := flag.NewFlagSet("zone create", flag.ExitOnError)
 		name := fs.String("name", "", "Zone name")
@@ -124,47 +181,41 @@ func cmdZone(c *cli.Client, args []string) error {
 		cidr := fs.String("cidr", "", "Network CIDR")
 		trust := fs.String("trust", "none", "Trust level")
 		_ = fs.Parse(args[1:])
-		data, err := c.Post("/api/v1/zones", map[string]string{
-			"name": *name, "interface": *iface, "network_cidr": *cidr, "trust_level": *trust,
-		})
-		if err != nil {
+		z := &model.Zone{Name: *name, Interface: *iface, NetworkCIDR: *cidr, TrustLevel: *trust}
+		if err := b.CreateZone(z); err != nil {
 			return err
 		}
-		return printJSON(data)
+		return printJSON(z)
 	case "delete":
 		if len(args) < 2 {
 			return fmt.Errorf("usage: gk zone delete <name>")
 		}
-		data, err := c.Delete("/api/v1/zones/"+args[1], nil)
-		if err != nil {
-			return err
-		}
-		return printJSON(data)
+		return b.DeleteZone(args[1])
 	default:
 		return fmt.Errorf("unknown zone command: %s", args[0])
 	}
 }
 
-func cmdAlias(c *cli.Client, args []string) error {
+func cmdAlias(b cli.Backend, args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: gk alias <list|show|create|delete|add-member|remove-member>")
+		return fmt.Errorf("usage: gk alias <list|show|create|delete|add-member>")
 	}
 	switch args[0] {
 	case "list":
-		data, err := c.Get("/api/v1/aliases")
+		aliases, err := b.ListAliases()
 		if err != nil {
 			return err
 		}
-		return printJSON(data)
+		return printJSON(aliases)
 	case "show":
 		if len(args) < 2 {
 			return fmt.Errorf("usage: gk alias show <name>")
 		}
-		data, err := c.Get("/api/v1/aliases/" + args[1])
+		alias, err := b.GetAlias(args[1])
 		if err != nil {
 			return err
 		}
-		return printJSON(data)
+		return printJSON(alias)
 	case "create":
 		fs := flag.NewFlagSet("alias create", flag.ExitOnError)
 		name := fs.String("name", "", "Alias name")
@@ -175,100 +226,88 @@ func cmdAlias(c *cli.Client, args []string) error {
 		if *members != "" {
 			memberList = strings.Split(*members, ",")
 		}
-		data, err := c.Post("/api/v1/aliases", map[string]any{
-			"name": *name, "type": *typ, "members": memberList,
-		})
-		if err != nil {
+		a := &model.Alias{Name: *name, Type: model.AliasType(*typ), Members: memberList}
+		if err := b.CreateAlias(a); err != nil {
 			return err
 		}
-		return printJSON(data)
+		return printJSON(a)
 	case "delete":
 		if len(args) < 2 {
 			return fmt.Errorf("usage: gk alias delete <name>")
 		}
-		data, err := c.Delete("/api/v1/aliases/"+args[1], nil)
-		if err != nil {
-			return err
-		}
-		return printJSON(data)
+		return b.DeleteAlias(args[1])
 	case "add-member":
 		if len(args) < 3 {
 			return fmt.Errorf("usage: gk alias add-member <alias> <member>")
 		}
-		data, err := c.Post("/api/v1/aliases/"+args[1]+"/members", map[string]string{"member": args[2]})
-		if err != nil {
-			return err
-		}
-		return printJSON(data)
+		return b.AddAliasMember(args[1], args[2])
 	default:
 		return fmt.Errorf("unknown alias command: %s", args[0])
 	}
 }
 
-func cmdProfile(c *cli.Client, args []string) error {
+func cmdProfile(b cli.Backend, args []string) error {
 	if len(args) == 0 {
 		return fmt.Errorf("usage: gk profile <list|show|create>")
 	}
 	switch args[0] {
 	case "list":
-		data, err := c.Get("/api/v1/profiles")
+		profiles, err := b.ListProfiles()
 		if err != nil {
 			return err
 		}
-		return printJSON(data)
+		return printJSON(profiles)
 	case "show":
 		if len(args) < 2 {
 			return fmt.Errorf("usage: gk profile show <name>")
 		}
-		data, err := c.Get("/api/v1/profiles/" + args[1])
+		profile, err := b.GetProfile(args[1])
 		if err != nil {
 			return err
 		}
-		return printJSON(data)
+		return printJSON(profile)
 	case "create":
 		fs := flag.NewFlagSet("profile create", flag.ExitOnError)
 		name := fs.String("name", "", "Profile name")
 		zoneID := fs.Int("zone-id", 0, "Zone ID")
 		policy := fs.String("policy", "", "Policy name")
 		_ = fs.Parse(args[1:])
-		data, err := c.Post("/api/v1/profiles", map[string]any{
-			"name": *name, "zone_id": *zoneID, "policy_name": *policy,
-		})
-		if err != nil {
+		p := &model.Profile{Name: *name, ZoneID: int64(*zoneID), PolicyName: *policy}
+		if err := b.CreateProfile(p); err != nil {
 			return err
 		}
-		return printJSON(data)
+		return printJSON(p)
 	default:
 		return fmt.Errorf("unknown profile command: %s", args[0])
 	}
 }
 
-func cmdPolicy(c *cli.Client, args []string) error {
+func cmdPolicy(b cli.Backend, args []string) error {
 	if len(args) == 0 {
 		return fmt.Errorf("usage: gk policy <list|show>")
 	}
 	switch args[0] {
 	case "list":
-		data, err := c.Get("/api/v1/policies")
+		policies, err := b.ListPolicies()
 		if err != nil {
 			return err
 		}
-		return printJSON(data)
+		return printJSON(policies)
 	case "show":
 		if len(args) < 2 {
 			return fmt.Errorf("usage: gk policy show <name>")
 		}
-		data, err := c.Get("/api/v1/policies/" + args[1])
+		policy, err := b.GetPolicy(args[1])
 		if err != nil {
 			return err
 		}
-		return printJSON(data)
+		return printJSON(policy)
 	default:
 		return fmt.Errorf("unknown policy command: %s", args[0])
 	}
 }
 
-func cmdAssign(c *cli.Client, args []string) error {
+func cmdAssign(b cli.Backend, args []string) error {
 	fs := flag.NewFlagSet("assign", flag.ExitOnError)
 	profile := fs.String("profile", "", "Profile name")
 	hostname := fs.String("hostname", "", "Device hostname")
@@ -278,27 +317,21 @@ func cmdAssign(c *cli.Client, args []string) error {
 		return fmt.Errorf("usage: gk assign <ip> --profile <name> [--hostname <name>] [--mac <addr>]")
 	}
 	ip := fs.Arg(0)
-	data, err := c.Post("/api/v1/assign", map[string]string{
-		"ip": ip, "profile": *profile, "hostname": *hostname, "mac": *mac,
-	})
+	d, err := b.AssignDevice(ip, *mac, *hostname, *profile, 0)
 	if err != nil {
 		return err
 	}
-	return printJSON(data)
+	return printJSON(d)
 }
 
-func cmdUnassign(c *cli.Client, args []string) error {
+func cmdUnassign(b cli.Backend, args []string) error {
 	if len(args) < 1 {
 		return fmt.Errorf("usage: gk unassign <ip>")
 	}
-	data, err := c.Delete("/api/v1/unassign", map[string]string{"ip": args[0]})
-	if err != nil {
-		return err
-	}
-	return printJSON(data)
+	return b.UnassignDevice(args[0])
 }
 
-func cmdCommit(c *cli.Client, args []string) error {
+func cmdCommit(b cli.Backend, args []string) error {
 	fs := flag.NewFlagSet("commit", flag.ExitOnError)
 	message := fs.String("message", "", "Commit message")
 	_ = fs.Parse(args)
@@ -309,46 +342,69 @@ func cmdCommit(c *cli.Client, args []string) error {
 	if msg == "" {
 		msg = "manual commit"
 	}
-	data, err := c.Post("/api/v1/config/commit", map[string]string{"message": msg})
+
+	// Write the revision to the DB.
+	rev, err := b.Commit(msg)
 	if err != nil {
 		return err
 	}
-	return printJSON(data)
+	fmt.Printf("committed revision %d\n", rev)
+
+	// Signal the daemon to apply the new config.
+	// In direct mode, the CLI only writes to the DB — apply is daemon-owned.
+	if os.Getenv("GK_MODE") != "api" {
+		if err := signalDaemon(); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: %v\n", err)
+			fmt.Fprintf(os.Stderr, "config committed but not applied — restart gatekeeperd or run 'gk commit' via API\n")
+		}
+	}
+	return nil
 }
 
-func cmdRollback(c *cli.Client, args []string) error {
+func cmdRollback(b cli.Backend, args []string) error {
 	if len(args) < 1 {
 		return fmt.Errorf("usage: gk rollback <rev>")
 	}
-	data, err := c.Post("/api/v1/config/rollback/"+args[0], nil)
+	rev, err := strconv.Atoi(args[0])
 	if err != nil {
+		return fmt.Errorf("invalid revision number: %s", args[0])
+	}
+	if err := b.Rollback(rev); err != nil {
 		return err
 	}
-	return printJSON(data)
+	fmt.Printf("rolled back to revision %d\n", rev)
+
+	// Signal daemon to apply.
+	if os.Getenv("GK_MODE") != "api" {
+		if err := signalDaemon(); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: %v\n", err)
+		}
+	}
+	return nil
 }
 
-func cmdDiff(c *cli.Client, args []string) error {
+func cmdDiff(b cli.Backend, args []string) error {
 	if len(args) < 2 {
 		return fmt.Errorf("usage: gk diff <rev1> <rev2>")
 	}
 	rev1, _ := strconv.Atoi(args[0])
 	rev2, _ := strconv.Atoi(args[1])
-	data, err := c.Get(fmt.Sprintf("/api/v1/config/diff?rev1=%d&rev2=%d", rev1, rev2))
+	snap1, snap2, err := b.Diff(rev1, rev2)
 	if err != nil {
 		return err
 	}
-	return printJSON(data)
+	return printJSON(map[string]any{"rev1": snap1, "rev2": snap2})
 }
 
-func cmdExport(c *cli.Client) error {
-	data, err := c.Get("/api/v1/config/export")
+func cmdExport(b cli.Backend) error {
+	snap, err := b.Export()
 	if err != nil {
 		return err
 	}
-	return printJSON(data)
+	return printJSON(snap)
 }
 
-func cmdImport(c *cli.Client, args []string) error {
+func cmdImport(b cli.Backend, args []string) error {
 	if len(args) < 1 {
 		return fmt.Errorf("usage: gk import <file.json>")
 	}
@@ -356,28 +412,24 @@ func cmdImport(c *cli.Client, args []string) error {
 	if err != nil {
 		return fmt.Errorf("read file: %w", err)
 	}
-	var snap any
+	var snap config.ConfigSnapshot
 	if err := json.Unmarshal(data, &snap); err != nil {
 		return fmt.Errorf("invalid JSON: %w", err)
 	}
-	result, err := c.Post("/api/v1/config/import", snap)
-	if err != nil {
-		return err
-	}
-	return printJSON(result)
+	return b.Import(&snap)
 }
 
-func cmdWG(c *cli.Client, args []string) error {
+func cmdWG(b cli.Backend, args []string) error {
 	if len(args) == 0 {
 		return fmt.Errorf("usage: gk wg <peers|add-peer|remove-peer>")
 	}
 	switch args[0] {
 	case "peers":
-		data, err := c.Get("/api/v1/wg/peers")
+		peers, err := b.ListWGPeers()
 		if err != nil {
 			return err
 		}
-		return printJSON(data)
+		return printJSON(peers)
 	case "add-peer":
 		fs := flag.NewFlagSet("wg add-peer", flag.ExitOnError)
 		pubKey := fs.String("pubkey", "", "Peer public key")
@@ -387,36 +439,62 @@ func cmdWG(c *cli.Client, args []string) error {
 		if *pubKey == "" || *allowedIPs == "" {
 			return fmt.Errorf("usage: gk wg add-peer --pubkey <key> --allowed-ips <cidr> [--name <name>]")
 		}
-		data, err := c.Post("/api/v1/wg/peers", map[string]string{
-			"public_key": *pubKey, "allowed_ips": *allowedIPs, "name": *name,
-		})
-		if err != nil {
-			return err
-		}
-		return printJSON(data)
+		return b.AddWGPeer(driver.WGPeer{PublicKey: *pubKey, AllowedIPs: *allowedIPs, Name: *name})
 	case "remove-peer":
 		if len(args) < 2 {
 			return fmt.Errorf("usage: gk wg remove-peer <pubkey>")
 		}
-		data, err := c.Delete("/api/v1/wg/peers/"+args[1], nil)
-		if err != nil {
-			return err
-		}
-		return printJSON(data)
+		return b.RemoveWGPeer(args[1])
 	default:
 		return fmt.Errorf("unknown wg command: %s", args[0])
 	}
 }
 
-func cmdLeases(c *cli.Client) error {
-	data, err := c.Get("/api/v1/diag/leases")
+func cmdLeases(b cli.Backend) error {
+	// Leases are read from a local file — in direct mode, read directly.
+	// In API mode, call the API endpoint.
+	if os.Getenv("GK_MODE") == "api" {
+		apiURL := os.Getenv("GK_API_URL")
+		if apiURL == "" {
+			apiURL = "http://localhost:8080"
+		}
+		client := cli.NewClient(apiURL, os.Getenv("GK_API_KEY"))
+		data, err := client.Get("/api/v1/diag/leases")
+		if err != nil {
+			return err
+		}
+		return printJSONRaw(data)
+	}
+
+	// Direct mode: parse lease file locally.
+	data, err := os.ReadFile("/var/lib/misc/dnsmasq.leases")
 	if err != nil {
+		if os.IsNotExist(err) {
+			return printJSON([]struct{}{})
+		}
 		return err
 	}
-	return printJSON(data)
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	type lease struct {
+		Expiry   string `json:"expiry"`
+		MAC      string `json:"mac"`
+		IP       string `json:"ip"`
+		Hostname string `json:"hostname"`
+	}
+	var leases []lease
+	for _, line := range lines {
+		if line == "" {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) >= 4 {
+			leases = append(leases, lease{Expiry: fields[0], MAC: fields[1], IP: fields[2], Hostname: fields[3]})
+		}
+	}
+	return printJSON(leases)
 }
 
-func cmdTest(c *cli.Client, args []string) error {
+func cmdTest(b cli.Backend, args []string) error {
 	fs := flag.NewFlagSet("test", flag.ExitOnError)
 	srcIP := fs.String("src", "", "Source IP")
 	dstIP := fs.String("dst", "", "Destination IP")
@@ -426,27 +504,34 @@ func cmdTest(c *cli.Client, args []string) error {
 	if *srcIP == "" || *dstIP == "" {
 		return fmt.Errorf("usage: gk test --src <ip> --dst <ip> [--proto tcp] [--port 80]")
 	}
-	data, err := c.Post("/api/v1/test", map[string]any{
-		"src_ip": *srcIP, "dst_ip": *dstIP, "protocol": *proto, "dst_port": *port,
+	result, err := b.PathTest(compiler.PathTestRequest{
+		SrcIP: *srcIP, DstIP: *dstIP, Protocol: *proto, DstPort: *port,
 	})
 	if err != nil {
 		return err
 	}
-	return printJSON(data)
+	return printJSON(result)
 }
 
-func cmdPing(c *cli.Client, args []string) error {
+func cmdPing(args []string) error {
 	if len(args) < 1 {
 		return fmt.Errorf("usage: gk ping <target>")
 	}
-	data, err := c.Get("/api/v1/diag/ping/" + args[0])
-	if err != nil {
-		return err
+	target := args[0]
+	// Validate target to prevent command injection.
+	for _, c := range target {
+		valid := (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '.' || c == '-' || c == ':'
+		if !valid {
+			return fmt.Errorf("invalid target: must be an IP or hostname")
+		}
 	}
-	return printJSON(data)
+	cmd := newCommand("ping", "-c", "3", "-W", "2", target)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
 }
 
-func cmdExplain(c *cli.Client, args []string, outputFmt string) error {
+func cmdExplain(b cli.Backend, args []string, outputFmt string) error {
 	fs := flag.NewFlagSet("explain", flag.ExitOnError)
 	srcIP := fs.String("src", "", "Source IP")
 	dstIP := fs.String("dst", "", "Destination IP")
@@ -456,32 +541,14 @@ func cmdExplain(c *cli.Client, args []string, outputFmt string) error {
 	if *srcIP == "" || *dstIP == "" {
 		return fmt.Errorf("usage: gk explain --src <ip> --dst <ip> [--proto tcp] [--port 80]")
 	}
-	data, err := c.Post("/api/v1/explain", map[string]any{
-		"src_ip": *srcIP, "dst_ip": *dstIP, "protocol": *proto, "dst_port": *port,
+	result, err := b.Explain(compiler.PathTestRequest{
+		SrcIP: *srcIP, DstIP: *dstIP, Protocol: *proto, DstPort: *port,
 	})
 	if err != nil {
 		return err
 	}
 
 	if outputFmt == "table" {
-		var result struct {
-			SrcZone       string `json:"src_zone"`
-			DstZone       string `json:"dst_zone"`
-			FinalAction   string `json:"final_action"`
-			MatchingRules []struct {
-				PolicyName string `json:"policy_name"`
-				Order      int    `json:"order"`
-				Protocol   string `json:"protocol"`
-				Ports      string `json:"ports"`
-				Action     string `json:"action"`
-				Matches    bool   `json:"matches"`
-				Desc       string `json:"description"`
-			} `json:"matching_rules"`
-			Trace []string `json:"trace"`
-		}
-		if err := json.Unmarshal(data, &result); err != nil {
-			return printJSON(data)
-		}
 		fmt.Printf("Source zone: %s → Destination zone: %s\n", result.SrcZone, result.DstZone)
 		fmt.Printf("Final action: %s\n\n", result.FinalAction)
 		tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
@@ -492,7 +559,7 @@ func cmdExplain(c *cli.Client, args []string, outputFmt string) error {
 				match = "*"
 			}
 			fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\t%s\t%s\n",
-				r.Order, r.PolicyName, r.Protocol, r.Ports, r.Action, match, r.Desc)
+				r.Order, r.PolicyName, r.Protocol, r.Ports, r.Action, match, r.Description)
 		}
 		tw.Flush()
 		if len(result.Trace) > 0 {
@@ -503,47 +570,41 @@ func cmdExplain(c *cli.Client, args []string, outputFmt string) error {
 		}
 		return nil
 	}
-	return printJSON(data)
+	return printJSON(result)
 }
 
-func cmdAudit(c *cli.Client, outputFmt string) error {
-	data, err := c.Get("/api/v1/audit")
+func cmdAudit(b cli.Backend, outputFmt string) error {
+	entries, err := b.ListAuditLog(100)
 	if err != nil {
 		return err
 	}
 	if outputFmt == "table" {
-		var entries []struct {
-			ID        int64  `json:"id"`
-			Timestamp string `json:"timestamp"`
-			Action    string `json:"action"`
-			Resource  string `json:"resource"`
-			ResID     string `json:"resource_id"`
-		}
-		if err := json.Unmarshal(data, &entries); err != nil {
-			return printJSON(data)
-		}
 		tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-		fmt.Fprintln(tw, "ID\tTIMESTAMP\tACTION\tRESOURCE\tRESOURCE_ID")
+		fmt.Fprintln(tw, "ID\tTIMESTAMP\tSOURCE\tACTION\tRESOURCE\tRESOURCE_ID")
 		for _, e := range entries {
-			fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\n", e.ID, e.Timestamp, e.Action, e.Resource, e.ResID)
+			fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\t%s\n", e.ID, e.Timestamp, e.Source, e.Action, e.Resource, e.ResourceID)
 		}
 		return tw.Flush()
 	}
-	return printJSON(data)
+	return printJSON(entries)
 }
 
-func printJSON(data []byte) error {
-	var v any
-	if err := json.Unmarshal(data, &v); err != nil {
-		fmt.Println(string(data))
-		return nil
-	}
+func printJSON(v any) error {
 	out, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
 		return err
 	}
 	fmt.Println(string(out))
 	return nil
+}
+
+func printJSONRaw(data []byte) error {
+	var v any
+	if err := json.Unmarshal(data, &v); err != nil {
+		fmt.Println(string(data))
+		return nil
+	}
+	return printJSON(v)
 }
 
 func printUsage() {
@@ -571,7 +632,9 @@ Commands:
   version     Show version
 
 Environment:
-  GK_API_URL  API base URL (default: http://localhost:8080)
-  GK_API_KEY  API key for authentication
+  GK_MODE     Backend mode: direct (default) or api
+  GK_DB       SQLite database path (direct mode, default: /var/lib/gatekeeper/gatekeeper.db)
+  GK_API_URL  API base URL (api mode, default: http://localhost:8080)
+  GK_API_KEY  API key for authentication (api mode)
   GK_OUTPUT   Output format: json (default) or table`)
 }

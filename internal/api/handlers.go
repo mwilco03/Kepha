@@ -2,7 +2,6 @@ package api
 
 import (
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"os/exec"
@@ -13,14 +12,17 @@ import (
 	"github.com/gatekeeper-firewall/gatekeeper/internal/config"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/driver"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/model"
-	"github.com/gatekeeper-firewall/gatekeeper/internal/validate"
+	"github.com/gatekeeper-firewall/gatekeeper/internal/ops"
 )
 
+// apiActor identifies all API-originated mutations in the audit log.
+var apiActor = ops.Actor{Source: "api", User: "api"}
+
 type handlers struct {
-	store   *config.Store
-	nft     *driver.NFTables
-	wg      *driver.WireGuard
-	dnsmasq *driver.Dnsmasq
+	ops     *ops.Ops
+	wgOps   *ops.WireGuardOps
+	nft     *driver.NFTables  // Only used for apply/dry-run (daemon-owned)
+	dnsmasq *driver.Dnsmasq   // Only used for lease parsing (daemon-owned)
 }
 
 // --- Zones ---
@@ -28,7 +30,7 @@ type handlers struct {
 func (h *handlers) listZones(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Query().Has("limit") || r.URL.Query().Has("offset") {
 		p := config.ParsePagination(r.URL.Query().Get("limit"), r.URL.Query().Get("offset"))
-		zones, total, err := h.store.ListZonesPaginated(p)
+		zones, total, err := h.ops.Store().ListZonesPaginated(p)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
@@ -39,7 +41,7 @@ func (h *handlers) listZones(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"data": zones, "total": total, "limit": p.Limit, "offset": p.Offset})
 		return
 	}
-	zones, err := h.store.ListZones()
+	zones, err := h.ops.ListZones()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -49,7 +51,7 @@ func (h *handlers) listZones(w http.ResponseWriter, r *http.Request) {
 
 func (h *handlers) getZone(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	zone, err := h.store.GetZone(name)
+	zone, err := h.ops.GetZone(name)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -67,37 +69,18 @@ func (h *handlers) createZone(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if z.Name == "" {
-		writeError(w, http.StatusBadRequest, "name is required")
-		return
-	}
-	if !validName(z.Name) {
-		writeError(w, http.StatusBadRequest, "name must be alphanumeric with hyphens/underscores, max 64 chars")
-		return
-	}
-	if err := validate.Interface(z.Interface); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	if err := validate.CIDR(z.NetworkCIDR); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	if z.TrustLevel != "" {
-		if err := validate.TrustLevel(z.TrustLevel); err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-	}
 	if isDryRun(r) {
 		writeJSON(w, http.StatusOK, map[string]any{"dry_run": true, "action": "create_zone", "data": z})
 		return
 	}
-	if err := h.store.CreateZone(&z); err != nil {
-		writeError(w, http.StatusConflict, err.Error())
+	if err := h.ops.CreateZone(apiActor, &z); err != nil {
+		if strings.Contains(err.Error(), "already exists") || strings.Contains(err.Error(), "UNIQUE constraint") {
+			writeError(w, http.StatusConflict, err.Error())
+		} else {
+			writeError(w, http.StatusBadRequest, err.Error())
+		}
 		return
 	}
-	_ = h.store.LogAudit("create", "zone", z.Name, z)
 	writeJSON(w, http.StatusCreated, z)
 }
 
@@ -109,42 +92,26 @@ func (h *handlers) updateZone(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	z.Name = name
-	if err := validate.Interface(z.Interface); err != nil {
+	if err := h.ops.UpdateZone(apiActor, &z); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := validate.CIDR(z.NetworkCIDR); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	if z.TrustLevel != "" {
-		if err := validate.TrustLevel(z.TrustLevel); err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-	}
-	if err := h.store.UpdateZone(&z); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	_ = h.store.LogAudit("update", "zone", z.Name, z)
 	writeJSON(w, http.StatusOK, z)
 }
 
 func (h *handlers) deleteZone(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if err := h.store.DeleteZone(name); err != nil {
+	if err := h.ops.DeleteZone(apiActor, name); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	_ = h.store.LogAudit("delete", "zone", name, nil)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
 // --- Aliases ---
 
 func (h *handlers) listAliases(w http.ResponseWriter, r *http.Request) {
-	aliases, err := h.store.ListAliases()
+	aliases, err := h.ops.ListAliases()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -170,7 +137,7 @@ func (h *handlers) listAliases(w http.ResponseWriter, r *http.Request) {
 
 func (h *handlers) getAlias(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	alias, err := h.store.GetAlias(name)
+	alias, err := h.ops.GetAlias(name)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -188,35 +155,13 @@ func (h *handlers) createAlias(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if a.Name == "" || a.Type == "" {
-		writeError(w, http.StatusBadRequest, "name and type are required")
-		return
-	}
-	if !validName(a.Name) {
-		writeError(w, http.StatusBadRequest, "name must be alphanumeric with hyphens/underscores, max 64 chars")
-		return
-	}
-	if err := validate.AliasType(string(a.Type)); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	for _, m := range a.Members {
-		if err := validate.AliasMember(m, string(a.Type)); err != nil {
+	if err := h.ops.CreateAlias(apiActor, &a); err != nil {
+		if strings.Contains(err.Error(), "already exists") || strings.Contains(err.Error(), "UNIQUE constraint") {
+			writeError(w, http.StatusConflict, err.Error())
+		} else {
 			writeError(w, http.StatusBadRequest, err.Error())
-			return
 		}
-	}
-	if err := h.store.CreateAlias(&a); err != nil {
-		writeError(w, http.StatusConflict, err.Error())
 		return
-	}
-	_ = h.store.LogAudit("create", "alias", a.Name, a)
-	if a.Type == model.AliasTypeNested {
-		if err := h.store.CheckAliasCycles(a.Name); err != nil {
-			_ = h.store.DeleteAlias(a.Name)
-			writeError(w, http.StatusBadRequest, err.Error())
-			return
-		}
 	}
 	writeJSON(w, http.StatusCreated, a)
 }
@@ -229,7 +174,7 @@ func (h *handlers) updateAlias(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.Name = name
-	if err := h.store.UpdateAlias(&a); err != nil {
+	if err := h.ops.UpdateAlias(apiActor, &a); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -238,11 +183,10 @@ func (h *handlers) updateAlias(w http.ResponseWriter, r *http.Request) {
 
 func (h *handlers) deleteAlias(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if err := h.store.DeleteAlias(name); err != nil {
+	if err := h.ops.DeleteAlias(apiActor, name); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	_ = h.store.LogAudit("delete", "alias", name, nil)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
@@ -255,18 +199,12 @@ func (h *handlers) addAliasMember(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "member is required")
 		return
 	}
-	// Look up alias to validate member against its type.
-	alias, err := h.store.GetAlias(name)
-	if err != nil || alias == nil {
-		writeError(w, http.StatusNotFound, "alias not found")
-		return
-	}
-	if err := validate.AliasMember(body.Member, string(alias.Type)); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	if err := h.store.AddAliasMember(name, body.Member); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+	if err := h.ops.AddAliasMember(apiActor, name, body.Member); err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			writeError(w, http.StatusNotFound, err.Error())
+		} else {
+			writeError(w, http.StatusBadRequest, err.Error())
+		}
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "added"})
@@ -281,7 +219,7 @@ func (h *handlers) removeAliasMember(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "member is required")
 		return
 	}
-	if err := h.store.RemoveAliasMember(name, body.Member); err != nil {
+	if err := h.ops.RemoveAliasMember(name, body.Member); err != nil {
 		if strings.Contains(err.Error(), "not found") {
 			writeError(w, http.StatusNotFound, err.Error())
 		} else {
@@ -295,7 +233,7 @@ func (h *handlers) removeAliasMember(w http.ResponseWriter, r *http.Request) {
 // --- Profiles ---
 
 func (h *handlers) listProfiles(w http.ResponseWriter, r *http.Request) {
-	profiles, err := h.store.ListProfiles()
+	profiles, err := h.ops.ListProfiles()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -321,7 +259,7 @@ func (h *handlers) listProfiles(w http.ResponseWriter, r *http.Request) {
 
 func (h *handlers) getProfile(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	profile, err := h.store.GetProfile(name)
+	profile, err := h.ops.GetProfile(name)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -339,16 +277,12 @@ func (h *handlers) createProfile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if p.Name == "" {
-		writeError(w, http.StatusBadRequest, "name is required")
-		return
-	}
-	if !validName(p.Name) {
-		writeError(w, http.StatusBadRequest, "name must be alphanumeric with hyphens/underscores, max 64 chars")
-		return
-	}
-	if err := h.store.CreateProfile(&p); err != nil {
-		writeError(w, http.StatusConflict, err.Error())
+	if err := h.ops.CreateProfile(apiActor, &p); err != nil {
+		if strings.Contains(err.Error(), "already exists") || strings.Contains(err.Error(), "UNIQUE constraint") {
+			writeError(w, http.StatusConflict, err.Error())
+		} else {
+			writeError(w, http.StatusBadRequest, err.Error())
+		}
 		return
 	}
 	writeJSON(w, http.StatusCreated, p)
@@ -362,7 +296,7 @@ func (h *handlers) updateProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p.Name = name
-	if err := h.store.UpdateProfile(&p); err != nil {
+	if err := h.ops.UpdateProfile(apiActor, &p); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -371,7 +305,7 @@ func (h *handlers) updateProfile(w http.ResponseWriter, r *http.Request) {
 
 func (h *handlers) deleteProfile(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if err := h.store.DeleteProfile(name); err != nil {
+	if err := h.ops.DeleteProfile(apiActor, name); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -381,7 +315,7 @@ func (h *handlers) deleteProfile(w http.ResponseWriter, r *http.Request) {
 // --- Policies ---
 
 func (h *handlers) listPolicies(w http.ResponseWriter, r *http.Request) {
-	policies, err := h.store.ListPolicies()
+	policies, err := h.ops.ListPolicies()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -407,7 +341,7 @@ func (h *handlers) listPolicies(w http.ResponseWriter, r *http.Request) {
 
 func (h *handlers) getPolicy(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	policy, err := h.store.GetPolicy(name)
+	policy, err := h.ops.GetPolicy(name)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -425,16 +359,12 @@ func (h *handlers) createPolicy(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if p.Name == "" {
-		writeError(w, http.StatusBadRequest, "name is required")
-		return
-	}
-	if !validName(p.Name) {
-		writeError(w, http.StatusBadRequest, "name must be alphanumeric with hyphens/underscores, max 64 chars")
-		return
-	}
-	if err := h.store.CreatePolicy(&p); err != nil {
-		writeError(w, http.StatusConflict, err.Error())
+	if err := h.ops.CreatePolicy(apiActor, &p); err != nil {
+		if strings.Contains(err.Error(), "already exists") || strings.Contains(err.Error(), "UNIQUE constraint") {
+			writeError(w, http.StatusConflict, err.Error())
+		} else {
+			writeError(w, http.StatusBadRequest, err.Error())
+		}
 		return
 	}
 	writeJSON(w, http.StatusCreated, p)
@@ -448,7 +378,7 @@ func (h *handlers) updatePolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p.Name = name
-	if err := h.store.UpdatePolicy(&p); err != nil {
+	if err := h.ops.UpdatePolicy(apiActor, &p); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -457,7 +387,7 @@ func (h *handlers) updatePolicy(w http.ResponseWriter, r *http.Request) {
 
 func (h *handlers) deletePolicy(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if err := h.store.DeletePolicy(name); err != nil {
+	if err := h.ops.DeletePolicy(apiActor, name); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -473,20 +403,8 @@ func (h *handlers) createRule(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := validate.Protocol(rule.Protocol); err != nil {
+	if err := h.ops.CreateRule(apiActor, policyName, &rule); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	if err := validate.Ports(rule.Ports); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	if err := validate.Action(string(rule.Action)); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	if err := h.store.CreateRule(policyName, &rule); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusCreated, rule)
@@ -499,7 +417,7 @@ func (h *handlers) deleteRule(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid rule id")
 		return
 	}
-	if err := h.store.DeleteRule(id); err != nil {
+	if err := h.ops.DeleteRule(apiActor, id); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -509,7 +427,7 @@ func (h *handlers) deleteRule(w http.ResponseWriter, r *http.Request) {
 // --- Devices ---
 
 func (h *handlers) listDevices(w http.ResponseWriter, r *http.Request) {
-	devices, err := h.store.ListDevices()
+	devices, err := h.ops.ListDevices()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -545,48 +463,11 @@ func (h *handlers) assignDevice(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if body.IP == "" {
-		writeError(w, http.StatusBadRequest, "ip is required")
-		return
-	}
-	if err := validate.IP(body.IP); err != nil {
+	d, err := h.ops.AssignDevice(apiActor, body.IP, body.MAC, body.Hostname, body.Profile, body.ProfileID)
+	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := validate.MAC(body.MAC); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	if err := validate.Hostname(body.Hostname); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	profileID := body.ProfileID
-	if profileID == 0 && body.Profile != "" {
-		p, err := h.store.GetProfile(body.Profile)
-		if err != nil || p == nil {
-			writeError(w, http.StatusBadRequest, "profile not found")
-			return
-		}
-		profileID = p.ID
-	}
-	if profileID == 0 {
-		writeError(w, http.StatusBadRequest, "profile or profile_id is required")
-		return
-	}
-
-	d := &model.DeviceAssignment{
-		IP:        body.IP,
-		MAC:       body.MAC,
-		Hostname:  body.Hostname,
-		ProfileID: profileID,
-	}
-	if err := h.store.AssignDevice(d); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	_ = h.store.LogAudit("assign", "device", d.IP, d)
 	writeJSON(w, http.StatusCreated, d)
 }
 
@@ -598,7 +479,7 @@ func (h *handlers) unassignDevice(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "ip is required")
 		return
 	}
-	if err := h.store.UnassignDevice(body.IP); err != nil {
+	if err := h.ops.UnassignDevice(apiActor, body.IP); err != nil {
 		if strings.Contains(err.Error(), "not found") {
 			writeError(w, http.StatusNotFound, err.Error())
 		} else {
@@ -616,9 +497,6 @@ func (h *handlers) commitConfig(w http.ResponseWriter, r *http.Request) {
 		Message string `json:"message"`
 	}
 	_ = readJSON(r, &body)
-	if body.Message == "" {
-		body.Message = "manual commit"
-	}
 
 	if isDryRun(r) {
 		if h.nft != nil {
@@ -634,12 +512,13 @@ func (h *handlers) commitConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rev, err := h.store.Commit(body.Message)
+	rev, err := h.ops.Commit(apiActor, body.Message)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
+	// Daemon-owned: apply nftables after commit.
 	if h.nft != nil {
 		if err := h.nft.Apply(); err != nil {
 			writeError(w, http.StatusInternalServerError, "commit saved but apply failed: "+err.Error())
@@ -647,7 +526,6 @@ func (h *handlers) commitConfig(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	_ = h.store.LogAudit("commit", "config", fmt.Sprintf("%d", rev), map[string]string{"message": body.Message})
 	writeJSON(w, http.StatusOK, map[string]any{"rev": rev, "message": body.Message})
 }
 
@@ -658,11 +536,12 @@ func (h *handlers) rollbackConfig(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid revision number")
 		return
 	}
-	if err := h.store.Rollback(rev); err != nil {
+	if err := h.ops.Rollback(apiActor, rev); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
+	// Daemon-owned: apply nftables after rollback.
 	if h.nft != nil {
 		if err := h.nft.Apply(); err != nil {
 			writeError(w, http.StatusInternalServerError, "rollback saved but apply failed: "+err.Error())
@@ -674,7 +553,7 @@ func (h *handlers) rollbackConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) listRevisions(w http.ResponseWriter, r *http.Request) {
-	revs, err := h.store.ListRevisions()
+	revs, err := h.ops.ListRevisions()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -689,7 +568,7 @@ func (h *handlers) diffConfig(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "rev1 and rev2 query params required")
 		return
 	}
-	snap1, snap2, err := h.store.Diff(rev1, rev2)
+	snap1, snap2, err := h.ops.Diff(rev1, rev2)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -698,7 +577,7 @@ func (h *handlers) diffConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) exportConfig(w http.ResponseWriter, r *http.Request) {
-	snap, err := h.store.Export()
+	snap, err := h.ops.Export()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -712,7 +591,7 @@ func (h *handlers) importConfig(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := h.store.Import(&snap); err != nil {
+	if err := h.ops.Import(apiActor, &snap); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -729,7 +608,7 @@ func (h *handlers) confirmApply(w http.ResponseWriter, r *http.Request) {
 // --- Diagnostics ---
 
 func (h *handlers) diagInterfaces(w http.ResponseWriter, r *http.Request) {
-	zones, err := h.store.ListZones()
+	zones, err := h.ops.ListZones()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -796,15 +675,15 @@ func (h *handlers) dryRun(w http.ResponseWriter, r *http.Request) {
 // --- WireGuard ---
 
 func (h *handlers) listWGPeers(w http.ResponseWriter, r *http.Request) {
-	if h.wg == nil {
+	if h.wgOps == nil {
 		writeError(w, http.StatusServiceUnavailable, "wireguard not configured")
 		return
 	}
-	writeJSON(w, http.StatusOK, h.wg.ListPeers())
+	writeJSON(w, http.StatusOK, h.wgOps.ListPeers())
 }
 
 func (h *handlers) addWGPeer(w http.ResponseWriter, r *http.Request) {
-	if h.wg == nil {
+	if h.wgOps == nil {
 		writeError(w, http.StatusServiceUnavailable, "wireguard not configured")
 		return
 	}
@@ -813,36 +692,24 @@ func (h *handlers) addWGPeer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if peer.PublicKey == "" || peer.AllowedIPs == "" {
-		writeError(w, http.StatusBadRequest, "public_key and allowed_ips required")
-		return
-	}
-	if err := validate.WGPublicKey(peer.PublicKey); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	if err := validate.WGAllowedIPs(peer.AllowedIPs); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	if err := validate.WGEndpoint(peer.Endpoint); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	if err := h.wg.AddPeer(peer); err != nil {
-		writeError(w, http.StatusConflict, err.Error())
+	if err := h.wgOps.AddPeer(peer); err != nil {
+		if strings.Contains(err.Error(), "already exists") {
+			writeError(w, http.StatusConflict, err.Error())
+		} else {
+			writeError(w, http.StatusBadRequest, err.Error())
+		}
 		return
 	}
 	writeJSON(w, http.StatusCreated, peer)
 }
 
 func (h *handlers) removeWGPeer(w http.ResponseWriter, r *http.Request) {
-	if h.wg == nil {
+	if h.wgOps == nil {
 		writeError(w, http.StatusServiceUnavailable, "wireguard not configured")
 		return
 	}
 	pubkey := r.PathValue("pubkey")
-	if err := h.wg.RemovePeer(pubkey); err != nil {
+	if err := h.wgOps.RemovePeer(pubkey); err != nil {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
 	}
@@ -850,7 +717,7 @@ func (h *handlers) removeWGPeer(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) generateWGClientConfig(w http.ResponseWriter, r *http.Request) {
-	if h.wg == nil {
+	if h.wgOps == nil {
 		writeError(w, http.StatusServiceUnavailable, "wireguard not configured")
 		return
 	}
@@ -862,34 +729,17 @@ func (h *handlers) generateWGClientConfig(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if body.PublicKey == "" || body.ServerEndpoint == "" {
-		writeError(w, http.StatusBadRequest, "public_key and server_endpoint required")
-		return
-	}
-
-	// Find the peer.
-	var found *driver.WGPeer
-	for _, p := range h.wg.ListPeers() {
-		if p.PublicKey == body.PublicKey {
-			found = &p
-			break
-		}
-	}
-	if found == nil {
-		writeError(w, http.StatusNotFound, "peer not found")
-		return
-	}
-
-	// Generate a client private key for the config.
-	clientPrivKey, clientPubKey, err := driver.GenerateKeyPair()
+	configText, clientPubKey, err := h.wgOps.GenerateClientConfig(body.PublicKey, body.ServerEndpoint)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "key generation failed: "+err.Error())
+		if strings.Contains(err.Error(), "not found") {
+			writeError(w, http.StatusNotFound, err.Error())
+		} else {
+			writeError(w, http.StatusBadRequest, err.Error())
+		}
 		return
 	}
-
-	config := h.wg.GenerateClientConfig(clientPrivKey, body.ServerEndpoint, *found)
 	writeJSON(w, http.StatusOK, map[string]string{
-		"config":     config,
+		"config":     configText,
 		"public_key": clientPubKey,
 	})
 }
@@ -920,49 +770,12 @@ func (h *handlers) pathTest(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if req.SrcIP == "" || req.DstIP == "" {
-		writeError(w, http.StatusBadRequest, "src_ip and dst_ip required")
-		return
-	}
-
-	input, err := h.buildCompilerInput()
+	result, err := h.ops.PathTest(req)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-
-	result := compiler.PathTest(input, req)
 	writeJSON(w, http.StatusOK, result)
-}
-
-func (h *handlers) buildCompilerInput() (*compiler.Input, error) {
-	zones, err := h.store.ListZones()
-	if err != nil {
-		return nil, err
-	}
-	aliases, err := h.store.ListAliases()
-	if err != nil {
-		return nil, err
-	}
-	policies, err := h.store.ListPolicies()
-	if err != nil {
-		return nil, err
-	}
-	profiles, err := h.store.ListProfiles()
-	if err != nil {
-		return nil, err
-	}
-	devices, err := h.store.ListDevices()
-	if err != nil {
-		return nil, err
-	}
-	return &compiler.Input{
-		Zones:    zones,
-		Aliases:  aliases,
-		Policies: policies,
-		Profiles: profiles,
-		Devices:  devices,
-	}, nil
 }
 
 // --- Explain ---
@@ -973,18 +786,11 @@ func (h *handlers) explainPath(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if req.SrcIP == "" || req.DstIP == "" {
-		writeError(w, http.StatusBadRequest, "src_ip and dst_ip required")
-		return
-	}
-
-	input, err := h.buildCompilerInput()
+	result, err := h.ops.Explain(req)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-
-	result := compiler.Explain(input, req)
 	writeJSON(w, http.StatusOK, result)
 }
 
@@ -997,7 +803,7 @@ func (h *handlers) listAuditLog(w http.ResponseWriter, r *http.Request) {
 			limit = v
 		}
 	}
-	entries, err := h.store.ListAuditLog(limit)
+	entries, err := h.ops.ListAuditLog(limit)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -1020,20 +826,6 @@ func readJSON(r *http.Request, v any) error {
 		return err
 	}
 	return json.Unmarshal(body, v)
-}
-
-// validName checks that a resource name contains only safe characters.
-func validName(name string) bool {
-	if name == "" || len(name) > 64 {
-		return false
-	}
-	for _, c := range name {
-		ok := (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.'
-		if !ok {
-			return false
-		}
-	}
-	return true
 }
 
 func writeError(w http.ResponseWriter, status int, msg string) {
