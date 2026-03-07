@@ -1,36 +1,11 @@
 <!DOCTYPE html>
 <html lang="en" class="dark">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{.Title}} - Gatekeeper</title>
-    <style>
-        :root { --bg: #0f172a; --bg2: #1e293b; --bg3: #334155; --fg: #e2e8f0; --fg2: #94a3b8; --accent: #38bdf8; --border: #475569; }
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--fg); }
-        a { color: var(--accent); text-decoration: none; }
-        nav { background: var(--bg2); border-bottom: 1px solid var(--border); padding: 0.75rem 1.5rem; display: flex; align-items: center; gap: 2rem; }
-        nav .logo { font-weight: 700; font-size: 1.1rem; color: var(--accent); }
-        nav a { color: var(--fg2); font-size: 0.9rem; }
-        .container { max-width: 1200px; margin: 0 auto; padding: 1.5rem; }
-        h1 { font-size: 1.5rem; margin-bottom: 1rem; } h2 { font-size: 1.2rem; margin: 1.5rem 0 0.75rem; }
-        table { width: 100%; border-collapse: collapse; background: var(--bg2); border: 1px solid var(--border); border-radius: 0.5rem; overflow: hidden; }
-        th, td { padding: 0.75rem 1rem; text-align: left; border-bottom: 1px solid var(--border); }
-        th { background: var(--bg3); font-size: 0.8rem; text-transform: uppercase; color: var(--fg2); }
-        td { font-family: 'SF Mono', monospace; font-size: 0.85rem; }
-        pre { background: var(--bg2); border: 1px solid var(--border); border-radius: 0.5rem; padding: 1rem; overflow-x: auto; font-size: 0.8rem; max-height: 400px; }
-    </style>
+    {{template "head" .}}
 </head>
 <body>
-    <nav>
-        <span class="logo">Gatekeeper</span>
-        <a href="/">Dashboard</a>
-        <a href="/zones">Zones</a>
-        <a href="/aliases">Aliases</a>
-        <a href="/devices">Devices</a>
-        <a href="/policies">Policies</a>
-        <a href="/config">Config</a>
-    </nav>
+    {{template "nav" .}}
     <div class="container">
         <h1>Configuration</h1>
 
@@ -44,7 +19,7 @@
             {{end}}
             </tbody>
         </table>
-        {{else}}<p style="color: var(--fg2)">No commits yet.</p>{{end}}
+        {{else}}<p class="text-muted">No commits yet.</p>{{end}}
 
         <h2>Current Config (JSON Export)</h2>
         <pre>{{.Snapshot}}</pre>

@@ -68,6 +68,7 @@ func NewRouterWithConfig(cfg *RouterConfig) http.Handler {
 	mux.HandleFunc("PUT /api/v1/aliases/{name}", h.updateAlias)
 	mux.HandleFunc("DELETE /api/v1/aliases/{name}", h.deleteAlias)
 	mux.HandleFunc("POST /api/v1/aliases/{name}/members", h.addAliasMember)
+	mux.HandleFunc("DELETE /api/v1/aliases/{name}/members", h.removeAliasMember)
 
 	// Profiles.
 	mux.HandleFunc("GET /api/v1/profiles", h.listProfiles)
@@ -75,12 +76,18 @@ func NewRouterWithConfig(cfg *RouterConfig) http.Handler {
 	mux.HandleFunc("GET /api/v1/profiles/{name}", h.getProfile)
 	mux.HandleFunc("PUT /api/v1/profiles/{name}", h.updateProfile)
 
+	mux.HandleFunc("DELETE /api/v1/profiles/{name}", h.deleteProfile)
+
 	// Policies.
 	mux.HandleFunc("GET /api/v1/policies", h.listPolicies)
 	mux.HandleFunc("POST /api/v1/policies", h.createPolicy)
 	mux.HandleFunc("GET /api/v1/policies/{name}", h.getPolicy)
 	mux.HandleFunc("PUT /api/v1/policies/{name}", h.updatePolicy)
 	mux.HandleFunc("DELETE /api/v1/policies/{name}", h.deletePolicy)
+
+	// Rules.
+	mux.HandleFunc("POST /api/v1/policies/{name}/rules", h.createRule)
+	mux.HandleFunc("DELETE /api/v1/rules/{id}", h.deleteRule)
 
 	// Devices.
 	mux.HandleFunc("GET /api/v1/devices", h.listDevices)

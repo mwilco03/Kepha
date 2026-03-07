@@ -320,14 +320,14 @@ paths:
           description: Alias deleted
 
   /api/v1/aliases/{name}/members:
+    parameters:
+      - name: name
+        in: path
+        required: true
+        schema:
+          type: string
     post:
       summary: Add member to alias
-      parameters:
-        - name: name
-          in: path
-          required: true
-          schema:
-            type: string
       requestBody:
         required: true
         content:
@@ -341,6 +341,23 @@ paths:
       responses:
         "200":
           description: Member added
+    delete:
+      summary: Remove member from alias
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                member:
+                  type: string
+              required: [member]
+      responses:
+        "200":
+          description: Member removed
+        "404":
+          description: Not found
 
   /api/v1/profiles:
     get:
@@ -383,6 +400,11 @@ paths:
       responses:
         "200":
           description: Profile updated
+    delete:
+      summary: Delete profile
+      responses:
+        "200":
+          description: Profile deleted
 
   /api/v1/policies:
     get:
@@ -430,6 +452,42 @@ paths:
       responses:
         "200":
           description: Policy deleted
+
+  /api/v1/policies/{name}/rules:
+    parameters:
+      - name: name
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      summary: Add rule to policy
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Rule"
+      responses:
+        "201":
+          description: Rule created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Rule"
+
+  /api/v1/rules/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+    delete:
+      summary: Delete a rule by ID
+      responses:
+        "200":
+          description: Rule deleted
 
   /api/v1/devices:
     get:

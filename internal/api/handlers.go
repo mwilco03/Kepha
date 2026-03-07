@@ -209,6 +209,26 @@ func (h *handlers) addAliasMember(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "added"})
 }
 
+func (h *handlers) removeAliasMember(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	var body struct {
+		Member string `json:"member"`
+	}
+	if err := readJSON(r, &body); err != nil || body.Member == "" {
+		writeError(w, http.StatusBadRequest, "member is required")
+		return
+	}
+	if err := h.store.RemoveAliasMember(name, body.Member); err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			writeError(w, http.StatusNotFound, err.Error())
+		} else {
+			writeError(w, http.StatusInternalServerError, err.Error())
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "removed"})
+}
+
 // --- Profiles ---
 
 func (h *handlers) listProfiles(w http.ResponseWriter, r *http.Request) {
@@ -280,6 +300,15 @@ func (h *handlers) updateProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, p)
+}
+
+func (h *handlers) deleteProfile(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if err := h.store.DeleteProfile(name); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
 // --- Policies ---
@@ -358,6 +387,36 @@ func (h *handlers) updatePolicy(w http.ResponseWriter, r *http.Request) {
 func (h *handlers) deletePolicy(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if err := h.store.DeletePolicy(name); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+}
+
+// --- Rules ---
+
+func (h *handlers) createRule(w http.ResponseWriter, r *http.Request) {
+	policyName := r.PathValue("name")
+	var rule model.Rule
+	if err := readJSON(r, &rule); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := h.store.CreateRule(policyName, &rule); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, rule)
+}
+
+func (h *handlers) deleteRule(w http.ResponseWriter, r *http.Request) {
+	idStr := r.PathValue("id")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid rule id")
+		return
+	}
+	if err := h.store.DeleteRule(id); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

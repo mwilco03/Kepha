@@ -1,44 +1,14 @@
 <!DOCTYPE html>
 <html lang="en" class="dark">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{.Title}} - Gatekeeper</title>
-    <script src="https://unpkg.com/htmx.org@2.0.4"></script>
-    <style>
-        :root { --bg: #0f172a; --bg2: #1e293b; --bg3: #334155; --fg: #e2e8f0; --fg2: #94a3b8; --accent: #38bdf8; --green: #4ade80; --red: #f87171; --yellow: #fbbf24; --border: #475569; }
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--fg); }
-        a { color: var(--accent); text-decoration: none; } a:hover { text-decoration: underline; }
-        nav { background: var(--bg2); border-bottom: 1px solid var(--border); padding: 0.75rem 1.5rem; display: flex; align-items: center; gap: 2rem; }
-        nav .logo { font-weight: 700; font-size: 1.1rem; color: var(--accent); }
-        nav a { color: var(--fg2); font-size: 0.9rem; } nav a:hover { color: var(--fg); }
-        .container { max-width: 1200px; margin: 0 auto; padding: 1.5rem; }
-        h1 { font-size: 1.5rem; margin-bottom: 1rem; }
-        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem; }
-        .card { background: var(--bg2); border: 1px solid var(--border); border-radius: 0.5rem; padding: 1.25rem; }
-        .card h3 { font-size: 1.1rem; margin-bottom: 0.5rem; }
-        .card .meta { font-size: 0.85rem; color: var(--fg2); font-family: 'SF Mono', monospace; }
-        .badge { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 0.25rem; font-size: 0.75rem; font-weight: 600; }
-        .badge-green { background: rgba(74, 222, 128, 0.15); color: var(--green); }
-        .badge-red { background: rgba(248, 113, 113, 0.15); color: var(--red); }
-        .badge-yellow { background: rgba(251, 191, 36, 0.15); color: var(--yellow); }
-    </style>
+    {{template "head" .}}
 </head>
 <body>
-    <nav>
-        <span class="logo">Gatekeeper</span>
-        <a href="/">Dashboard</a>
-        <a href="/zones">Zones</a>
-        <a href="/aliases">Aliases</a>
-        <a href="/devices">Devices</a>
-        <a href="/policies">Policies</a>
-        <a href="/config">Config</a>
-        <a href="/assign">Assign</a>
-    </nav>
+    {{template "nav" .}}
     <div class="container">
         <h1>Zones</h1>
-        <div class="grid">
+        <div class="grid grid-wide">
         {{range .Zones}}
             <a href="/zones/{{.Name}}" style="text-decoration:none;color:inherit">
             <div class="card">
@@ -54,6 +24,8 @@
                 </div>
             </div>
             </a>
+        {{else}}
+            <p class="empty">No zones configured.</p>
         {{end}}
         </div>
     </div>

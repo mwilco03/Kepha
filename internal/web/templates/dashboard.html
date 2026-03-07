@@ -1,48 +1,11 @@
 <!DOCTYPE html>
 <html lang="en" class="dark">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{.Title}} - Gatekeeper</title>
-    <script src="https://unpkg.com/htmx.org@2.0.4"></script>
-    <style>
-        :root { --bg: #0f172a; --bg2: #1e293b; --bg3: #334155; --fg: #e2e8f0; --fg2: #94a3b8; --accent: #38bdf8; --green: #4ade80; --red: #f87171; --yellow: #fbbf24; --border: #475569; }
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--fg); }
-        a { color: var(--accent); text-decoration: none; } a:hover { text-decoration: underline; }
-        nav { background: var(--bg2); border-bottom: 1px solid var(--border); padding: 0.75rem 1.5rem; display: flex; align-items: center; gap: 2rem; }
-        nav .logo { font-weight: 700; font-size: 1.1rem; color: var(--accent); }
-        nav a { color: var(--fg2); font-size: 0.9rem; } nav a:hover { color: var(--fg); }
-        .container { max-width: 1200px; margin: 0 auto; padding: 1.5rem; }
-        h1 { font-size: 1.5rem; margin-bottom: 1rem; }
-        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-bottom: 2rem; }
-        .card { background: var(--bg2); border: 1px solid var(--border); border-radius: 0.5rem; padding: 1.25rem; }
-        .card .label { font-size: 0.8rem; color: var(--fg2); text-transform: uppercase; letter-spacing: 0.05em; }
-        .card .value { font-size: 2rem; font-weight: 700; margin-top: 0.25rem; }
-        .card .value.green { color: var(--green); } .card .value.blue { color: var(--accent); }
-        table { width: 100%; border-collapse: collapse; background: var(--bg2); border: 1px solid var(--border); border-radius: 0.5rem; overflow: hidden; }
-        th, td { padding: 0.75rem 1rem; text-align: left; border-bottom: 1px solid var(--border); }
-        th { background: var(--bg3); font-size: 0.8rem; text-transform: uppercase; color: var(--fg2); letter-spacing: 0.05em; }
-        td { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.85rem; }
-        .badge { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 0.25rem; font-size: 0.75rem; font-weight: 600; }
-        .badge-green { background: rgba(74, 222, 128, 0.15); color: var(--green); }
-        .badge-blue { background: rgba(56, 189, 248, 0.15); color: var(--accent); }
-        .badge-red { background: rgba(248, 113, 113, 0.15); color: var(--red); }
-        .badge-yellow { background: rgba(251, 191, 36, 0.15); color: var(--yellow); }
-        .mt-2 { margin-top: 1rem; } .mb-1 { margin-bottom: 0.5rem; }
-    </style>
+    {{template "head" .}}
 </head>
 <body>
-    <nav>
-        <span class="logo">Gatekeeper</span>
-        <a href="/">Dashboard</a>
-        <a href="/zones">Zones</a>
-        <a href="/aliases">Aliases</a>
-        <a href="/devices">Devices</a>
-        <a href="/policies">Policies</a>
-        <a href="/config">Config</a>
-        <a href="/assign">Assign</a>
-    </nav>
+    {{template "nav" .}}
     <div class="container">
         <h1>Dashboard</h1>
         <div class="grid">
@@ -64,7 +27,7 @@
             </div>
         </div>
 
-        <h2 class="mb-1">Zones</h2>
+        <h2>Zones</h2>
         <table>
             <thead><tr><th>Name</th><th>Interface</th><th>Network</th><th>Trust</th></tr></thead>
             <tbody>
