@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"os/exec"
 	"strconv"
@@ -521,8 +522,15 @@ func (h *handlers) commitConfig(w http.ResponseWriter, r *http.Request) {
 	// Daemon-owned: apply nftables after commit.
 	if h.nft != nil {
 		if err := h.nft.Apply(); err != nil {
-			writeError(w, http.StatusInternalServerError, "commit saved but apply failed: "+err.Error())
+			writeError(w, http.StatusInternalServerError, "commit saved but nft apply failed: "+err.Error())
 			return
+		}
+	}
+
+	// Daemon-owned: apply dnsmasq config after commit.
+	if h.dnsmasq != nil {
+		if err := h.dnsmasq.Apply(); err != nil {
+			slog.Error("dnsmasq apply after commit failed", "error", err)
 		}
 	}
 
@@ -544,8 +552,15 @@ func (h *handlers) rollbackConfig(w http.ResponseWriter, r *http.Request) {
 	// Daemon-owned: apply nftables after rollback.
 	if h.nft != nil {
 		if err := h.nft.Apply(); err != nil {
-			writeError(w, http.StatusInternalServerError, "rollback saved but apply failed: "+err.Error())
+			writeError(w, http.StatusInternalServerError, "rollback saved but nft apply failed: "+err.Error())
 			return
+		}
+	}
+
+	// Daemon-owned: apply dnsmasq config after rollback.
+	if h.dnsmasq != nil {
+		if err := h.dnsmasq.Apply(); err != nil {
+			slog.Error("dnsmasq apply after rollback failed", "error", err)
 		}
 	}
 

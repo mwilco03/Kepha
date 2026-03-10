@@ -11,6 +11,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -36,6 +37,8 @@ var (
 	tlsCert     = flag.String("tls-cert", "", "TLS certificate file (enables HTTPS)")
 	tlsKey      = flag.String("tls-key", "", "TLS private key file")
 	pluginDir   = flag.String("plugin-dir", "/var/lib/gatekeeper/plugins", "Plugin directory")
+	upstreamDNS = flag.String("upstream-dns", "1.1.1.1,8.8.8.8", "Comma-separated upstream DNS servers")
+	localDomain = flag.String("local-domain", "gk.local", "Local DNS domain")
 	enableMCP   = flag.Bool("enable-mcp", false, "Enable MCP (Model Context Protocol) server")
 	enableRBAC  = flag.Bool("enable-rbac", false, "Enable RBAC (replaces simple API key auth)")
 )
@@ -77,6 +80,19 @@ func main() {
 	}
 
 	dnsmasq := driver.NewDnsmasq(store, *dnsmasqDir)
+	if *upstreamDNS != "" {
+		dnsmasq.UpstreamDNS = strings.Split(*upstreamDNS, ",")
+	}
+	if *localDomain != "" {
+		dnsmasq.LocalDomain = *localDomain
+	}
+
+	// Boot-time: generate and apply dnsmasq config from current DB state.
+	if err := dnsmasq.Apply(); err != nil {
+		slog.Warn("boot-time dnsmasq apply failed", "error", err)
+	} else {
+		slog.Info("dnsmasq config applied at boot")
+	}
 
 	var wg *driver.WireGuard
 	if *wgInterface != "" {
@@ -151,9 +167,14 @@ func main() {
 		for range sighupCh {
 			slog.Info("received SIGHUP, re-applying config")
 			if err := nft.Apply(); err != nil {
-				slog.Error("SIGHUP apply failed", "error", err)
+				slog.Error("SIGHUP nft apply failed", "error", err)
 			} else {
-				slog.Info("config applied successfully via SIGHUP")
+				slog.Info("nftables config applied via SIGHUP")
+			}
+			if err := dnsmasq.Apply(); err != nil {
+				slog.Error("SIGHUP dnsmasq apply failed", "error", err)
+			} else {
+				slog.Info("dnsmasq config applied via SIGHUP")
 			}
 		}
 	}()

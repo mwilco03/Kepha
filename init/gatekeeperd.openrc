@@ -1,0 +1,47 @@
+#!/sbin/openrc-run
+# OpenRC init script for Gatekeeper Firewall Daemon.
+
+name="gatekeeperd"
+description="Gatekeeper Firewall Daemon"
+
+command="/usr/local/bin/gatekeeperd"
+command_background="yes"
+pidfile="/run/gatekeeper/gatekeeperd.pid"
+
+GATEKEEPER_LISTEN="${GATEKEEPER_LISTEN:-:8080}"
+GATEKEEPER_DB="${GATEKEEPER_DB:-/var/lib/gatekeeper/gatekeeper.db}"
+GATEKEEPER_RULESET_DIR="${GATEKEEPER_RULESET_DIR:-/var/lib/gatekeeper/rulesets}"
+GATEKEEPER_DNSMASQ_DIR="${GATEKEEPER_DNSMASQ_DIR:-/etc/gatekeeper/dnsmasq}"
+GATEKEEPER_UPSTREAM_DNS="${GATEKEEPER_UPSTREAM_DNS:-1.1.1.1,8.8.8.8}"
+GATEKEEPER_LOCAL_DOMAIN="${GATEKEEPER_LOCAL_DOMAIN:-gk.local}"
+
+command_args="
+    --listen=${GATEKEEPER_LISTEN}
+    --db=${GATEKEEPER_DB}
+    --ruleset-dir=${GATEKEEPER_RULESET_DIR}
+    --dnsmasq-dir=${GATEKEEPER_DNSMASQ_DIR}
+    --upstream-dns=${GATEKEEPER_UPSTREAM_DNS}
+    --local-domain=${GATEKEEPER_LOCAL_DOMAIN}
+"
+
+# Append API key if configured.
+if [ -f /etc/gatekeeper/api.key ]; then
+    command_args="${command_args} --api-key=$(cat /etc/gatekeeper/api.key)"
+fi
+
+# Append TLS if configured.
+if [ -f /etc/gatekeeper/tls/server.crt ] && [ -f /etc/gatekeeper/tls/server.key ]; then
+    command_args="${command_args} --tls-cert=/etc/gatekeeper/tls/server.crt --tls-key=/etc/gatekeeper/tls/server.key"
+fi
+
+output_log="/var/log/gatekeeper/gatekeeperd.log"
+error_log="/var/log/gatekeeper/gatekeeperd.log"
+
+depend() {
+    need net localmount
+    after firewall dnsmasq
+}
+
+start_pre() {
+    mkdir -p /run/gatekeeper /var/log/gatekeeper /var/lib/gatekeeper/rulesets /etc/gatekeeper/dnsmasq
+}

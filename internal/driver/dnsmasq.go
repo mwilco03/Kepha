@@ -19,18 +19,22 @@ import (
 
 // Dnsmasq manages dnsmasq configuration for DHCP and DNS.
 type Dnsmasq struct {
-	mu      sync.Mutex
-	store   *config.Store
-	confDir string
-	pidFile string
+	mu          sync.Mutex
+	store       *config.Store
+	confDir     string
+	pidFile     string
+	UpstreamDNS []string // Configurable upstream DNS servers.
+	LocalDomain string   // Local domain for DNS resolution.
 }
 
 // NewDnsmasq creates a new dnsmasq driver.
 func NewDnsmasq(store *config.Store, confDir string) *Dnsmasq {
 	return &Dnsmasq{
-		store:   store,
-		confDir: confDir,
-		pidFile: filepath.Join(confDir, "dnsmasq.pid"),
+		store:       store,
+		confDir:     confDir,
+		pidFile:     filepath.Join(confDir, "dnsmasq.pid"),
+		UpstreamDNS: []string{"1.1.1.1", "8.8.8.8"},
+		LocalDomain: "gk.local",
 	}
 }
 
@@ -93,12 +97,25 @@ func (d *Dnsmasq) Reload() error {
 	return nil
 }
 
-// Apply generates config and reloads dnsmasq.
+// Apply generates config, validates it, and reloads dnsmasq.
 func (d *Dnsmasq) Apply() error {
 	if err := d.GenerateConfig(); err != nil {
 		return err
 	}
+	if err := d.Validate(); err != nil {
+		return err
+	}
 	return d.Reload()
+}
+
+// Validate checks dnsmasq config syntax before reload.
+func (d *Dnsmasq) Validate() error {
+	confPath := filepath.Join(d.confDir, "dnsmasq.conf")
+	cmd := exec.Command("dnsmasq", "--test", "--conf-file="+confPath)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("dnsmasq config invalid: %s", strings.TrimSpace(string(output)))
+	}
+	return nil
 }
 
 // ParseLeaseFile reads the dnsmasq lease file and returns active leases.
@@ -154,13 +171,18 @@ func (d *Dnsmasq) buildMainConfig(zones []model.Zone) string {
 	b.WriteString("# DO NOT EDIT — managed by gatekeeperd\n\n")
 
 	b.WriteString("# Global settings\n")
+	b.WriteString("bind-dynamic\n")
+	b.WriteString("listen-address=127.0.0.1\n")
 	b.WriteString("domain-needed\n")
 	b.WriteString("bogus-priv\n")
 	b.WriteString("no-resolv\n")
-	b.WriteString("server=1.1.1.1\n")
-	b.WriteString("server=8.8.8.8\n")
-	b.WriteString("local=/gk.local/\n")
-	b.WriteString("domain=gk.local\n")
+	b.WriteString("log-queries\n")
+	b.WriteString("log-dhcp\n")
+	for _, srv := range d.UpstreamDNS {
+		b.WriteString(fmt.Sprintf("server=%s\n", srv))
+	}
+	b.WriteString(fmt.Sprintf("local=/%s/\n", d.LocalDomain))
+	b.WriteString(fmt.Sprintf("domain=%s\n", d.LocalDomain))
 	b.WriteString("expand-hosts\n")
 	b.WriteString(fmt.Sprintf("pid-file=%s\n", d.pidFile))
 	b.WriteString(fmt.Sprintf("conf-file=%s\n", filepath.Join(d.confDir, "static-leases.conf")))
@@ -176,7 +198,7 @@ func (d *Dnsmasq) buildMainConfig(zones []model.Zone) string {
 		if dhcpRange != "" && validate.Interface(z.Interface) == nil {
 			b.WriteString(fmt.Sprintf("# Zone: %s\n", z.Name))
 			b.WriteString(fmt.Sprintf("interface=%s\n", z.Interface))
-			b.WriteString(fmt.Sprintf("dhcp-range=%s,%s,12h\n", dhcpRange, z.Interface))
+			b.WriteString(fmt.Sprintf("dhcp-range=interface:%s,%s,12h\n", z.Interface, dhcpRange))
 			b.WriteString("\n")
 		}
 	}
@@ -210,7 +232,7 @@ func (d *Dnsmasq) buildStaticLeases(devices []model.DeviceAssignment) string {
 			b.WriteString(fmt.Sprintf("dhcp-host=%s,%s,%s\n", dev.MAC, dev.IP, hostname))
 		} else if dev.IP != "" && dev.Hostname != "" {
 			// DNS-only entry (no MAC for static lease).
-			b.WriteString(fmt.Sprintf("address=/%s.gk.local/%s\n", dev.Hostname, dev.IP))
+			b.WriteString(fmt.Sprintf("address=/%s.%s/%s\n", dev.Hostname, d.LocalDomain, dev.IP))
 		}
 	}
 
