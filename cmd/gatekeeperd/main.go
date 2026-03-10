@@ -17,6 +17,7 @@ import (
 	"github.com/gatekeeper-firewall/gatekeeper/internal/api"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/config"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/driver"
+	"github.com/gatekeeper-firewall/gatekeeper/internal/service"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/web"
 )
 
@@ -92,6 +93,27 @@ func main() {
 		}
 	}
 
+	// Initialize the pluggable service manager.
+	svcMgr, err := service.NewManager(store.DB())
+	if err != nil {
+		slog.Error("failed to initialize service manager", "error", err)
+		os.Exit(1)
+	}
+
+	// Register all available services.
+	svcMgr.Register(service.NewDNSFilter(*dnsmasqDir, "/var/cache/gatekeeper/dns"))
+	svcMgr.Register(service.NewAvahi("/etc/avahi"))
+	svcMgr.Register(service.NewSamba("/etc/samba"))
+	svcMgr.Register(service.NewBridge("/etc/systemd/network"))
+	svcMgr.Register(service.NewDDNS())
+	svcMgr.Register(service.NewUPnP("/etc/miniupnpd"))
+	svcMgr.Register(service.NewNTP("/etc/chrony"))
+	svcMgr.Register(service.NewCaptivePortal("/var/lib/gatekeeper/captive-portal"))
+	svcMgr.Register(service.NewBandwidth("/var/lib/gatekeeper/qos"))
+
+	// Start all previously-enabled services.
+	svcMgr.StartEnabled()
+
 	// Handle SIGHUP: the CLI sends this after writing a commit/rollback
 	// to the DB, signaling the daemon to re-apply the config.
 	sighupCh := make(chan os.Signal, 1)
@@ -109,14 +131,15 @@ func main() {
 
 	metrics := api.NewMetrics()
 	apiHandler := api.NewRouterWithConfig(&api.RouterConfig{
-		Store:   store,
-		NFT:     nft,
-		WG:      wg,
-		Dnsmasq: dnsmasq,
-		APIKey:  *apiKey,
-		Metrics: metrics,
+		Store:      store,
+		NFT:        nft,
+		WG:         wg,
+		Dnsmasq:    dnsmasq,
+		APIKey:     *apiKey,
+		Metrics:    metrics,
+		ServiceMgr: svcMgr,
 	})
-	webHandler := web.Handler(store)
+	webHandler := web.Handler(store, svcMgr)
 
 	// Combine: /api/* goes to API, everything else to web UI.
 	mux := http.NewServeMux()
@@ -166,6 +189,9 @@ func main() {
 
 	<-ctx.Done()
 	slog.Info("shutting down")
+
+	// Stop all running services gracefully.
+	svcMgr.StopAll()
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <title>{{.Title}} - Gatekeeper</title>
+    {{template "head" .}}
+</head>
+<body>
+    {{template "nav" .}}
+    <div class="container">
+        <h1>Services</h1>
+        <p class="text-muted" style="margin-bottom:1.5rem">Enable and configure network services. Use the API or CLI to manage: <code>gk service list</code></p>
+
+        {{range $cat, $svcs := .Categories}}
+        <h2 style="text-transform:capitalize">{{$cat}}</h2>
+        <div class="grid grid-wide">
+            {{range $svcs}}
+            <div class="card">
+                <h3>{{.DisplayName}}
+                    {{if eq .State "running"}}<span class="badge badge-green">running</span>
+                    {{else if eq .State "error"}}<span class="badge badge-red">error</span>
+                    {{else if eq .State "starting"}}<span class="badge badge-yellow">starting</span>
+                    {{else}}<span class="badge badge-yellow">stopped</span>{{end}}
+                </h3>
+                <div class="meta">
+                    {{.Description}}
+                    {{if .Error}}<br><span style="color:var(--red)">Error: {{.Error}}</span>{{end}}
+                </div>
+                <div style="margin-top:0.75rem">
+                    {{if .Enabled}}
+                    <button hx-post="/api/v1/services/{{.Name}}/disable" hx-swap="none" hx-on::after-request="location.reload()" style="background:var(--red)">Disable</button>
+                    {{else}}
+                    <button hx-post="/api/v1/services/{{.Name}}/enable" hx-swap="none" hx-on::after-request="location.reload()">Enable</button>
+                    {{end}}
+                </div>
+            </div>
+            {{end}}
+        </div>
+        {{end}}
+    </div>
+</body>
+</html>

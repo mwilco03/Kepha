@@ -7,6 +7,7 @@ import (
 	"github.com/gatekeeper-firewall/gatekeeper/internal/config"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/driver"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/ops"
+	"github.com/gatekeeper-firewall/gatekeeper/internal/service"
 )
 
 // RouterConfig holds all dependencies for the API router.
@@ -17,6 +18,9 @@ type RouterConfig struct {
 	Dnsmasq *driver.Dnsmasq
 	APIKey  string
 	Metrics *Metrics
+
+	// ServiceMgr is the pluggable service manager (optional).
+	ServiceMgr *service.Manager
 
 	// RateLimit controls API rate limiting (requests/sec). 0 = default (100/s).
 	RateLimit int
@@ -124,6 +128,17 @@ func NewRouterWithConfig(cfg *RouterConfig) http.Handler {
 
 	// Audit log.
 	mux.HandleFunc("GET /api/v1/audit", h.listAuditLog)
+
+	// Services — pluggable service management.
+	if cfg.ServiceMgr != nil {
+		sh := &serviceHandlers{mgr: cfg.ServiceMgr}
+		mux.HandleFunc("GET /api/v1/services", sh.listServices)
+		mux.HandleFunc("GET /api/v1/services/{name}", sh.getService)
+		mux.HandleFunc("GET /api/v1/services/{name}/schema", sh.getServiceSchema)
+		mux.HandleFunc("POST /api/v1/services/{name}/enable", sh.enableService)
+		mux.HandleFunc("POST /api/v1/services/{name}/disable", sh.disableService)
+		mux.HandleFunc("PUT /api/v1/services/{name}/config", sh.configureService)
+	}
 
 	// Diagnostics — rate-limited more aggressively since ping/connections
 	// execute system commands and could be abused for resource exhaustion.

@@ -75,6 +75,8 @@ func main() {
 		err = cmdExplain(backend, os.Args[2:], outputFmt)
 	case "audit":
 		err = cmdAudit(backend, outputFmt)
+	case "service", "svc":
+		err = cmdService(os.Args[2:])
 	case "ping":
 		err = cmdPing(os.Args[2:])
 	case "help", "--help", "-h":
@@ -589,6 +591,93 @@ func cmdAudit(b cli.Backend, outputFmt string) error {
 	return printJSON(entries)
 }
 
+func cmdService(args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("usage: gk service <list|show|enable|disable|config> [options]")
+	}
+
+	// Services always use the API backend since the service manager lives in the daemon.
+	apiURL := os.Getenv("GK_API_URL")
+	if apiURL == "" {
+		apiURL = "http://localhost:8080"
+	}
+	client := cli.NewClient(apiURL, os.Getenv("GK_API_KEY"))
+
+	switch args[0] {
+	case "list":
+		data, err := client.Get("/api/v1/services")
+		if err != nil {
+			return err
+		}
+		return printJSONRaw(data)
+	case "show":
+		if len(args) < 2 {
+			return fmt.Errorf("usage: gk service show <name>")
+		}
+		data, err := client.Get("/api/v1/services/" + args[1])
+		if err != nil {
+			return err
+		}
+		return printJSONRaw(data)
+	case "schema":
+		if len(args) < 2 {
+			return fmt.Errorf("usage: gk service schema <name>")
+		}
+		data, err := client.Get("/api/v1/services/" + args[1] + "/schema")
+		if err != nil {
+			return err
+		}
+		return printJSONRaw(data)
+	case "enable":
+		if len(args) < 2 {
+			return fmt.Errorf("usage: gk service enable <name>")
+		}
+		data, err := client.Post("/api/v1/services/"+args[1]+"/enable", nil)
+		if err != nil {
+			return err
+		}
+		return printJSONRaw(data)
+	case "disable":
+		if len(args) < 2 {
+			return fmt.Errorf("usage: gk service disable <name>")
+		}
+		data, err := client.Post("/api/v1/services/"+args[1]+"/disable", nil)
+		if err != nil {
+			return err
+		}
+		return printJSONRaw(data)
+	case "config":
+		if len(args) < 2 {
+			return fmt.Errorf("usage: gk service config <name> [key=value ...]")
+		}
+		name := args[1]
+		if len(args) == 2 {
+			// Show current config.
+			data, err := client.Get("/api/v1/services/" + name)
+			if err != nil {
+				return err
+			}
+			return printJSONRaw(data)
+		}
+		// Parse key=value pairs.
+		cfg := make(map[string]string)
+		for _, kv := range args[2:] {
+			parts := strings.SplitN(kv, "=", 2)
+			if len(parts) != 2 {
+				return fmt.Errorf("invalid config format: %s (use key=value)", kv)
+			}
+			cfg[parts[0]] = parts[1]
+		}
+		data, err := client.Put("/api/v1/services/"+name+"/config", cfg)
+		if err != nil {
+			return err
+		}
+		return printJSONRaw(data)
+	default:
+		return fmt.Errorf("unknown service command: %s", args[0])
+	}
+}
+
 func printJSON(v any) error {
 	out, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
@@ -628,6 +717,7 @@ Commands:
   test        Test packet path (--src <ip> --dst <ip> [--proto tcp] [--port 80])
   explain     Show all matching rules for a src→dst pair
   audit       Show audit log of mutations
+  service     Manage services (list, show, enable, disable, config)
   ping        Ping a target host
   version     Show version
 

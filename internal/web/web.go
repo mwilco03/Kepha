@@ -9,6 +9,7 @@ import (
 
 	"github.com/gatekeeper-firewall/gatekeeper/internal/config"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/model"
+	"github.com/gatekeeper-firewall/gatekeeper/internal/service"
 )
 
 //go:embed templates/*.html
@@ -24,7 +25,7 @@ func init() {
 }
 
 // Handler creates the web UI HTTP handler.
-func Handler(store *config.Store) http.Handler {
+func Handler(store *config.Store, svcMgrs ...*service.Manager) http.Handler {
 	mux := http.NewServeMux()
 
 	mux.Handle("GET /static/", http.FileServerFS(staticFS))
@@ -37,6 +38,11 @@ func Handler(store *config.Store) http.Handler {
 	mux.HandleFunc("GET /config", handleConfig(store))
 	mux.HandleFunc("GET /assign", handleAssignForm(store))
 	mux.HandleFunc("GET /wireguard", handleWireGuard())
+
+	// Services page — available when service manager is provided.
+	if len(svcMgrs) > 0 && svcMgrs[0] != nil {
+		mux.HandleFunc("GET /services", handleServices(svcMgrs[0]))
+	}
 
 	return mux
 }
@@ -198,6 +204,24 @@ func handleWireGuard() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		render(w, "wireguard", map[string]any{
 			"Title": "WireGuard",
+		})
+	}
+}
+
+func handleServices(mgr *service.Manager) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		services := mgr.List()
+
+		// Group by category.
+		categories := make(map[string][]service.ServiceInfo)
+		for _, s := range services {
+			categories[s.Category] = append(categories[s.Category], s)
+		}
+
+		render(w, "services", map[string]any{
+			"Title":      "Services",
+			"Services":   services,
+			"Categories": categories,
 		})
 	}
 }
