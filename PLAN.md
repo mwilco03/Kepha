@@ -324,3 +324,17 @@ Per rebuttal recommendations, the following are explicitly **out of scope for v1
 | 7 | WireGuard | Basic VPN peer management |
 | 8 | Packaging | LXC image for Proxmox |
 | 9 | Hardening | Tests, benchmarks, security audit |
+
+---
+
+## V3 Roadmap (Future)
+
+### Multi-Node Proxmox Support
+- Cluster-aware deployment across multiple Proxmox nodes
+- Centralized policy management with per-node rule compilation
+- Config replication between nodes (etcd or built-in Raft consensus)
+- Cross-node HA failover with VRRP and conntrack sync
+- Distributed firewall rules that follow VM/CT migrations between nodes
+- Per-node health monitoring with cluster-wide dashboard
+- Proxmox API integration for automatic node discovery and VM tracking
+- Split-brain protection and quorum-based leader election
