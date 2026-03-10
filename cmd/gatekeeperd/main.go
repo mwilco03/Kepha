@@ -17,6 +17,9 @@ import (
 	"github.com/gatekeeper-firewall/gatekeeper/internal/api"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/config"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/driver"
+	"github.com/gatekeeper-firewall/gatekeeper/internal/mcp"
+	"github.com/gatekeeper-firewall/gatekeeper/internal/ops"
+	"github.com/gatekeeper-firewall/gatekeeper/internal/plugin"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/service"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/web"
 )
@@ -31,6 +34,8 @@ var (
 	wgInterface = flag.String("wg-interface", "", "WireGuard interface name (empty = disabled)")
 	tlsCert     = flag.String("tls-cert", "", "TLS certificate file (enables HTTPS)")
 	tlsKey      = flag.String("tls-key", "", "TLS private key file")
+	pluginDir   = flag.String("plugin-dir", "/var/lib/gatekeeper/plugins", "Plugin directory")
+	enableMCP   = flag.Bool("enable-mcp", false, "Enable MCP (Model Context Protocol) server")
 )
 
 func main() {
@@ -115,6 +120,24 @@ func main() {
 	svcMgr.Register(service.NewMultiWAN("/var/lib/gatekeeper/multiwan"))
 	svcMgr.Register(service.NewBandwidthMonitor("/var/lib/gatekeeper/bandwidth"))
 
+	// V2 services: VPN legs, VPN providers, FRRouting, certificate store.
+	svcMgr.Register(service.NewVPNLegs("/var/lib/gatekeeper/vpn-legs"))
+	svcMgr.Register(service.NewVPNProvider())
+	svcMgr.Register(service.NewFRRouting("/etc/frr"))
+	svcMgr.Register(service.NewCertStore())
+
+	// HA service (wrapped for Service interface compatibility).
+	svcMgr.Register(service.NewHAWrapper())
+
+	// IPv6 Router Advertisement service.
+	svcMgr.Register(service.NewIPv6RA())
+
+	// Plugin system.
+	pluginMgr := plugin.NewManager(logger, false)
+	if err := pluginMgr.LoadPlugins(*pluginDir); err != nil {
+		slog.Warn("failed to load plugins", "error", err)
+	}
+
 	// Start all previously-enabled services.
 	svcMgr.StartEnabled()
 
@@ -145,9 +168,31 @@ func main() {
 	})
 	webHandler := web.Handler(store, svcMgr)
 
-	// Combine: /api/* goes to API, everything else to web UI.
+	// MCP server (optional).
+	var mcpHandler http.Handler
+	if *enableMCP {
+		o := ops.New(store)
+		mcpSrv := mcp.New(mcp.MCPConfig{
+			Ops:        o,
+			NFT:        nft,
+			WG:         wg,
+			Dnsmasq:    dnsmasq,
+			ServiceMgr: svcMgr,
+		})
+		mcpHandler = mcpSrv.Handler()
+		slog.Info("MCP server enabled")
+	}
+
+	// Combine: /api/* goes to API, /mcp/* to MCP, everything else to web UI.
 	mux := http.NewServeMux()
 	mux.Handle("/api/", apiHandler)
+	if mcpHandler != nil {
+		mux.Handle("/mcp/", mcpHandler)
+	}
+	// Plugin diagnostic routes.
+	for path, handler := range pluginMgr.GetRoutes() {
+		mux.Handle(path, handler)
+	}
 	mux.Handle("/", webHandler)
 	router := mux
 
