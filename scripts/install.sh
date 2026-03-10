@@ -18,14 +18,19 @@ fi
 # Install system dependencies.
 echo "Installing system packages..."
 apt-get update -qq
-apt-get install -y -qq nftables dnsmasq wireguard-tools sqlite3 >/dev/null
+apt-get install -y -qq nftables dnsmasq wireguard-tools sqlite3 avahi-daemon samba miniupnpd chrony curl unbound suricata conntrack >/dev/null
 
 # Stop dnsmasq default instance (we manage our own config).
 systemctl stop dnsmasq 2>/dev/null || true
 systemctl disable dnsmasq 2>/dev/null || true
 
 # Create directories.
-mkdir -p "${INSTALL_DIR}" "${DATA_DIR}" "${DATA_DIR}/rulesets" "${CONF_DIR}" "${CONF_DIR}/dnsmasq" "${CONF_DIR}/wireguard"
+mkdir -p "${INSTALL_DIR}" "${DATA_DIR}" "${DATA_DIR}/rulesets" "${DATA_DIR}/qos" "${DATA_DIR}/captive-portal" "${DATA_DIR}/multiwan" "${DATA_DIR}/bandwidth" "${CONF_DIR}" "${CONF_DIR}/dnsmasq" "${CONF_DIR}/wireguard"
+mkdir -p /var/cache/gatekeeper/dns /var/log/gatekeeper /var/log/suricata /srv/samba/share
+
+# Stop unbound default instance (we manage our own config).
+systemctl stop unbound 2>/dev/null || true
+systemctl disable unbound 2>/dev/null || true
 
 # Copy binaries.
 if [ -f bin/gatekeeperd ]; then

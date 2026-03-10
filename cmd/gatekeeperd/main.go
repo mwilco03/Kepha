@@ -17,6 +17,10 @@ import (
 	"github.com/gatekeeper-firewall/gatekeeper/internal/api"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/config"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/driver"
+	"github.com/gatekeeper-firewall/gatekeeper/internal/mcp"
+	"github.com/gatekeeper-firewall/gatekeeper/internal/ops"
+	"github.com/gatekeeper-firewall/gatekeeper/internal/plugin"
+	"github.com/gatekeeper-firewall/gatekeeper/internal/service"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/web"
 )
 
@@ -30,6 +34,8 @@ var (
 	wgInterface = flag.String("wg-interface", "", "WireGuard interface name (empty = disabled)")
 	tlsCert     = flag.String("tls-cert", "", "TLS certificate file (enables HTTPS)")
 	tlsKey      = flag.String("tls-key", "", "TLS private key file")
+	pluginDir   = flag.String("plugin-dir", "/var/lib/gatekeeper/plugins", "Plugin directory")
+	enableMCP   = flag.Bool("enable-mcp", false, "Enable MCP (Model Context Protocol) server")
 )
 
 func main() {
@@ -92,6 +98,49 @@ func main() {
 		}
 	}
 
+	// Initialize the pluggable service manager.
+	svcMgr, err := service.NewManager(store.DB())
+	if err != nil {
+		slog.Error("failed to initialize service manager", "error", err)
+		os.Exit(1)
+	}
+
+	// Register all available services.
+	svcMgr.Register(service.NewDNSFilter(*dnsmasqDir, "/var/cache/gatekeeper/dns"))
+	svcMgr.Register(service.NewAvahi("/etc/avahi"))
+	svcMgr.Register(service.NewSamba("/etc/samba"))
+	svcMgr.Register(service.NewBridge("/etc/systemd/network"))
+	svcMgr.Register(service.NewDDNS())
+	svcMgr.Register(service.NewUPnP("/etc/miniupnpd"))
+	svcMgr.Register(service.NewNTP("/etc/chrony"))
+	svcMgr.Register(service.NewCaptivePortal("/var/lib/gatekeeper/captive-portal"))
+	svcMgr.Register(service.NewBandwidth("/var/lib/gatekeeper/qos"))
+	svcMgr.Register(service.NewEncryptedDNS("/etc/unbound/unbound.conf.d"))
+	svcMgr.Register(service.NewIDS("/etc/suricata", "/var/log/suricata"))
+	svcMgr.Register(service.NewMultiWAN("/var/lib/gatekeeper/multiwan"))
+	svcMgr.Register(service.NewBandwidthMonitor("/var/lib/gatekeeper/bandwidth"))
+
+	// V2 services: VPN legs, VPN providers, FRRouting, certificate store.
+	svcMgr.Register(service.NewVPNLegs("/var/lib/gatekeeper/vpn-legs"))
+	svcMgr.Register(service.NewVPNProvider())
+	svcMgr.Register(service.NewFRRouting("/etc/frr"))
+	svcMgr.Register(service.NewCertStore())
+
+	// HA service (wrapped for Service interface compatibility).
+	svcMgr.Register(service.NewHAWrapper())
+
+	// IPv6 Router Advertisement service.
+	svcMgr.Register(service.NewIPv6RA())
+
+	// Plugin system.
+	pluginMgr := plugin.NewManager(logger, false)
+	if err := pluginMgr.LoadPlugins(*pluginDir); err != nil {
+		slog.Warn("failed to load plugins", "error", err)
+	}
+
+	// Start all previously-enabled services.
+	svcMgr.StartEnabled()
+
 	// Handle SIGHUP: the CLI sends this after writing a commit/rollback
 	// to the DB, signaling the daemon to re-apply the config.
 	sighupCh := make(chan os.Signal, 1)
@@ -109,18 +158,45 @@ func main() {
 
 	metrics := api.NewMetrics()
 	apiHandler := api.NewRouterWithConfig(&api.RouterConfig{
-		Store:   store,
-		NFT:     nft,
-		WG:      wg,
-		Dnsmasq: dnsmasq,
-		APIKey:  *apiKey,
-		Metrics: metrics,
+		Store:      store,
+		NFT:        nft,
+		WG:         wg,
+		Dnsmasq:    dnsmasq,
+		APIKey:     *apiKey,
+		Metrics:    metrics,
+		ServiceMgr: svcMgr,
 	})
-	webHandler := web.Handler(store)
+	webHandler := web.Handler(store, svcMgr)
 
-	// Combine: /api/* goes to API, everything else to web UI.
+	// MCP server (optional).
+	var mcpHandler http.Handler
+	if *enableMCP {
+		o := ops.New(store)
+		var wgOps *ops.WireGuardOps
+		if wg != nil {
+			wgOps = ops.NewWireGuardOps(wg)
+		}
+		mcpSrv := mcp.New(mcp.MCPConfig{
+			Ops:          o,
+			NFT:          nft,
+			WireGuardOps: wgOps,
+			Dnsmasq:      dnsmasq,
+			ServiceMgr:   svcMgr,
+		})
+		mcpHandler = mcpSrv.Handler()
+		slog.Info("MCP server enabled")
+	}
+
+	// Combine: /api/* goes to API, /mcp/* to MCP, everything else to web UI.
 	mux := http.NewServeMux()
 	mux.Handle("/api/", apiHandler)
+	if mcpHandler != nil {
+		mux.Handle("/mcp/", mcpHandler)
+	}
+	// Plugin diagnostic routes.
+	for path, handler := range pluginMgr.GetRoutes() {
+		mux.Handle(path, handler)
+	}
 	mux.Handle("/", webHandler)
 	router := mux
 
@@ -166,6 +242,9 @@ func main() {
 
 	<-ctx.Done()
 	slog.Info("shutting down")
+
+	// Stop all running services gracefully.
+	svcMgr.StopAll()
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

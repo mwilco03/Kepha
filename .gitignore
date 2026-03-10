@@ -5,3 +5,4 @@ bin/
 *.tar.zst
 *.key
 scripts/fetch-deps.sh
+.claude/
