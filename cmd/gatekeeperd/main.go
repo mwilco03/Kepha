@@ -172,12 +172,16 @@ func main() {
 	var mcpHandler http.Handler
 	if *enableMCP {
 		o := ops.New(store)
+		var wgOps *ops.WireGuardOps
+		if wg != nil {
+			wgOps = ops.NewWireGuardOps(wg)
+		}
 		mcpSrv := mcp.New(mcp.MCPConfig{
-			Ops:        o,
-			NFT:        nft,
-			WG:         wg,
-			Dnsmasq:    dnsmasq,
-			ServiceMgr: svcMgr,
+			Ops:          o,
+			NFT:          nft,
+			WireGuardOps: wgOps,
+			Dnsmasq:      dnsmasq,
+			ServiceMgr:   svcMgr,
 		})
 		mcpHandler = mcpSrv.Handler()
 		slog.Info("MCP server enabled")

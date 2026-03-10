@@ -14,9 +14,24 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
-
-	"github.com/gatekeeper-firewall/gatekeeper/internal/service"
 )
+
+// State represents the runtime state of a service.
+type State string
+
+const (
+	StateStopped State = "stopped"
+	StateRunning State = "running"
+	StateError   State = "error"
+)
+
+// ConfigField describes a single configuration parameter.
+type ConfigField struct {
+	Description string `json:"description"`
+	Default     string `json:"default"`
+	Required    bool   `json:"required"`
+	Type        string `json:"type"`
+}
 
 // Address family constants returned by ParseCIDR.
 const (
@@ -138,14 +153,14 @@ type DualStackZone struct {
 // interface so it can be registered with the service manager.
 type RouterAdvertisement struct {
 	mu    sync.Mutex
-	state service.State
+	state State
 	cfg   map[string]string
 }
 
 // NewRouterAdvertisement creates a new RA service instance.
 func NewRouterAdvertisement() *RouterAdvertisement {
 	return &RouterAdvertisement{
-		state: service.StateStopped,
+		state: StateStopped,
 	}
 }
 
@@ -171,8 +186,8 @@ func (r *RouterAdvertisement) DefaultConfig() map[string]string {
 	}
 }
 
-func (r *RouterAdvertisement) ConfigSchema() map[string]service.ConfigField {
-	return map[string]service.ConfigField{
+func (r *RouterAdvertisement) ConfigSchema() map[string]ConfigField {
+	return map[string]ConfigField{
 		"enabled_interfaces": {Description: "Comma-separated interfaces to send RAs on", Required: true, Type: "string"},
 		"prefix":             {Description: "IPv6 prefix to advertise (e.g. fd00::/64)", Default: "fd00::/64", Required: true, Type: "cidr"},
 		"ra_interval":        {Description: "Router Advertisement interval in seconds", Default: "600", Type: "int"},
@@ -240,11 +255,11 @@ func (r *RouterAdvertisement) Start(cfg map[string]string) error {
 
 	cmd := exec.Command("systemctl", "restart", radvdServiceNam)
 	if output, err := cmd.CombinedOutput(); err != nil {
-		r.state = service.StateError
+		r.state = StateError
 		return fmt.Errorf("start radvd: %s: %w", strings.TrimSpace(string(output)), err)
 	}
 
-	r.state = service.StateRunning
+	r.state = StateRunning
 	return nil
 }
 
@@ -257,7 +272,7 @@ func (r *RouterAdvertisement) Stop() error {
 		return fmt.Errorf("stop radvd: %s: %w", strings.TrimSpace(string(output)), err)
 	}
 
-	r.state = service.StateStopped
+	r.state = StateStopped
 	return nil
 }
 
@@ -277,7 +292,7 @@ func (r *RouterAdvertisement) Reload(cfg map[string]string) error {
 	return nil
 }
 
-func (r *RouterAdvertisement) Status() service.State {
+func (r *RouterAdvertisement) Status() State {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.state
