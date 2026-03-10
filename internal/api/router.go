@@ -7,6 +7,7 @@ import (
 	"github.com/gatekeeper-firewall/gatekeeper/internal/config"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/driver"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/ops"
+	"github.com/gatekeeper-firewall/gatekeeper/internal/rbac"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/service"
 )
 
@@ -21,6 +22,10 @@ type RouterConfig struct {
 
 	// ServiceMgr is the pluggable service manager (optional).
 	ServiceMgr *service.Manager
+
+	// RBACEnforcer enables role-based access control when set.
+	// When nil, falls back to the legacy single API key auth.
+	RBACEnforcer *rbac.Enforcer
 
 	// RateLimit controls API rate limiting (requests/sec). 0 = default (100/s).
 	RateLimit int
@@ -140,6 +145,15 @@ func NewRouterWithConfig(cfg *RouterConfig) http.Handler {
 		mux.HandleFunc("PUT /api/v1/services/{name}/config", sh.configureService)
 	}
 
+	// RBAC key management (requires RBAC to be enabled).
+	if cfg.RBACEnforcer != nil {
+		kh := &keyHandlers{enforcer: cfg.RBACEnforcer}
+		mux.HandleFunc("GET /api/v1/keys", kh.listKeys)
+		mux.HandleFunc("POST /api/v1/keys", kh.createKey)
+		mux.HandleFunc("DELETE /api/v1/keys/{id}", kh.revokeKey)
+		mux.HandleFunc("POST /api/v1/keys/{id}/rotate", kh.rotateKey)
+	}
+
 	// Diagnostics — rate-limited more aggressively since ping/connections
 	// execute system commands and could be abused for resource exhaustion.
 	diagRate := cfg.DiagRateLimit
@@ -165,7 +179,9 @@ func NewRouterWithConfig(cfg *RouterConfig) http.Handler {
 	var handler http.Handler = mux
 	handler = metrics.CountingMiddleware(handler)
 	handler = AuditMiddleware(handler)
-	if cfg.APIKey != "" {
+	if cfg.RBACEnforcer != nil {
+		handler = rbac.RBACMiddleware(cfg.RBACEnforcer)(handler)
+	} else if cfg.APIKey != "" {
 		handler = AuthMiddleware(cfg.APIKey, handler)
 	}
 	apiRate := cfg.RateLimit

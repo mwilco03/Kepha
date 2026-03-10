@@ -20,6 +20,7 @@ import (
 	"github.com/gatekeeper-firewall/gatekeeper/internal/mcp"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/ops"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/plugin"
+	"github.com/gatekeeper-firewall/gatekeeper/internal/rbac"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/service"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/web"
 )
@@ -36,6 +37,7 @@ var (
 	tlsKey      = flag.String("tls-key", "", "TLS private key file")
 	pluginDir   = flag.String("plugin-dir", "/var/lib/gatekeeper/plugins", "Plugin directory")
 	enableMCP   = flag.Bool("enable-mcp", false, "Enable MCP (Model Context Protocol) server")
+	enableRBAC  = flag.Bool("enable-rbac", false, "Enable RBAC (replaces simple API key auth)")
 )
 
 func main() {
@@ -157,14 +159,28 @@ func main() {
 	}()
 
 	metrics := api.NewMetrics()
+
+	// RBAC enforcer (optional, replaces simple API key auth).
+	var enforcer *rbac.Enforcer
+	if *enableRBAC {
+		var rbacErr error
+		enforcer, rbacErr = rbac.NewEnforcer(store.DB())
+		if rbacErr != nil {
+			slog.Error("failed to initialize RBAC enforcer", "error", rbacErr)
+			os.Exit(1)
+		}
+		slog.Info("RBAC enforcer enabled")
+	}
+
 	apiHandler := api.NewRouterWithConfig(&api.RouterConfig{
-		Store:      store,
-		NFT:        nft,
-		WG:         wg,
-		Dnsmasq:    dnsmasq,
-		APIKey:     *apiKey,
-		Metrics:    metrics,
-		ServiceMgr: svcMgr,
+		Store:        store,
+		NFT:          nft,
+		WG:           wg,
+		Dnsmasq:      dnsmasq,
+		APIKey:       *apiKey,
+		Metrics:      metrics,
+		ServiceMgr:   svcMgr,
+		RBACEnforcer: enforcer,
 	})
 	webHandler := web.Handler(store, svcMgr)
 
