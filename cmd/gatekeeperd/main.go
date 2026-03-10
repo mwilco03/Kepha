@@ -110,6 +110,10 @@ func main() {
 	svcMgr.Register(service.NewNTP("/etc/chrony"))
 	svcMgr.Register(service.NewCaptivePortal("/var/lib/gatekeeper/captive-portal"))
 	svcMgr.Register(service.NewBandwidth("/var/lib/gatekeeper/qos"))
+	svcMgr.Register(service.NewEncryptedDNS("/etc/unbound/unbound.conf.d"))
+	svcMgr.Register(service.NewIDS("/etc/suricata", "/var/log/suricata"))
+	svcMgr.Register(service.NewMultiWAN("/var/lib/gatekeeper/multiwan"))
+	svcMgr.Register(service.NewBandwidthMonitor("/var/lib/gatekeeper/bandwidth"))
 
 	// Start all previously-enabled services.
 	svcMgr.StartEnabled()
