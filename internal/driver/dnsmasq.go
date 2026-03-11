@@ -22,9 +22,10 @@ type Dnsmasq struct {
 	mu          sync.Mutex
 	store       *config.Store
 	confDir     string
-	pidFile     string
+	PIDFile     string   // PID file location (must match init system).
 	UpstreamDNS []string // Configurable upstream DNS servers.
 	LocalDomain string   // Local domain for DNS resolution.
+	PXEServer   string   // PXE server IP for dhcp-boot (empty = disabled).
 }
 
 // NewDnsmasq creates a new dnsmasq driver.
@@ -32,7 +33,7 @@ func NewDnsmasq(store *config.Store, confDir string) *Dnsmasq {
 	return &Dnsmasq{
 		store:       store,
 		confDir:     confDir,
-		pidFile:     filepath.Join(confDir, "dnsmasq.pid"),
+		PIDFile:     "/run/dnsmasq.pid",
 		UpstreamDNS: []string{"1.1.1.1", "8.8.8.8"},
 		LocalDomain: "gk.local",
 	}
@@ -78,7 +79,7 @@ func (d *Dnsmasq) Reload() error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	pidData, err := os.ReadFile(d.pidFile)
+	pidData, err := os.ReadFile(d.PIDFile)
 	if err != nil {
 		slog.Warn("dnsmasq pid file not found, skipping reload", "error", err)
 		return nil
@@ -184,9 +185,21 @@ func (d *Dnsmasq) buildMainConfig(zones []model.Zone) string {
 	b.WriteString(fmt.Sprintf("local=/%s/\n", d.LocalDomain))
 	b.WriteString(fmt.Sprintf("domain=%s\n", d.LocalDomain))
 	b.WriteString("expand-hosts\n")
-	b.WriteString(fmt.Sprintf("pid-file=%s\n", d.pidFile))
 	b.WriteString(fmt.Sprintf("conf-file=%s\n", filepath.Join(d.confDir, "static-leases.conf")))
 	b.WriteString("\n")
+
+	// PXE boot support — chainload iPXE for BIOS and UEFI clients.
+	if d.PXEServer != "" {
+		b.WriteString("# PXE boot\n")
+		b.WriteString("enable-tftp\n")
+		b.WriteString(fmt.Sprintf("dhcp-boot=tag:!ipxe,undionly.kpxe,pxeserver,%s\n", d.PXEServer))
+		b.WriteString(fmt.Sprintf("dhcp-match=set:efi-x86_64,option:client-arch,7\n"))
+		b.WriteString(fmt.Sprintf("dhcp-match=set:efi-x86_64,option:client-arch,9\n"))
+		b.WriteString(fmt.Sprintf("dhcp-boot=tag:efi-x86_64,tag:!ipxe,ipxe.efi,pxeserver,%s\n", d.PXEServer))
+		b.WriteString(fmt.Sprintf("dhcp-boot=tag:ipxe,http://%s/boot.ipxe\n", d.PXEServer))
+		b.WriteString("dhcp-userclass=set:ipxe,iPXE\n")
+		b.WriteString("\n")
+	}
 
 	// Per-zone DHCP ranges (skip WAN).
 	for _, z := range zones {

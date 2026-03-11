@@ -39,6 +39,8 @@ var (
 	pluginDir   = flag.String("plugin-dir", "/var/lib/gatekeeper/plugins", "Plugin directory")
 	upstreamDNS = flag.String("upstream-dns", "1.1.1.1,8.8.8.8", "Comma-separated upstream DNS servers")
 	localDomain = flag.String("local-domain", "gk.local", "Local DNS domain")
+	dnsmasqPID  = flag.String("dnsmasq-pid", "/run/dnsmasq.pid", "dnsmasq PID file path")
+	pxeServer   = flag.String("pxe-server", "", "PXE server IP for dhcp-boot (empty = disabled)")
 	enableMCP   = flag.Bool("enable-mcp", false, "Enable MCP (Model Context Protocol) server")
 	enableRBAC  = flag.Bool("enable-rbac", false, "Enable RBAC (replaces simple API key auth)")
 )
@@ -85,6 +87,12 @@ func main() {
 	}
 	if *localDomain != "" {
 		dnsmasq.LocalDomain = *localDomain
+	}
+	if *dnsmasqPID != "" {
+		dnsmasq.PIDFile = *dnsmasqPID
+	}
+	if *pxeServer != "" {
+		dnsmasq.PXEServer = *pxeServer
 	}
 
 	// Boot-time: generate and apply dnsmasq config from current DB state.
