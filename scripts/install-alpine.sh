@@ -15,9 +15,9 @@ if [ "$(id -u)" -ne 0 ]; then
     exit 1
 fi
 
-# Install runtime dependencies (build deps should already be present for compile).
-echo "Installing runtime packages..."
-apk add --no-cache nftables dnsmasq iproute2 openssl wireguard-tools bash >/dev/null 2>&1 || true
+# Install build and runtime dependencies.
+echo "Installing packages..."
+apk add --no-cache go make nftables dnsmasq iproute2 openssl wireguard-tools bash >/dev/null 2>&1 || true
 
 # Create directories.
 mkdir -p \
@@ -25,17 +25,16 @@ mkdir -p \
     "${CONF_DIR}" "${CONF_DIR}/tls" "${DNSMASQ_DIR}" \
     /var/log/gatekeeper /run/gatekeeper
 
-# Copy binaries.
-if [ -f bin/gatekeeperd ]; then
-    cp bin/gatekeeperd "${BIN_DIR}/gatekeeperd"
-    cp bin/gk "${BIN_DIR}/gk"
-    chmod +x "${BIN_DIR}/gatekeeperd" "${BIN_DIR}/gk"
-elif [ -x "${BIN_DIR}/gatekeeperd" ]; then
-    echo "Binaries already installed."
-else
-    echo "Error: no binaries found. Run 'make build' first." >&2
-    exit 1
+# Build from source if binaries not present.
+if [ ! -f bin/gatekeeperd ]; then
+    echo "Building from source..."
+    make build
 fi
+
+# Copy binaries.
+cp bin/gatekeeperd "${BIN_DIR}/gatekeeperd"
+cp bin/gk "${BIN_DIR}/gk"
+chmod +x "${BIN_DIR}/gatekeeperd" "${BIN_DIR}/gk"
 
 # Generate API key if not exists.
 if [ ! -f "${CONF_DIR}/api.key" ]; then

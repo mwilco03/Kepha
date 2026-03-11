@@ -219,6 +219,7 @@ func main() {
 		WG:         wg,
 		NFT:        nft,
 		LeaseFile:  "/var/lib/misc/dnsmasq.leases",
+		APIKey:     *apiKey,
 	})
 
 	// MCP server (optional).

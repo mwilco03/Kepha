@@ -1,7 +1,10 @@
 package web
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
 	"encoding/json"
 	"html/template"
 	"log/slog"
@@ -16,6 +19,8 @@ import (
 	"github.com/gatekeeper-firewall/gatekeeper/internal/model"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/service"
 )
+
+const sessionCookieName = "gk_session"
 
 //go:embed templates/*.html
 var templateFS embed.FS
@@ -35,6 +40,7 @@ type WebDeps struct {
 	WG         *driver.WireGuard
 	NFT        *driver.NFTables
 	LeaseFile  string // Path to dnsmasq lease file.
+	APIKey     string // API key for web session auth (empty = no auth).
 }
 
 // Handler creates the web UI HTTP handler.
@@ -50,7 +56,15 @@ func Handler(store *config.Store, svcMgrs ...*service.Manager) http.Handler {
 func HandlerWithDeps(store *config.Store, deps *WebDeps) http.Handler {
 	mux := http.NewServeMux()
 
+	// Static assets are always public.
 	mux.Handle("GET /static/", http.FileServerFS(staticFS))
+
+	// Login page is always accessible.
+	mux.HandleFunc("GET /login", handleLoginPage())
+	mux.HandleFunc("POST /login", handleLoginSubmit(deps.APIKey))
+	mux.HandleFunc("GET /logout", handleLogout())
+
+	// All other routes require session auth.
 	mux.HandleFunc("GET /", handleDashboard(store, deps))
 	mux.HandleFunc("GET /zones", handleZones(store))
 	mux.HandleFunc("GET /zones/{name}", handleZoneDetail(store))
@@ -67,6 +81,10 @@ func HandlerWithDeps(store *config.Store, deps *WebDeps) http.Handler {
 		mux.HandleFunc("GET /services", handleServices(deps.ServiceMgr))
 	}
 
+	// Wrap with session auth if API key is configured.
+	if deps.APIKey != "" {
+		return sessionAuth(deps.APIKey, mux)
+	}
 	return mux
 }
 
@@ -367,6 +385,91 @@ func handleServices(mgr *service.Manager) http.HandlerFunc {
 			"Categories": categories,
 		})
 	}
+}
+
+// sessionAuth wraps a handler with cookie-based session authentication.
+// Static assets and the login page bypass auth.
+func sessionAuth(apiKey string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Public paths: static assets, login, logout.
+		if strings.HasPrefix(r.URL.Path, "/static/") ||
+			r.URL.Path == "/login" || r.URL.Path == "/logout" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if !validSession(r, apiKey) {
+			http.Redirect(w, r, "/login", http.StatusSeeOther)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func handleLoginPage() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		render(w, "login", map[string]any{
+			"Title": "Login",
+			"Error": r.URL.Query().Get("error"),
+		})
+	}
+}
+
+func handleLoginSubmit(apiKey string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		key := r.FormValue("api_key")
+		if key != apiKey {
+			http.Redirect(w, r, "/login?error=invalid", http.StatusSeeOther)
+			return
+		}
+		setSessionCookie(w, apiKey)
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+	}
+}
+
+func handleLogout() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		http.SetCookie(w, &http.Cookie{
+			Name:     sessionCookieName,
+			Value:    "",
+			Path:     "/",
+			MaxAge:   -1,
+			HttpOnly: true,
+			SameSite: http.SameSiteStrictMode,
+		})
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+	}
+}
+
+// setSessionCookie creates an HMAC-signed session cookie.
+func setSessionCookie(w http.ResponseWriter, apiKey string) {
+	sig := signSession(apiKey)
+	http.SetCookie(w, &http.Cookie{
+		Name:     sessionCookieName,
+		Value:    sig,
+		Path:     "/",
+		MaxAge:   86400, // 24 hours.
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteStrictMode,
+	})
+}
+
+// validSession checks the session cookie against the API key.
+func validSession(r *http.Request, apiKey string) bool {
+	cookie, err := r.Cookie(sessionCookieName)
+	if err != nil {
+		return false
+	}
+	expected := signSession(apiKey)
+	return hmac.Equal([]byte(cookie.Value), []byte(expected))
+}
+
+// signSession produces an HMAC-SHA256 of a fixed payload using the API key.
+func signSession(apiKey string) string {
+	mac := hmac.New(sha256.New, []byte(apiKey))
+	mac.Write([]byte("gatekeeper-web-session"))
+	return hex.EncodeToString(mac.Sum(nil))
 }
 
 func render(w http.ResponseWriter, name string, data any) {
