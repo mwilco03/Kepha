@@ -214,7 +214,11 @@ func main() {
 		ServiceMgr:   svcMgr,
 		RBACEnforcer: enforcer,
 	})
-	webHandler := web.Handler(store, svcMgr)
+	webHandler := web.HandlerWithDeps(store, &web.WebDeps{
+		ServiceMgr: svcMgr,
+		WG:         wg,
+		LeaseFile:  "/var/lib/misc/dnsmasq.leases",
+	})
 
 	// MCP server (optional).
 	var mcpHandler http.Handler

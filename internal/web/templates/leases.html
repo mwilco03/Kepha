@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <title>{{.Title}} - Gatekeeper</title>
+    {{template "head" .}}
+</head>
+<body>
+    {{template "nav" .}}
+    <div class="container">
+        <h1>DHCP Leases</h1>
+        {{if .Leases}}
+        <table>
+            <thead><tr><th>IP Address</th><th>MAC Address</th><th>Hostname</th><th>Expiry</th></tr></thead>
+            <tbody>
+            {{range .Leases}}
+            <tr>
+                <td>{{.IP}}</td>
+                <td>{{.MAC}}</td>
+                <td>{{.Hostname}}</td>
+                <td>{{.Expiry}}</td>
+            </tr>
+            {{end}}
+            </tbody>
+        </table>
+        {{else}}<p class="empty">No active DHCP leases.</p>{{end}}
+    </div>
+</body>
+</html>

@@ -6,8 +6,13 @@ import (
 	"html/template"
 	"log/slog"
 	"net/http"
+	"os"
+	"strconv"
+	"strings"
+	"time"
 
 	"github.com/gatekeeper-firewall/gatekeeper/internal/config"
+	"github.com/gatekeeper-firewall/gatekeeper/internal/driver"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/model"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/service"
 )
@@ -24,12 +29,28 @@ func init() {
 	templates = template.Must(template.ParseFS(templateFS, "templates/*.html"))
 }
 
+// WebDeps holds optional dependencies for the web UI.
+type WebDeps struct {
+	ServiceMgr *service.Manager
+	WG         *driver.WireGuard
+	LeaseFile  string // Path to dnsmasq lease file.
+}
+
 // Handler creates the web UI HTTP handler.
 func Handler(store *config.Store, svcMgrs ...*service.Manager) http.Handler {
+	deps := &WebDeps{}
+	if len(svcMgrs) > 0 {
+		deps.ServiceMgr = svcMgrs[0]
+	}
+	return HandlerWithDeps(store, deps)
+}
+
+// HandlerWithDeps creates the web UI with full dependency injection.
+func HandlerWithDeps(store *config.Store, deps *WebDeps) http.Handler {
 	mux := http.NewServeMux()
 
 	mux.Handle("GET /static/", http.FileServerFS(staticFS))
-	mux.HandleFunc("GET /", handleDashboard(store))
+	mux.HandleFunc("GET /", handleDashboard(store, deps))
 	mux.HandleFunc("GET /zones", handleZones(store))
 	mux.HandleFunc("GET /zones/{name}", handleZoneDetail(store))
 	mux.HandleFunc("GET /aliases", handleAliases(store))
@@ -38,16 +59,16 @@ func Handler(store *config.Store, svcMgrs ...*service.Manager) http.Handler {
 	mux.HandleFunc("GET /config", handleConfig(store))
 	mux.HandleFunc("GET /assign", handleAssignForm(store))
 	mux.HandleFunc("GET /wireguard", handleWireGuard())
+	mux.HandleFunc("GET /leases", handleLeases(deps))
 
-	// Services page — available when service manager is provided.
-	if len(svcMgrs) > 0 && svcMgrs[0] != nil {
-		mux.HandleFunc("GET /services", handleServices(svcMgrs[0]))
+	if deps.ServiceMgr != nil {
+		mux.HandleFunc("GET /services", handleServices(deps.ServiceMgr))
 	}
 
 	return mux
 }
 
-func handleDashboard(store *config.Store) http.HandlerFunc {
+func handleDashboard(store *config.Store, deps *WebDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
 			http.NotFound(w, r)
@@ -63,6 +84,13 @@ func handleDashboard(store *config.Store) http.HandlerFunc {
 			lastCommit = revs[0].Timestamp
 		}
 
+		var peerCount int
+		if deps.WG != nil {
+			peerCount = len(deps.WG.ListPeers())
+		}
+
+		leases := parseLeaseFile(deps.LeaseFile)
+
 		render(w, "dashboard", map[string]any{
 			"Title":       "Dashboard",
 			"Zones":       zones,
@@ -71,6 +99,9 @@ func handleDashboard(store *config.Store) http.HandlerFunc {
 			"ZoneCount":   len(zones),
 			"DeviceCount": len(devices),
 			"AliasCount":  len(aliases),
+			"PeerCount":   peerCount,
+			"LeaseCount":  len(leases),
+			"Leases":      leases,
 			"LastCommit":  lastCommit,
 		})
 	}
@@ -206,6 +237,55 @@ func handleWireGuard() http.HandlerFunc {
 			"Title": "WireGuard",
 		})
 	}
+}
+
+func handleLeases(deps *WebDeps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		leases := parseLeaseFile(deps.LeaseFile)
+		render(w, "leases", map[string]any{
+			"Title":  "DHCP Leases",
+			"Leases": leases,
+		})
+	}
+}
+
+// leaseEntry represents a parsed DHCP lease for the web UI.
+type leaseEntry struct {
+	Expiry   string
+	MAC      string
+	IP       string
+	Hostname string
+}
+
+// parseLeaseFile reads dnsmasq leases from the given file path.
+func parseLeaseFile(path string) []leaseEntry {
+	if path == "" {
+		path = "/var/lib/misc/dnsmasq.leases"
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	var leases []leaseEntry
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		if line == "" {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) >= 4 {
+			expiry := fields[0]
+			if ts, err := strconv.ParseInt(expiry, 10, 64); err == nil {
+				expiry = time.Unix(ts, 0).Format("2006-01-02 15:04:05")
+			}
+			leases = append(leases, leaseEntry{
+				Expiry:   expiry,
+				MAC:      fields[1],
+				IP:       fields[2],
+				Hostname: fields[3],
+			})
+		}
+	}
+	return leases
 }
 
 func handleServices(mgr *service.Manager) http.HandlerFunc {
