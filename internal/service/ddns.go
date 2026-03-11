@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
-	"os/exec"
 	"strings"
 	"sync"
 	"time"
@@ -230,17 +229,16 @@ func (d *DDNS) getCurrentIP() (string, error) {
 		return "", fmt.Errorf("no IPv4 address on %s", iface)
 	}
 
-	// External IP check.
+	// External IP check via native HTTP (no exec.Command).
 	url := cfg["ip_check_url"]
 	if url == "" {
 		url = "https://api.ipify.org"
 	}
-	cmd := exec.Command("curl", "-sS", "--max-time", "10", url)
-	output, err := cmd.Output()
+	body, _, err := HTTP.Get(url, nil, 10)
 	if err != nil {
 		return "", err
 	}
-	ip := strings.TrimSpace(string(output))
+	ip := strings.TrimSpace(string(body))
 	if net.ParseIP(ip) == nil {
 		return "", fmt.Errorf("invalid IP from check: %s", ip)
 	}
@@ -250,20 +248,22 @@ func (d *DDNS) getCurrentIP() (string, error) {
 func (d *DDNS) updateDuckDNS(cfg map[string]string, ip string) error {
 	hostname := strings.TrimSuffix(cfg["hostname"], ".duckdns.org")
 	url := fmt.Sprintf("https://www.duckdns.org/update?domains=%s&token=%s&ip=%s", hostname, cfg["token"], ip)
-	return curlGet(url)
+	return httpGet(url)
 }
 
 func (d *DDNS) updateCloudflare(cfg map[string]string, ip string) error {
-	cmd := exec.Command("curl", "-sS", "--max-time", "10",
-		"-X", "PUT",
-		"-H", "Authorization: Bearer "+cfg["token"],
-		"-H", "Content-Type: application/json",
-		"--data", fmt.Sprintf(`{"type":"A","name":"%s","content":"%s","ttl":120}`, cfg["hostname"], ip),
-		fmt.Sprintf("https://api.cloudflare.com/client/v4/zones/%s/dns_records/%s", cfg["zone_id"], cfg["record_id"]),
-	)
-	output, err := cmd.CombinedOutput()
+	url := fmt.Sprintf("https://api.cloudflare.com/client/v4/zones/%s/dns_records/%s", cfg["zone_id"], cfg["record_id"])
+	body := fmt.Sprintf(`{"type":"A","name":"%s","content":"%s","ttl":120}`, cfg["hostname"], ip)
+	headers := map[string]string{
+		"Authorization": "Bearer " + cfg["token"],
+		"Content-Type":  "application/json",
+	}
+	resp, status, err := HTTP.Put(url, []byte(body), headers, 10)
 	if err != nil {
-		return fmt.Errorf("cloudflare update: %s: %w", string(output), err)
+		return fmt.Errorf("cloudflare update: %w", err)
+	}
+	if status >= 400 {
+		return fmt.Errorf("cloudflare update: HTTP %d: %s", status, string(resp))
 	}
 	return nil
 }
@@ -271,27 +271,29 @@ func (d *DDNS) updateCloudflare(cfg map[string]string, ip string) error {
 func (d *DDNS) updateNoIP(cfg map[string]string, ip string) error {
 	url := fmt.Sprintf("https://%s:%s@dynupdate.no-ip.com/nic/update?hostname=%s&myip=%s",
 		cfg["username"], cfg["password"], cfg["hostname"], ip)
-	return curlGet(url)
+	return httpGet(url)
 }
 
 func (d *DDNS) updateDynu(cfg map[string]string, ip string) error {
 	url := fmt.Sprintf("https://api.dynu.com/nic/update?hostname=%s&myip=%s&password=%s",
 		cfg["hostname"], ip, cfg["password"])
-	return curlGet(url)
+	return httpGet(url)
 }
 
 func (d *DDNS) updateCustom(cfg map[string]string, ip string) error {
 	url := cfg["update_url"]
 	url = strings.ReplaceAll(url, "{ip}", ip)
 	url = strings.ReplaceAll(url, "{hostname}", cfg["hostname"])
-	return curlGet(url)
+	return httpGet(url)
 }
 
-func curlGet(url string) error {
-	cmd := exec.Command("curl", "-sS", "--max-time", "10", url)
-	output, err := cmd.CombinedOutput()
+func httpGet(url string) error {
+	resp, status, err := HTTP.Get(url, nil, 10)
 	if err != nil {
-		return fmt.Errorf("curl %s: %s: %w", url, string(output), err)
+		return fmt.Errorf("GET %s: %w", url, err)
+	}
+	if status >= 400 {
+		return fmt.Errorf("GET %s: HTTP %d: %s", url, status, string(resp))
 	}
 	return nil
 }

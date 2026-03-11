@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -108,9 +107,8 @@ func (e *EncryptedDNS) Start(cfg map[string]string) error {
 		return err
 	}
 
-	cmd := exec.Command("systemctl", "restart", "unbound")
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("start unbound: %s: %w", string(output), err)
+	if err := Proc.Restart("unbound"); err != nil {
+		return fmt.Errorf("start unbound: %w", err)
 	}
 
 	// Also update dnsmasq to use Unbound as upstream.
@@ -126,7 +124,7 @@ func (e *EncryptedDNS) Stop() error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	exec.Command("systemctl", "stop", "unbound").Run()
+	Proc.Stop("unbound")
 	os.Remove(filepath.Join(e.confDir, "gk-encrypted-dns.conf"))
 
 	e.state = StateStopped
@@ -142,9 +140,11 @@ func (e *EncryptedDNS) Reload(cfg map[string]string) error {
 		return err
 	}
 
-	cmd := exec.Command("systemctl", "reload-or-restart", "unbound")
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("reload unbound: %s: %w", string(output), err)
+	if err := Proc.Reload("unbound"); err != nil {
+		// Fallback to restart if reload not supported.
+		if err2 := Proc.Restart("unbound"); err2 != nil {
+			return fmt.Errorf("reload unbound: %v", err2)
+		}
 	}
 	return nil
 }

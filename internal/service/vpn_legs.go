@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"net"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -519,8 +518,12 @@ func (v *VPNLegs) healthMonitor(ls *legState) {
 // pingHealth sends a single ICMP ping to the target via the specified
 // interface and returns true if the host is reachable.
 func (v *VPNLegs) pingHealth(target, iface, timeout string) bool {
-	cmd := exec.Command("ping", "-c", "1", "-W", timeout, "-I", iface, target)
-	return cmd.Run() == nil
+	timeoutSec := 3
+	if v2, err := strconv.Atoi(timeout); err == nil && v2 > 0 {
+		timeoutSec = v2
+	}
+	result, err := Net.Ping(target, 1, timeoutSec, iface)
+	return err == nil && result.Received > 0
 }
 
 // parseLegs deserializes the JSON legs config string.

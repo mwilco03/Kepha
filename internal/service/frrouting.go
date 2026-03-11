@@ -6,7 +6,7 @@ import (
 	"log/slog"
 	"net"
 	"os"
-	"os/exec"
+	"os/user"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -263,10 +263,9 @@ func (f *FRRouting) Start(cfg map[string]string) error {
 		return err
 	}
 
-	// Start FRR via systemctl.
-	cmd := exec.Command("systemctl", "restart", "frr")
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("start frr: %s: %w", strings.TrimSpace(string(output)), err)
+	// Start FRR.
+	if err := Proc.Restart("frr"); err != nil {
+		return fmt.Errorf("start frr: %w", err)
 	}
 
 	f.state = StateRunning
@@ -278,9 +277,8 @@ func (f *FRRouting) Stop() error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	cmd := exec.Command("systemctl", "stop", "frr")
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("stop frr: %s: %w", strings.TrimSpace(string(output)), err)
+	if err := Proc.Stop("frr"); err != nil {
+		return fmt.Errorf("stop frr: %w", err)
 	}
 
 	f.state = StateStopped
@@ -308,15 +306,11 @@ func (f *FRRouting) Reload(cfg map[string]string) error {
 		return err
 	}
 
-	// Use FRR's built-in reload mechanism when possible.
-	reloader := exec.Command("/usr/lib/frr/frr-reload.py",
-		"--reload", "/etc/frr/frr.conf")
-	if output, err := reloader.CombinedOutput(); err != nil {
-		slog.Warn("frr-reload.py failed, falling back to restart",
-			"error", err, "output", string(output))
-		cmd := exec.Command("systemctl", "restart", "frr")
-		if output, err := cmd.CombinedOutput(); err != nil {
-			return fmt.Errorf("restart frr: %s: %w", strings.TrimSpace(string(output)), err)
+	// Try reload first, fall back to restart.
+	if err := Proc.Reload("frr"); err != nil {
+		slog.Warn("frr reload failed, falling back to restart", "error", err)
+		if err2 := Proc.Restart("frr"); err2 != nil {
+			return fmt.Errorf("restart frr: %w", err2)
 		}
 	}
 
@@ -332,10 +326,9 @@ func (f *FRRouting) Status() State {
 		return f.state
 	}
 
-	// Verify the FRR service is actually running via systemctl.
-	cmd := exec.Command("systemctl", "is-active", "frr")
-	output, err := cmd.Output()
-	if err != nil || strings.TrimSpace(string(output)) != "active" {
+	// Verify FRR is actually running via ProcessManager.
+	status, err := Proc.Status("frr")
+	if err != nil || !status.Running {
 		f.state = StateError
 		return StateError
 	}
@@ -578,12 +571,30 @@ func (f *FRRouting) installConfigs() error {
 	// Ensure ownership is correct for the frr user.
 	for _, name := range files {
 		dst := filepath.Join(frrDir, name)
-		cmd := exec.Command("chown", "frr:frr", dst)
-		if output, err := cmd.CombinedOutput(); err != nil {
-			slog.Warn("chown frr config failed", "file", dst, "error", err,
-				"output", string(output))
+		if uid, gid, err := lookupUser("frr"); err == nil {
+			if err := os.Chown(dst, uid, gid); err != nil {
+				slog.Warn("chown frr config failed", "file", dst, "error", err)
+			}
+		} else {
+			slog.Warn("frr user not found, skipping chown", "error", err)
 		}
 	}
 
 	return nil
+}
+
+func lookupUser(name string) (int, int, error) {
+	u, err := user.Lookup(name)
+	if err != nil {
+		return 0, 0, err
+	}
+	uid, err := strconv.Atoi(u.Uid)
+	if err != nil {
+		return 0, 0, err
+	}
+	gid, err := strconv.Atoi(u.Gid)
+	if err != nil {
+		return 0, 0, err
+	}
+	return uid, gid, nil
 }

@@ -6,9 +6,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
+
+	nft "github.com/google/nftables"
 
 	"github.com/gatekeeper-firewall/gatekeeper/internal/compiler"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/config"
@@ -162,20 +163,25 @@ func (n *NFTables) applyRuleset(ruleset *compiler.CompiledRuleset) error {
 	return nil
 }
 
-// verify queries nftables after apply to confirm the expected table exists.
+// verify queries nftables via netlink to confirm the expected table exists.
 func (n *NFTables) verify(ruleset *compiler.CompiledRuleset) error {
-	out, err := exec.Command("nft", "list", "tables").CombinedOutput()
+	conn, err := nft.New()
 	if err != nil {
-		return fmt.Errorf("nft list tables: %s: %w", string(out), err)
+		return fmt.Errorf("nftables netlink connection: %w", err)
 	}
 
-	// Check that the gatekeeper table is present in nftables.
-	if !strings.Contains(string(out), "gatekeeper") {
-		return fmt.Errorf("gatekeeper table not found in nftables after apply")
+	tables, err := conn.ListTables()
+	if err != nil {
+		return fmt.Errorf("list tables: %w", err)
 	}
 
-	slog.Info("post-apply verification passed")
-	return nil
+	for _, t := range tables {
+		if t.Name == "gatekeeper" {
+			slog.Info("post-apply verification passed")
+			return nil
+		}
+	}
+	return fmt.Errorf("gatekeeper table not found in nftables after apply")
 }
 
 // SafeApply attempts to compile and apply. On failure, it returns the error

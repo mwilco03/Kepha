@@ -20,13 +20,23 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/gatekeeper-firewall/gatekeeper/internal/backend"
 )
+
+// Proc is the package-level ProcessManager for HA process management.
+// Set via SetProcessManager from the daemon.
+var Proc backend.ProcessManager
+
+// SetProcessManager sets the process manager for this package.
+func SetProcessManager(pm backend.ProcessManager) {
+	Proc = pm
+}
 
 // State represents the runtime state of a service.
 type State string
@@ -651,41 +661,34 @@ func (h *HAManager) generateKeepalivedConfig() error {
 	return nil
 }
 
-// startKeepalived launches the keepalived daemon.
+// startKeepalived launches the keepalived daemon via ProcessManager.
 func (h *HAManager) startKeepalived() error {
 	// Check if keepalived is already running.
-	check := exec.Command("pidof", "keepalived")
-	if err := check.Run(); err == nil {
+	if _, err := Proc.FindProcess("keepalived"); err == nil {
 		// Already running, reload instead.
 		return h.reloadKeepalived()
 	}
 
-	confPath := filepath.Join(h.haCfg.KeepalivedConfDir, "keepalived.conf")
-	cmd := exec.Command("keepalived", "-f", confPath, "--log-console", "-D")
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Start(); err != nil {
+	if err := Proc.Start("keepalived"); err != nil {
 		return fmt.Errorf("start keepalived: %w", err)
 	}
 
-	slog.Info("ha: keepalived started", "pid", cmd.Process.Pid)
+	slog.Info("ha: keepalived started")
 	return nil
 }
 
-// stopKeepalived terminates the keepalived daemon.
+// stopKeepalived terminates the keepalived daemon via ProcessManager.
 func (h *HAManager) stopKeepalived() error {
-	cmd := exec.Command("pkill", "keepalived")
-	if err := cmd.Run(); err != nil {
+	if err := Proc.Stop("keepalived"); err != nil {
 		return fmt.Errorf("stop keepalived: %w", err)
 	}
 	slog.Info("ha: keepalived stopped")
 	return nil
 }
 
-// reloadKeepalived sends SIGHUP to keepalived to reload config.
+// reloadKeepalived sends SIGHUP to keepalived to reload config via ProcessManager.
 func (h *HAManager) reloadKeepalived() error {
-	cmd := exec.Command("pkill", "-HUP", "keepalived")
-	if err := cmd.Run(); err != nil {
+	if err := Proc.Reload("keepalived"); err != nil {
 		return fmt.Errorf("reload keepalived: %w", err)
 	}
 	slog.Info("ha: keepalived reloaded")

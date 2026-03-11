@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -104,9 +103,8 @@ func (a *Avahi) Stop() error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	cmd := exec.Command("systemctl", "stop", "avahi-daemon")
-	if output, err := cmd.CombinedOutput(); err != nil {
-		slog.Warn("failed to stop avahi-daemon", "error", err, "output", string(output))
+	if err := Proc.Stop("avahi-daemon"); err != nil {
+		slog.Warn("failed to stop avahi-daemon", "error", err)
 	}
 
 	a.state = StateStopped
@@ -222,9 +220,8 @@ func (a *Avahi) generateConfig() error {
 }
 
 func (a *Avahi) restartDaemon() error {
-	cmd := exec.Command("systemctl", "restart", "avahi-daemon")
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("restart avahi-daemon: %s: %w", string(output), err)
+	if err := Proc.Restart("avahi-daemon"); err != nil {
+		return fmt.Errorf("restart avahi-daemon: %w", err)
 	}
 	return nil
 }

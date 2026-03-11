@@ -16,8 +16,11 @@ import (
 	"time"
 
 	"github.com/gatekeeper-firewall/gatekeeper/internal/api"
+	"github.com/gatekeeper-firewall/gatekeeper/internal/backend"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/config"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/driver"
+	"github.com/gatekeeper-firewall/gatekeeper/internal/ha"
+	"github.com/gatekeeper-firewall/gatekeeper/internal/ipv6"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/mcp"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/ops"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/plugin"
@@ -72,15 +75,17 @@ func main() {
 		os.Exit(1)
 	}
 
-	nft := driver.NewNFTables(store, *rulesetDir)
+	// Native nftables backend (netlink, no exec.Command).
+	nftBackend := backend.NewNftablesBackend(*rulesetDir)
+	fw := backend.NewFirewallController(nftBackend, store)
 	if *wgInterface != "" {
-		nft.WGListenPort = 51820
+		fw.WGListenPort = 51820
 	}
 
 	// Boot-time safe mode: attempt to apply last known config.
 	// On failure, log the error but continue starting the daemon so the
 	// operator can fix the config via API/CLI rather than losing access.
-	if err := nft.SafeApply(); err != nil {
+	if err := fw.SafeApply(); err != nil {
 		slog.Warn("boot-time rule apply failed, starting in safe mode", "error", err)
 	}
 
@@ -126,6 +131,15 @@ func main() {
 			defer os.Remove(pidFile)
 		}
 	}
+
+	// Initialize the process manager (OpenRC on Alpine, no exec.Command).
+	procMgr := backend.NewOpenRCManager()
+	service.SetProcessManager(procMgr)
+	ha.SetProcessManager(procMgr)
+	ipv6.SetProcessManager(procMgr)
+
+	// Initialize the network manager (native /proc + netlink, no exec.Command).
+	netMgr := backend.NewLinuxNetworkManager()
 
 	// Initialize the pluggable service manager.
 	svcMgr, err := service.NewManager(store.DB())
@@ -177,7 +191,7 @@ func main() {
 	go func() {
 		for range sighupCh {
 			slog.Info("received SIGHUP, re-applying config")
-			if err := nft.Apply(); err != nil {
+			if err := fw.Apply(); err != nil {
 				slog.Error("SIGHUP nft apply failed", "error", err)
 			} else {
 				slog.Info("nftables config applied via SIGHUP")
@@ -206,18 +220,19 @@ func main() {
 
 	apiHandler := api.NewRouterWithConfig(&api.RouterConfig{
 		Store:        store,
-		NFT:          nft,
+		NFT:          fw,
 		WG:           wg,
 		Dnsmasq:      dnsmasq,
 		APIKey:       *apiKey,
 		Metrics:      metrics,
 		ServiceMgr:   svcMgr,
 		RBACEnforcer: enforcer,
+		Net:          netMgr,
 	})
 	webHandler := web.HandlerWithDeps(store, &web.WebDeps{
 		ServiceMgr: svcMgr,
 		WG:         wg,
-		NFT:        nft,
+		NFT:        fw,
 		LeaseFile:  "/var/lib/misc/dnsmasq.leases",
 		APIKey:     *apiKey,
 	})
@@ -232,7 +247,7 @@ func main() {
 		}
 		mcpSrv := mcp.New(mcp.MCPConfig{
 			Ops:          o,
-			NFT:          nft,
+			NFT:          fw,
 			WireGuardOps: wgOps,
 			Dnsmasq:      dnsmasq,
 			ServiceMgr:   svcMgr,

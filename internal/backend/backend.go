@@ -14,6 +14,25 @@ import (
 	"github.com/gatekeeper-firewall/gatekeeper/internal/model"
 )
 
+// Firewall is the consumer-facing interface used by the API, web UI, MCP,
+// and daemon. It matches the methods that code actually calls today:
+// Apply, SafeApply, DryRun, Confirm, ApplyWithConfirm.
+//
+// This is separate from FirewallBackend (which is the low-level compile/apply
+// abstraction) because consumers don't deal with Artifacts directly.
+type Firewall interface {
+	// Apply compiles the current config from the store and applies it.
+	Apply() error
+	// SafeApply is like Apply but logs errors instead of failing hard (boot-time).
+	SafeApply() error
+	// DryRun compiles and returns the ruleset text without applying.
+	DryRun() (string, error)
+	// ApplyWithConfirm applies with auto-rollback timer.
+	ApplyWithConfirm(prevRev int) error
+	// Confirm stops the auto-rollback timer.
+	Confirm()
+}
+
 // FirewallBackend abstracts the packet filtering engine.
 // Implementations: NftablesBackend (Linux), PfBackend (FreeBSD, future).
 type FirewallBackend interface {
@@ -265,7 +284,8 @@ type NetworkManager interface {
 	BridgeVlanAdd(bridge string, vid int) error
 
 	// Ping sends ICMP echo requests and returns results.
-	Ping(target string, count int, timeoutSec int) (PingResult, error)
+	// If iface is non-empty, binds to that interface for source routing.
+	Ping(target string, count int, timeoutSec int, iface string) (PingResult, error)
 
 	// Connections returns active network connections (replaces ss/netstat).
 	Connections() ([]Connection, error)

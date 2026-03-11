@@ -85,15 +85,20 @@ func (d *Dnsmasq) Reload() error {
 		return nil
 	}
 
-	pid := strings.TrimSpace(string(pidData))
-	if _, err := strconv.Atoi(pid); err != nil {
-		return fmt.Errorf("invalid PID %q in pid file", pid)
+	pidStr := strings.TrimSpace(string(pidData))
+	pid, err := strconv.Atoi(pidStr)
+	if err != nil {
+		return fmt.Errorf("invalid PID %q in pid file", pidStr)
 	}
 	slog.Info("reloading dnsmasq", "pid", pid)
 
-	cmd := exec.Command("kill", "-HUP", pid)
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("reload dnsmasq: %s: %w", string(output), err)
+	// Send SIGHUP directly via native Go syscall (no exec.Command("kill")).
+	p, err := os.FindProcess(pid)
+	if err != nil {
+		return fmt.Errorf("find dnsmasq process %d: %w", pid, err)
+	}
+	if err := p.Signal(syscall.SIGHUP); err != nil {
+		return fmt.Errorf("reload dnsmasq (SIGHUP): %w", err)
 	}
 	return nil
 }

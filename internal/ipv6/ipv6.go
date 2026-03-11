@@ -11,10 +11,20 @@ import (
 	"log/slog"
 	"net"
 	"os"
-	"os/exec"
 	"strings"
 	"sync"
+
+	"github.com/gatekeeper-firewall/gatekeeper/internal/backend"
 )
+
+// Proc is the package-level ProcessManager for IPv6 service management.
+// Set via SetProcessManager from the daemon.
+var Proc backend.ProcessManager
+
+// SetProcessManager sets the process manager for this package.
+func SetProcessManager(pm backend.ProcessManager) {
+	Proc = pm
+}
 
 // State represents the runtime state of a service.
 type State string
@@ -253,10 +263,9 @@ func (r *RouterAdvertisement) Start(cfg map[string]string) error {
 		return fmt.Errorf("generate radvd config: %w", err)
 	}
 
-	cmd := exec.Command("systemctl", "restart", radvdServiceNam)
-	if output, err := cmd.CombinedOutput(); err != nil {
+	if err := Proc.Restart(radvdServiceNam); err != nil {
 		r.state = StateError
-		return fmt.Errorf("start radvd: %s: %w", strings.TrimSpace(string(output)), err)
+		return fmt.Errorf("start radvd: %w", err)
 	}
 
 	r.state = StateRunning
@@ -267,9 +276,8 @@ func (r *RouterAdvertisement) Stop() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	cmd := exec.Command("systemctl", "stop", radvdServiceNam)
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("stop radvd: %s: %w", strings.TrimSpace(string(output)), err)
+	if err := Proc.Stop(radvdServiceNam); err != nil {
+		return fmt.Errorf("stop radvd: %w", err)
 	}
 
 	r.state = StateStopped
@@ -285,9 +293,10 @@ func (r *RouterAdvertisement) Reload(cfg map[string]string) error {
 		return fmt.Errorf("generate radvd config: %w", err)
 	}
 
-	cmd := exec.Command("systemctl", "reload-or-restart", radvdServiceNam)
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("reload radvd: %s: %w", strings.TrimSpace(string(output)), err)
+	if err := Proc.Reload(radvdServiceNam); err != nil {
+		if err2 := Proc.Restart(radvdServiceNam); err2 != nil {
+			return fmt.Errorf("reload radvd: %w", err2)
+		}
 	}
 	return nil
 }
@@ -402,30 +411,28 @@ func atoi(s string) int {
 // ---------------------------------------------------------------------------
 
 // EnableNDPProxy enables the kernel NDP proxy on the given interface by
-// setting net.ipv6.conf.<iface>.proxy_ndp = 1 via sysctl.
+// writing to /proc/sys (no exec.Command).
 func EnableNDPProxy(iface string) error {
 	if err := validateIfaceName(iface); err != nil {
 		return err
 	}
-	key := fmt.Sprintf("net.ipv6.conf.%s.proxy_ndp", iface)
-	cmd := exec.Command("sysctl", "-w", key+"=1")
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("enable NDP proxy on %s: %s: %w", iface, strings.TrimSpace(string(output)), err)
+	path := fmt.Sprintf("/proc/sys/net/ipv6/conf/%s/proxy_ndp", iface)
+	if err := os.WriteFile(path, []byte("1"), 0o644); err != nil {
+		return fmt.Errorf("enable NDP proxy on %s: %w", iface, err)
 	}
 	slog.Info("NDP proxy enabled", "interface", iface)
 	return nil
 }
 
 // DisableNDPProxy disables the kernel NDP proxy on the given interface by
-// setting net.ipv6.conf.<iface>.proxy_ndp = 0 via sysctl.
+// writing to /proc/sys (no exec.Command).
 func DisableNDPProxy(iface string) error {
 	if err := validateIfaceName(iface); err != nil {
 		return err
 	}
-	key := fmt.Sprintf("net.ipv6.conf.%s.proxy_ndp", iface)
-	cmd := exec.Command("sysctl", "-w", key+"=0")
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("disable NDP proxy on %s: %s: %w", iface, strings.TrimSpace(string(output)), err)
+	path := fmt.Sprintf("/proc/sys/net/ipv6/conf/%s/proxy_ndp", iface)
+	if err := os.WriteFile(path, []byte("0"), 0o644); err != nil {
+		return fmt.Errorf("disable NDP proxy on %s: %w", iface, err)
 	}
 	slog.Info("NDP proxy disabled", "interface", iface)
 	return nil

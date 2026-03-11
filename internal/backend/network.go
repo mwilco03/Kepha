@@ -46,7 +46,8 @@ func (m *LinuxNetworkManager) SysctlGet(key string) (string, error) {
 }
 
 // Ping sends ICMP echo requests using raw sockets (no exec.Command("ping")).
-func (m *LinuxNetworkManager) Ping(target string, count int, timeoutSec int) (PingResult, error) {
+// If iface is non-empty, binds to that interface's IP for source routing.
+func (m *LinuxNetworkManager) Ping(target string, count int, timeoutSec int, iface string) (PingResult, error) {
 	result := PingResult{Sent: count}
 
 	// Resolve hostname to IP.
@@ -59,8 +60,21 @@ func (m *LinuxNetworkManager) Ping(target string, count int, timeoutSec int) (Pi
 	}
 	ip := addrs[0]
 
-	// Use ICMP raw socket.
-	conn, err := net.DialTimeout("ip4:icmp", ip, time.Duration(timeoutSec)*time.Second)
+	// Use ICMP raw socket, optionally bound to a specific interface.
+	var conn net.Conn
+	if iface != "" {
+		localIP, localErr := interfaceIPv4(iface)
+		if localErr != nil {
+			return result, localErr
+		}
+		dialer := net.Dialer{
+			LocalAddr: &net.IPAddr{IP: localIP},
+			Timeout:   time.Duration(timeoutSec) * time.Second,
+		}
+		conn, err = dialer.Dial("ip4:icmp", ip)
+	} else {
+		conn, err = net.DialTimeout("ip4:icmp", ip, time.Duration(timeoutSec)*time.Second)
+	}
 	if err != nil {
 		// Fall back to TCP connect test if ICMP not available (unprivileged).
 		return m.tcpPing(target, count, timeoutSec)
@@ -101,6 +115,24 @@ func (m *LinuxNetworkManager) Ping(target string, count int, timeoutSec int) (Pi
 	}
 
 	return result, nil
+}
+
+// interfaceIPv4 returns the first IPv4 address of the named interface.
+func interfaceIPv4(name string) (net.IP, error) {
+	ifi, err := net.InterfaceByName(name)
+	if err != nil {
+		return nil, fmt.Errorf("interface %s: %w", name, err)
+	}
+	addrs, err := ifi.Addrs()
+	if err != nil {
+		return nil, fmt.Errorf("interface %s addrs: %w", name, err)
+	}
+	for _, addr := range addrs {
+		if ipnet, ok := addr.(*net.IPNet); ok && ipnet.IP.To4() != nil {
+			return ipnet.IP, nil
+		}
+	}
+	return nil, fmt.Errorf("no IPv4 address on %s", name)
 }
 
 // tcpPing falls back to TCP connect for ping when ICMP isn't available.

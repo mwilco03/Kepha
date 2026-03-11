@@ -24,6 +24,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/gatekeeper-firewall/gatekeeper/internal/backend"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/compiler"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/driver"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/model"
@@ -62,8 +63,8 @@ type MCPConfig struct {
 	// Ops is the validated, audited business logic layer.
 	Ops *ops.Ops
 
-	// NFT is the nftables driver for apply/dry-run operations. May be nil.
-	NFT *driver.NFTables
+	// NFT is the firewall controller for apply/dry-run operations. May be nil.
+	NFT backend.Firewall
 
 	// WireGuardOps provides validated WireGuard peer management. May be nil.
 	WireGuardOps *ops.WireGuardOps
@@ -1758,5 +1759,4 @@ func (s *Server) Tools() map[string]*Tool {
 // Ensure compile-time verification that all imports are used.
 var (
 	_ = (*service.Manager)(nil)
-	_ = (*driver.NFTables)(nil)
 )

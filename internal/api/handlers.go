@@ -2,14 +2,15 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
-	"os/exec"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/gatekeeper-firewall/gatekeeper/internal/backend"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/compiler"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/config"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/driver"
@@ -23,8 +24,9 @@ var apiActor = ops.Actor{Source: "api", User: "api"}
 type handlers struct {
 	ops     *ops.Ops
 	wgOps   *ops.WireGuardOps
-	nft     *driver.NFTables  // Only used for apply/dry-run (daemon-owned)
-	dnsmasq *driver.Dnsmasq   // Only used for lease parsing (daemon-owned)
+	nft     backend.Firewall       // Was *driver.NFTables; now any Firewall implementation.
+	dnsmasq *driver.Dnsmasq        // Only used for lease parsing (daemon-owned)
+	net     backend.NetworkManager // For ping, connections, conntrack (no exec.Command).
 }
 
 // --- Zones ---
@@ -649,7 +651,7 @@ func (h *handlers) diagPing(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "target is required")
 		return
 	}
-	// Validate target is an IP or hostname (no shell injection).
+	// Validate target is an IP or hostname.
 	for _, c := range target {
 		valid := (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '.' || c == '-' || c == ':'
 		if !valid {
@@ -657,21 +659,45 @@ func (h *handlers) diagPing(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	out, err := exec.CommandContext(r.Context(), "ping", "-c", "3", "-W", "2", target).CombinedOutput()
-	if err != nil {
-		writeJSON(w, http.StatusOK, map[string]any{"target": target, "reachable": false, "output": string(out)})
+
+	if h.net == nil {
+		writeError(w, http.StatusServiceUnavailable, "network manager not available")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"target": target, "reachable": true, "output": string(out)})
+
+	result, err := h.net.Ping(target, 3, 2, "")
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"target": target, "reachable": false, "output": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"target":    target,
+		"reachable": result.Received > 0,
+		"output":    result.Output,
+		"sent":      result.Sent,
+		"received":  result.Received,
+		"avg_rtt":   result.AvgRTT.String(),
+	})
 }
 
 func (h *handlers) diagConnections(w http.ResponseWriter, r *http.Request) {
-	out, err := exec.CommandContext(r.Context(), "ss", "-tunap").CombinedOutput()
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to get connections: "+err.Error())
+	if h.net == nil {
+		writeError(w, http.StatusServiceUnavailable, "network manager not available")
 		return
 	}
-	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+
+	conns, err := h.net.Connections()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to get connections: %v", err))
+		return
+	}
+
+	// Format as lines for backward compatibility.
+	var lines []string
+	lines = append(lines, "Proto\tLocal\tPeer\tState")
+	for _, c := range conns {
+		lines = append(lines, fmt.Sprintf("%s\t%s\t%s\t%s", c.Protocol, c.LocalAddr, c.PeerAddr, c.State))
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"connections": lines})
 }
 

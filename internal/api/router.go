@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"github.com/gatekeeper-firewall/gatekeeper/internal/backend"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/config"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/driver"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/ops"
@@ -14,7 +15,7 @@ import (
 // RouterConfig holds all dependencies for the API router.
 type RouterConfig struct {
 	Store   *config.Store
-	NFT     *driver.NFTables
+	NFT     backend.Firewall // Was *driver.NFTables; now accepts any Firewall implementation.
 	WG      *driver.WireGuard
 	Dnsmasq *driver.Dnsmasq
 	APIKey  string
@@ -22,6 +23,9 @@ type RouterConfig struct {
 
 	// ServiceMgr is the pluggable service manager (optional).
 	ServiceMgr *service.Manager
+
+	// Net is the network manager for ping, connections, conntrack (optional).
+	Net backend.NetworkManager
 
 	// RBACEnforcer enables role-based access control when set.
 	// When nil, falls back to the legacy single API key auth.
@@ -38,8 +42,8 @@ func NewRouter(store *config.Store) http.Handler {
 	return NewRouterWithDriver(store, nil, "")
 }
 
-// NewRouterWithDriver creates the HTTP handler with an optional nftables driver.
-func NewRouterWithDriver(store *config.Store, nft *driver.NFTables, apiKey string) http.Handler {
+// NewRouterWithDriver creates the HTTP handler with an optional firewall backend.
+func NewRouterWithDriver(store *config.Store, nft backend.Firewall, apiKey string) http.Handler {
 	return NewRouterWithConfig(&RouterConfig{
 		Store:  store,
 		NFT:    nft,
@@ -55,6 +59,7 @@ func NewRouterWithConfig(cfg *RouterConfig) http.Handler {
 		wgOps:   ops.NewWireGuardOps(cfg.WG),
 		nft:     cfg.NFT,
 		dnsmasq: cfg.Dnsmasq,
+		net:     cfg.Net,
 	}
 
 	metrics := cfg.Metrics

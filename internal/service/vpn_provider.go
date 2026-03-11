@@ -11,6 +11,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	nft "github.com/google/nftables"
+	"github.com/google/nftables/expr"
 )
 
 // VPN provider constants for the top 15 commercial providers + Tailscale.
@@ -452,7 +455,7 @@ func (v *VPNProvider) generateOpenVPNConfig(cfg map[string]string) (string, erro
 
 func (v *VPNProvider) startTailscale(cfg map[string]string) error {
 	// Ensure tailscaled is running.
-	exec.Command("systemctl", "start", "tailscaled").Run()
+	Proc.Start("tailscaled")
 
 	// Build tailscale up command.
 	args := []string{"up", "--authkey=" + cfg["tailscale_auth_key"], "--reset"}
@@ -475,9 +478,9 @@ func (v *VPNProvider) startTailscale(cfg map[string]string) error {
 		return fmt.Errorf("tailscale up: %s: %w", string(out), err)
 	}
 
-	// Enable IP forwarding for subnet routing / exit node.
-	exec.Command("sysctl", "-w", "net.ipv4.ip_forward=1").Run()
-	exec.Command("sysctl", "-w", "net.ipv6.conf.all.forwarding=1").Run()
+	// Enable IP forwarding for subnet routing / exit node via /proc/sys.
+	os.WriteFile("/proc/sys/net/ipv4/ip_forward", []byte("1"), 0o644)
+	os.WriteFile("/proc/sys/net/ipv6/conf/all/forwarding", []byte("1"), 0o644)
 
 	slog.Info("tailscale connected")
 	return nil
@@ -493,29 +496,37 @@ func (v *VPNProvider) stopTailscale() {
 func (v *VPNProvider) applyKillSwitch() error {
 	iface := v.wgIface
 	if iface == "" {
-		iface = "tun0" // OpenVPN default
+		iface = "tun0"
 	}
 
-	rules := [][]string{
-		// Allow traffic through VPN tunnel.
-		{"nft", "add", "table", "inet", "gk_vpn_ks"},
-		{"nft", "add", "chain", "inet", "gk_vpn_ks", "output", "{ type filter hook output priority 0; policy drop; }"},
-		{"nft", "add", "rule", "inet", "gk_vpn_ks", "output", "oifname", iface, "accept"},
-		{"nft", "add", "rule", "inet", "gk_vpn_ks", "output", "oifname", "lo", "accept"},
-		// Allow DHCP.
-		{"nft", "add", "rule", "inet", "gk_vpn_ks", "output", "udp", "dport", "67-68", "accept"},
-		// Allow established connections.
-		{"nft", "add", "rule", "inet", "gk_vpn_ks", "output", "ct", "state", "established,related", "accept"},
-		// Allow LAN traffic.
-		{"nft", "add", "rule", "inet", "gk_vpn_ks", "output", "ip", "daddr", "10.0.0.0/8", "accept"},
-		{"nft", "add", "rule", "inet", "gk_vpn_ks", "output", "ip", "daddr", "172.16.0.0/12", "accept"},
-		{"nft", "add", "rule", "inet", "gk_vpn_ks", "output", "ip", "daddr", "192.168.0.0/16", "accept"},
+	policy := nft.ChainPolicyDrop
+
+	rules := [][]expr.Any{
+		// oifname <vpn> accept
+		nftRule(nftMatchOifname(iface), nftExpr(nftAccept())),
+		// oifname lo accept
+		nftRule(nftMatchOifname("lo"), nftExpr(nftAccept())),
+		// udp dport 67-68 accept (DHCP)
+		nftRule(nftMatchUDPDportRange(67, 68), nftExpr(nftAccept())),
+		// ct state established,related accept
+		nftRule(nftMatchCtStateEstRel(), nftExpr(nftAccept())),
+		// ip daddr 10.0.0.0/8 accept
+		nftRule(nftMatchIPDaddrCIDR("10.0.0.0/8"), nftExpr(nftAccept())),
+		// ip daddr 172.16.0.0/12 accept
+		nftRule(nftMatchIPDaddrCIDR("172.16.0.0/12"), nftExpr(nftAccept())),
+		// ip daddr 192.168.0.0/16 accept
+		nftRule(nftMatchIPDaddrCIDR("192.168.0.0/16"), nftExpr(nftAccept())),
 	}
 
-	for _, rule := range rules {
-		if out, err := exec.Command(rule[0], rule[1:]...).CombinedOutput(); err != nil {
-			slog.Warn("kill switch rule failed", "rule", strings.Join(rule, " "), "output", string(out))
-		}
+	if err := nftApplyRules(nft.TableFamilyINet, "gk_vpn_ks", []nftChainSpec{{
+		Name:     "output",
+		Type:     nft.ChainTypeFilter,
+		Hook:     nft.ChainHookOutput,
+		Priority: nft.ChainPriorityFilter,
+		Policy:   &policy,
+		Rules:    rules,
+	}}); err != nil {
+		return fmt.Errorf("apply kill switch: %w", err)
 	}
 
 	slog.Info("vpn kill switch applied", "interface", iface)
@@ -523,7 +534,7 @@ func (v *VPNProvider) applyKillSwitch() error {
 }
 
 func (v *VPNProvider) removeKillSwitch() {
-	exec.Command("nft", "delete", "table", "inet", "gk_vpn_ks").Run()
+	nftDeleteTable(nft.TableFamilyINet, "gk_vpn_ks")
 	slog.Info("vpn kill switch removed")
 }
 
@@ -532,19 +543,30 @@ func (v *VPNProvider) removeKillSwitch() {
 func (v *VPNProvider) applyDNSLeakProtection(cfg map[string]string) error {
 	provider := cfg["provider"]
 	dns := getProviderDNS(provider)
-
-	rules := [][]string{
-		{"nft", "add", "table", "inet", "gk_vpn_dns"},
-		{"nft", "add", "chain", "inet", "gk_vpn_dns", "output", "{ type filter hook output priority -1; policy accept; }"},
-		// Block DNS to non-VPN destinations.
-		{"nft", "add", "rule", "inet", "gk_vpn_dns", "output", "udp", "dport", "53", "ip", "daddr", "!=", dns, "drop"},
-		{"nft", "add", "rule", "inet", "gk_vpn_dns", "output", "tcp", "dport", "53", "ip", "daddr", "!=", dns, "drop"},
+	dnsIP := net.ParseIP(dns)
+	if dnsIP == nil {
+		return fmt.Errorf("invalid DNS IP: %s", dns)
 	}
 
-	for _, rule := range rules {
-		if out, err := exec.Command(rule[0], rule[1:]...).CombinedOutput(); err != nil {
-			slog.Warn("dns leak protection rule failed", "rule", strings.Join(rule, " "), "output", string(out))
-		}
+	prio := nft.ChainPriority(-1)
+	policy := nft.ChainPolicyAccept
+
+	rules := [][]expr.Any{
+		// udp dport 53 ip daddr != <dns> drop
+		nftRule(nftMatchUDPDport(53), nftMatchIPDaddrNot(dnsIP), nftExpr(nftDrop())),
+		// tcp dport 53 ip daddr != <dns> drop
+		nftRule(nftMatchTCPDport(53), nftMatchIPDaddrNot(dnsIP), nftExpr(nftDrop())),
+	}
+
+	if err := nftApplyRules(nft.TableFamilyINet, "gk_vpn_dns", []nftChainSpec{{
+		Name:     "output",
+		Type:     nft.ChainTypeFilter,
+		Hook:     nft.ChainHookOutput,
+		Priority: &prio,
+		Policy:   &policy,
+		Rules:    rules,
+	}}); err != nil {
+		return fmt.Errorf("apply dns leak protection: %w", err)
 	}
 
 	slog.Info("dns leak protection applied", "dns", dns)
@@ -552,7 +574,7 @@ func (v *VPNProvider) applyDNSLeakProtection(cfg map[string]string) error {
 }
 
 func (v *VPNProvider) removeDNSLeakProtection() {
-	exec.Command("nft", "delete", "table", "inet", "gk_vpn_dns").Run()
+	nftDeleteTable(nft.TableFamilyINet, "gk_vpn_dns")
 }
 
 // --- Split tunneling ---
@@ -626,9 +648,9 @@ func (v *VPNProvider) tunnelHealthy() bool {
 	}
 
 	// Ping through the tunnel.
-	out, err := exec.Command("ping", "-c", "1", "-W", "5", "-I", iface, "1.1.1.1").CombinedOutput()
-	if err != nil {
-		slog.Debug("tunnel health check failed", "output", string(out))
+	result, err := Net.Ping("1.1.1.1", 1, 5, iface)
+	if err != nil || result.Received == 0 {
+		slog.Debug("tunnel health check failed", "error", err)
 		return false
 	}
 	return true

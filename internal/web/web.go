@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gatekeeper-firewall/gatekeeper/internal/backend"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/config"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/driver"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/model"
@@ -38,8 +39,8 @@ func init() {
 type WebDeps struct {
 	ServiceMgr *service.Manager
 	WG         *driver.WireGuard
-	NFT        *driver.NFTables
-	LeaseFile  string // Path to dnsmasq lease file.
+	NFT        backend.Firewall // Was *driver.NFTables; now any Firewall implementation.
+	LeaseFile  string           // Path to dnsmasq lease file.
 	APIKey     string // API key for web session auth (empty = no auth).
 }
 

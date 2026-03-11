@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"os/exec"
+	"strconv"
 	"path/filepath"
 	"sync"
 	"time"
@@ -294,8 +294,12 @@ func (m *MultiWAN) checkWAN(target, iface, timeout string) bool {
 	if target == "" {
 		return true
 	}
-	cmd := exec.Command("ping", "-c", "1", "-W", timeout, "-I", iface, target)
-	return cmd.Run() == nil
+	timeoutSec := 3
+	if v, err := strconv.Atoi(timeout); err == nil && v > 0 {
+		timeoutSec = v
+	}
+	result, err := Net.Ping(target, 1, timeoutSec, iface)
+	return err == nil && result.Received > 0
 }
 
 func (m *MultiWAN) setDefaultRoute(gateway, iface string) {
