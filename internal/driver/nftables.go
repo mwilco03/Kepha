@@ -22,6 +22,7 @@ type NFTables struct {
 	confirmTimer   *time.Timer
 	pendingRev     int
 	confirmTimeout time.Duration
+	WGListenPort   int // WireGuard listen port (0 = disabled).
 }
 
 // NewNFTables creates a new nftables driver.
@@ -127,11 +128,12 @@ func (n *NFTables) buildInput() (*compiler.Input, error) {
 	}
 
 	return &compiler.Input{
-		Zones:    zones,
-		Aliases:  aliases,
-		Policies: policies,
-		Profiles: profiles,
-		Devices:  devices,
+		Zones:        zones,
+		Aliases:      aliases,
+		Policies:     policies,
+		Profiles:     profiles,
+		Devices:      devices,
+		WGListenPort: n.WGListenPort,
 	}, nil
 }
 

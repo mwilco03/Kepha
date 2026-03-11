@@ -15,11 +15,12 @@ type CompiledRuleset struct {
 
 // Input holds all config needed for compilation.
 type Input struct {
-	Zones    []model.Zone
-	Aliases  []model.Alias
-	Policies []model.Policy
-	Profiles []model.Profile
-	Devices  []model.DeviceAssignment
+	Zones        []model.Zone
+	Aliases      []model.Alias
+	Policies     []model.Policy
+	Profiles     []model.Profile
+	Devices      []model.DeviceAssignment
+	WGListenPort int // WireGuard listen port (0 = disabled).
 }
 
 // Compile transforms the config model into an nftables ruleset.
@@ -106,6 +107,12 @@ func writeInputChain(b *strings.Builder, input *Input) {
 			fmt.Fprintf(b, "\t\t# Allow API from %s.\n", z.Name)
 			fmt.Fprintf(b, "\t\tiifname %q tcp dport 8080 accept\n\n", z.Interface)
 		}
+	}
+
+	// Allow WireGuard if configured.
+	if input.WGListenPort > 0 {
+		fmt.Fprintf(b, "\t\t# Allow WireGuard.\n")
+		fmt.Fprintf(b, "\t\tudp dport %d accept\n\n", input.WGListenPort)
 	}
 
 	// Allow DHCP/DNS from all internal zones.

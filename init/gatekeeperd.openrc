@@ -14,6 +14,8 @@ GATEKEEPER_RULESET_DIR="${GATEKEEPER_RULESET_DIR:-/var/lib/gatekeeper/rulesets}"
 GATEKEEPER_DNSMASQ_DIR="${GATEKEEPER_DNSMASQ_DIR:-/etc/gatekeeper/dnsmasq}"
 GATEKEEPER_UPSTREAM_DNS="${GATEKEEPER_UPSTREAM_DNS:-1.1.1.1,8.8.8.8}"
 GATEKEEPER_LOCAL_DOMAIN="${GATEKEEPER_LOCAL_DOMAIN:-gk.local}"
+GATEKEEPER_WG_INTERFACE="${GATEKEEPER_WG_INTERFACE:-}"
+GATEKEEPER_PXE_SERVER="${GATEKEEPER_PXE_SERVER:-}"
 
 command_args="
     --listen=${GATEKEEPER_LISTEN}
@@ -23,6 +25,16 @@ command_args="
     --upstream-dns=${GATEKEEPER_UPSTREAM_DNS}
     --local-domain=${GATEKEEPER_LOCAL_DOMAIN}
 "
+
+# Append WireGuard interface if configured.
+if [ -n "${GATEKEEPER_WG_INTERFACE}" ]; then
+    command_args="${command_args} --wg-interface=${GATEKEEPER_WG_INTERFACE}"
+fi
+
+# Append PXE server if configured.
+if [ -n "${GATEKEEPER_PXE_SERVER}" ]; then
+    command_args="${command_args} --pxe-server=${GATEKEEPER_PXE_SERVER}"
+fi
 
 # Append API key if configured.
 if [ -f /etc/gatekeeper/api.key ]; then

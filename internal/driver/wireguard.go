@@ -141,7 +141,12 @@ func (w *WireGuard) GenerateClientConfig(clientPrivateKey, serverEndpoint string
 	b.WriteString("DNS = 10.50.0.1\n\n")
 	b.WriteString("[Peer]\n")
 	b.WriteString(fmt.Sprintf("PublicKey = %s\n", serverPubKey))
-	b.WriteString(fmt.Sprintf("Endpoint = %s:%d\n", serverEndpoint, w.config.ListenPort))
+	// If the endpoint already includes a port (host:port), use it as-is.
+	if strings.Contains(serverEndpoint, ":") {
+		b.WriteString(fmt.Sprintf("Endpoint = %s\n", serverEndpoint))
+	} else {
+		b.WriteString(fmt.Sprintf("Endpoint = %s:%d\n", serverEndpoint, w.config.ListenPort))
+	}
 	b.WriteString("AllowedIPs = 0.0.0.0/0\n")
 	b.WriteString("PersistentKeepalive = 25\n")
 	return b.String()

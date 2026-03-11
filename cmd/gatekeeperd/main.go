@@ -73,6 +73,9 @@ func main() {
 	}
 
 	nft := driver.NewNFTables(store, *rulesetDir)
+	if *wgInterface != "" {
+		nft.WGListenPort = 51820
+	}
 
 	// Boot-time safe mode: attempt to apply last known config.
 	// On failure, log the error but continue starting the daemon so the
