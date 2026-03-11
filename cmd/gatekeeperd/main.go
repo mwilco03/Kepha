@@ -169,6 +169,9 @@ func main() {
 	svcMgr.Register(service.NewFRRouting("/etc/frr"))
 	svcMgr.Register(service.NewCertStore())
 
+	// Performance tuner: flowtables, conntrack auto-scaling, sysctl tuning.
+	svcMgr.Register(service.NewPerformanceTuner())
+
 	// HA service (wrapped for Service interface compatibility).
 	svcMgr.Register(service.NewHAWrapper())
 
