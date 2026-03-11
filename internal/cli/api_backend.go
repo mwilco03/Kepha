@@ -300,3 +300,17 @@ func (a *APIBackend) RemoveWGPeer(publicKey string) error {
 	_, err := a.c.Delete("/api/v1/wg/peers/"+publicKey, nil)
 	return err
 }
+
+func (a *APIBackend) PruneWGPeers(maxAgeSeconds int) ([]string, error) {
+	data, err := a.c.Post("/api/v1/wg/prune", map[string]int{"max_age_seconds": maxAgeSeconds})
+	if err != nil {
+		return nil, err
+	}
+	var result struct {
+		Pruned []string `json:"pruned"`
+	}
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, err
+	}
+	return result.Pruned, nil
+}

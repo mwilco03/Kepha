@@ -8,8 +8,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/gatekeeper-firewall/gatekeeper/internal/validate"
 	"golang.org/x/crypto/curve25519"
@@ -126,6 +128,78 @@ func (w *WireGuard) RemovePeer(publicKey string) error {
 
 	w.config.Peers = remaining
 	return w.writeConfig()
+}
+
+// PruneStalePeers removes peers that have not completed a handshake within
+// maxAge. A maxAge of 0 means remove only peers that have NEVER handshaked.
+// Returns the list of removed peer public keys.
+func (w *WireGuard) PruneStalePeers(maxAge time.Duration) ([]string, error) {
+	stale, err := w.findStalePeers(maxAge)
+	if err != nil {
+		return nil, err
+	}
+
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	staleSet := make(map[string]bool, len(stale))
+	for _, pk := range stale {
+		staleSet[pk] = true
+	}
+
+	var remaining []WGPeer
+	var pruned []string
+	for _, p := range w.config.Peers {
+		if staleSet[p.PublicKey] {
+			pruned = append(pruned, p.PublicKey)
+			slog.Info("pruning stale WG peer", "pubkey", p.PublicKey, "name", p.Name)
+			continue
+		}
+		remaining = append(remaining, p)
+	}
+	if len(pruned) == 0 {
+		return nil, nil
+	}
+
+	w.config.Peers = remaining
+	if err := w.writeConfig(); err != nil {
+		return nil, err
+	}
+	return pruned, nil
+}
+
+// findStalePeers queries wg for latest handshake timestamps and returns
+// public keys of peers that are stale.
+func (w *WireGuard) findStalePeers(maxAge time.Duration) ([]string, error) {
+	cmd := exec.Command("wg", "show", w.iface, "latest-handshakes")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("wg show latest-handshakes: %s: %w", string(output), err)
+	}
+
+	now := time.Now()
+	var stale []string
+	for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
+		if line == "" {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) != 2 {
+			continue
+		}
+		pubkey := fields[0]
+		ts, err := strconv.ParseInt(fields[1], 10, 64)
+		if err != nil {
+			continue
+		}
+		if ts == 0 {
+			// Never handshaked — always stale.
+			stale = append(stale, pubkey)
+		} else if maxAge > 0 && now.Sub(time.Unix(ts, 0)) > maxAge {
+			stale = append(stale, pubkey)
+		}
+	}
+	return stale, nil
 }
 
 // GenerateClientConfig creates a client configuration for a peer.

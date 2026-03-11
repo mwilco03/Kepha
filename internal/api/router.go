@@ -126,6 +126,7 @@ func NewRouterWithConfig(cfg *RouterConfig) http.Handler {
 	mux.HandleFunc("POST /api/v1/wg/peers", h.addWGPeer)
 	mux.HandleFunc("DELETE /api/v1/wg/peers/{pubkey}", h.removeWGPeer)
 	mux.HandleFunc("POST /api/v1/wg/client-config", h.generateWGClientConfig)
+	mux.HandleFunc("POST /api/v1/wg/prune", h.pruneWGPeers)
 
 	// Path test and explain.
 	mux.HandleFunc("POST /api/v1/test", h.pathTest)

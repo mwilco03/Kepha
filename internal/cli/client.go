@@ -2,11 +2,20 @@ package cli
 
 import (
 	"bytes"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"time"
+)
+
+const (
+	// Well-known paths for TLS auto-detection.
+	defaultTLSCertPath = "/etc/gatekeeper/tls/server.crt"
+	defaultListenPort  = "8080"
 )
 
 // Client is the API client used by the CLI.
@@ -17,13 +26,53 @@ type Client struct {
 }
 
 // NewClient creates a new CLI API client.
+// If baseURL is empty, auto-detects HTTP vs HTTPS by checking for the
+// well-known TLS certificate path.
 func NewClient(baseURL, apiKey string) *Client {
+	if baseURL == "" {
+		baseURL = ResolveAPIURL()
+	}
 	return &Client{
-		BaseURL: baseURL,
-		APIKey:  apiKey,
-		HTTPClient: &http.Client{
-			Timeout: 30 * time.Second,
-		},
+		BaseURL:    baseURL,
+		APIKey:     apiKey,
+		HTTPClient: newHTTPClient(),
+	}
+}
+
+// ResolveAPIURL returns the appropriate base URL for the API.
+// If GK_API_URL is set, it is returned as-is.
+// Otherwise, checks for the well-known TLS cert: if present, returns
+// https://localhost:8080; if absent, returns http://localhost:8080.
+func ResolveAPIURL() string {
+	if u := os.Getenv("GK_API_URL"); u != "" {
+		return u
+	}
+	if _, err := os.Stat(defaultTLSCertPath); err == nil {
+		return "https://localhost:" + defaultListenPort
+	}
+	return "http://localhost:" + defaultListenPort
+}
+
+// newHTTPClient creates an http.Client that trusts the gatekeeper
+// self-signed certificate if it exists at the well-known path.
+func newHTTPClient() *http.Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+
+	if certPEM, err := os.ReadFile(defaultTLSCertPath); err == nil {
+		pool, _ := x509.SystemCertPool()
+		if pool == nil {
+			pool = x509.NewCertPool()
+		}
+		pool.AppendCertsFromPEM(certPEM)
+		transport.TLSClientConfig = &tls.Config{
+			RootCAs:    pool,
+			MinVersion: tls.VersionTLS12,
+		}
+	}
+
+	return &http.Client{
+		Timeout:   30 * time.Second,
+		Transport: transport,
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gatekeeper-firewall/gatekeeper/internal/compiler"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/config"
@@ -729,6 +730,28 @@ func (h *handlers) removeWGPeer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "removed"})
+}
+
+func (h *handlers) pruneWGPeers(w http.ResponseWriter, r *http.Request) {
+	if h.wgOps == nil {
+		writeError(w, http.StatusServiceUnavailable, "wireguard not configured")
+		return
+	}
+	var body struct {
+		MaxAgeSeconds int `json:"max_age_seconds"`
+	}
+	// Body is optional — default to 0 (prune never-handshaked only).
+	_ = readJSON(r, &body)
+	maxAge := time.Duration(body.MaxAgeSeconds) * time.Second
+	pruned, err := h.wgOps.PruneStalePeers(maxAge)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"pruned": pruned,
+		"count":  len(pruned),
+	})
 }
 
 func (h *handlers) generateWGClientConfig(w http.ResponseWriter, r *http.Request) {
