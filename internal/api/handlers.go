@@ -6,6 +6,8 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -879,6 +881,39 @@ func (h *handlers) listAuditLog(w http.ResponseWriter, r *http.Request) {
 		entries = []config.AuditEntry{}
 	}
 	writeJSON(w, http.StatusOK, entries)
+}
+
+// --- Performance ---
+
+func (h *handlers) perfNIC(w http.ResponseWriter, r *http.Request) {
+	entries, err := os.ReadDir("/sys/class/net")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	var nics []backend.NICInfo
+	for _, e := range entries {
+		name := e.Name()
+		if name == "lo" {
+			continue
+		}
+		// In sysfs, real interfaces are symlinks to directories.
+		// Non-interface entries (e.g. bonding_masters) are plain files.
+		fi, err := os.Stat(filepath.Join("/sys/class/net", name))
+		if err != nil || !fi.IsDir() {
+			continue
+		}
+		info, err := h.net.NICInfo(name)
+		if err != nil {
+			continue
+		}
+		nics = append(nics, *info)
+	}
+	if nics == nil {
+		nics = []backend.NICInfo{}
+	}
+	writeJSON(w, http.StatusOK, nics)
 }
 
 // --- Helpers ---

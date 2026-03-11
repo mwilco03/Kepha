@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strconv"
 	"sync"
 	"testing"
 
@@ -16,10 +18,16 @@ import (
 
 type sysctlCall struct{ Key, Val string }
 
+type offloadCall struct{ Iface, Feature string; Enabled bool }
+type irqAffinityCall struct{ IRQ int; CPUList string }
+
 type mockNetworkManager struct {
-	mu          sync.Mutex
-	SysctlCalls []sysctlCall
-	Conntrack   []backend.ConntrackEntry
+	mu              sync.Mutex
+	SysctlCalls     []sysctlCall
+	Conntrack       []backend.ConntrackEntry
+	NICInfoResult   *backend.NICInfo // returned by NICInfo()
+	OffloadCalls    []offloadCall
+	IRQAffinityCalls []irqAffinityCall
 }
 
 func (m *mockNetworkManager) SysctlSet(key, value string) error {
@@ -71,6 +79,47 @@ func (m *mockNetworkManager) Ping(string, int, int, string) (backend.PingResult,
 	return backend.PingResult{}, nil
 }
 func (m *mockNetworkManager) Connections() ([]backend.Connection, error) { return nil, nil }
+
+func (m *mockNetworkManager) NICInfo(iface string) (*backend.NICInfo, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.NICInfoResult != nil {
+		info := *m.NICInfoResult
+		info.Name = iface
+		return &info, nil
+	}
+	return &backend.NICInfo{Name: iface, Offloads: map[string]bool{}}, nil
+}
+
+func (m *mockNetworkManager) SetIRQAffinity(irq int, cpuList string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.IRQAffinityCalls = append(m.IRQAffinityCalls, irqAffinityCall{irq, cpuList})
+	return nil
+}
+
+func (m *mockNetworkManager) NICSetOffload(iface string, feature string, enabled bool) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.OffloadCalls = append(m.OffloadCalls, offloadCall{iface, feature, enabled})
+	return nil
+}
+
+func (m *mockNetworkManager) getIRQAffinityCalls() []irqAffinityCall {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]irqAffinityCall, len(m.IRQAffinityCalls))
+	copy(out, m.IRQAffinityCalls)
+	return out
+}
+
+func (m *mockNetworkManager) getOffloadCalls() []offloadCall {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]offloadCall, len(m.OffloadCalls))
+	copy(out, m.OffloadCalls)
+	return out
+}
 
 // ---------------------------------------------------------------------------
 // Helper: swap Net for the duration of a test.
@@ -638,3 +687,144 @@ func TestBandwidthMonitorAccumulatesAcrossSamples(t *testing.T) {
 		t.Error("LastSeen should not be empty after second sample")
 	}
 }
+
+// ===================================================================
+// NIC tuning tests (IRQ affinity + offloads)
+// ===================================================================
+
+func TestPerformanceTunerIRQAffinity(t *testing.T) {
+	mock := &mockNetworkManager{
+		NICInfoResult: &backend.NICInfo{
+			IRQs: []int{30, 31, 32, 33},
+		},
+	}
+	withMockNet(t, mock)
+
+	pt := NewPerformanceTuner()
+	// Test the IRQ distribution directly (avoids detectForwardInterfaces
+	// which depends on real system interfaces).
+	pt.distributeIRQAffinity("eth0", []int{30, 31, 32, 33})
+
+	calls := mock.getIRQAffinityCalls()
+	if len(calls) != 4 {
+		t.Fatalf("expected 4 IRQ affinity calls, got %d", len(calls))
+	}
+
+	// Round-robin: IRQ 30→CPU 0, 31→CPU 1, 32→CPU 2, 33→CPU 3
+	// (or wraps if fewer CPUs, but we verify sequential assignment).
+	for i, call := range calls {
+		if call.IRQ != 30+i {
+			t.Errorf("call[%d]: IRQ = %d, want %d", i, call.IRQ, 30+i)
+		}
+		// CPU should be i % runtime.NumCPU()
+		wantCPU := i % numCPUForTest()
+		if call.CPUList != strconv.Itoa(wantCPU) {
+			t.Errorf("call[%d]: cpu = %q, want %q", i, call.CPUList, strconv.Itoa(wantCPU))
+		}
+	}
+}
+
+func TestPerformanceTunerIRQAffinityWraps(t *testing.T) {
+	mock := &mockNetworkManager{}
+	withMockNet(t, mock)
+
+	// Create more IRQs than CPUs to verify wrapping.
+	numCPU := numCPUForTest()
+	irqs := make([]int, numCPU+2)
+	for i := range irqs {
+		irqs[i] = 100 + i
+	}
+
+	pt := NewPerformanceTuner()
+	pt.distributeIRQAffinity("eth0", irqs)
+
+	calls := mock.getIRQAffinityCalls()
+	if len(calls) != len(irqs) {
+		t.Fatalf("expected %d calls, got %d", len(irqs), len(calls))
+	}
+
+	// Last two should wrap back to CPU 0 and 1.
+	secondToLast := calls[numCPU]
+	if secondToLast.CPUList != "0" {
+		t.Errorf("IRQ %d should wrap to CPU 0, got %q", secondToLast.IRQ, secondToLast.CPUList)
+	}
+	last := calls[numCPU+1]
+	if last.CPUList != "1" {
+		t.Errorf("IRQ %d should wrap to CPU 1, got %q", last.IRQ, last.CPUList)
+	}
+}
+
+func TestPerformanceTunerOffloads(t *testing.T) {
+	mock := &mockNetworkManager{}
+	withMockNet(t, mock)
+
+	pt := NewPerformanceTuner()
+	pt.enableOffloads("eth0")
+
+	calls := mock.getOffloadCalls()
+
+	// Should enable all 5 offload features.
+	expected := map[string]bool{
+		"tso": false, "gro": false, "gso": false,
+		"rx_checksum": false, "tx_checksum": false,
+	}
+	for _, call := range calls {
+		if call.Iface != "eth0" {
+			t.Errorf("unexpected iface %q", call.Iface)
+		}
+		if !call.Enabled {
+			t.Errorf("feature %q should be enabled", call.Feature)
+		}
+		expected[call.Feature] = true
+	}
+	for feat, seen := range expected {
+		if !seen {
+			t.Errorf("missing offload call for %q", feat)
+		}
+	}
+}
+
+func TestPerformanceTunerNICDisabled(t *testing.T) {
+	mock := &mockNetworkManager{}
+	withMockNet(t, mock)
+
+	pt := NewPerformanceTuner()
+	cfg := map[string]string{
+		"sysctl_tuning":  "false",
+		"conntrack_auto": "false",
+		"flowtables":     "false",
+		"irq_affinity":   "false",
+		"nic_offloads":   "false",
+	}
+	if err := pt.Start(cfg); err != nil {
+		t.Fatal(err)
+	}
+	defer pt.Stop()
+
+	if len(mock.getIRQAffinityCalls()) != 0 {
+		t.Error("IRQ affinity calls should be empty when disabled")
+	}
+	if len(mock.getOffloadCalls()) != 0 {
+		t.Error("offload calls should be empty when disabled")
+	}
+}
+
+func TestPerformanceTunerNICConfigSchema(t *testing.T) {
+	pt := NewPerformanceTuner()
+	schema := pt.ConfigSchema()
+	for _, key := range []string{"irq_affinity", "nic_offloads"} {
+		if _, ok := schema[key]; !ok {
+			t.Errorf("schema missing key %q", key)
+		}
+	}
+	defaults := pt.DefaultConfig()
+	if defaults["irq_affinity"] != "true" {
+		t.Errorf("irq_affinity default = %q", defaults["irq_affinity"])
+	}
+	if defaults["nic_offloads"] != "true" {
+		t.Errorf("nic_offloads default = %q", defaults["nic_offloads"])
+	}
+}
+
+// numCPUForTest returns runtime.NumCPU() — extracted for readability.
+func numCPUForTest() int { return runtime.NumCPU() }

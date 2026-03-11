@@ -319,6 +319,18 @@ type NetworkManager interface {
 
 	// ConntrackList returns connection tracking entries.
 	ConntrackList(proto string) ([]ConntrackEntry, error)
+
+	// NICInfo returns hardware details, queue count, offload status, and IRQs
+	// for a network interface. Data comes from sysfs, /proc, and ethtool ioctls.
+	NICInfo(iface string) (*NICInfo, error)
+
+	// SetIRQAffinity pins an IRQ to specific CPUs by writing
+	// /proc/irq/<irq>/smp_affinity_list.
+	SetIRQAffinity(irq int, cpuList string) error
+
+	// NICSetOffload enables or disables a NIC offload feature via ethtool ioctl.
+	// Supported features: tso, gro, gso, rx_checksum, tx_checksum.
+	NICSetOffload(iface string, feature string, enabled bool) error
 }
 
 // PingResult holds the result of a ping operation.
@@ -349,6 +361,33 @@ type ConntrackEntry struct {
 	State    string `json:"state"`
 	Bytes    int64  `json:"bytes"`
 	Packets  int64  `json:"packets"`
+}
+
+// NICInfo holds hardware and offload details for a network interface.
+type NICInfo struct {
+	Name       string          `json:"name"`
+	Driver     string          `json:"driver"`
+	SpeedMbps  int             `json:"speed_mbps"`  // -1 = unknown
+	Duplex     string          `json:"duplex"`
+	MTU        int             `json:"mtu"`
+	TxQueueLen int             `json:"tx_queue_len"`
+	RxQueues   int             `json:"rx_queues"`
+	TxQueues   int             `json:"tx_queues"`
+	Offloads   map[string]bool `json:"offloads"` // tso, gro, gso, rx_checksum, tx_checksum
+	IRQs       []int           `json:"irqs"`
+	Stats      NICStats        `json:"stats"`
+}
+
+// NICStats holds interface-level traffic counters from sysfs.
+type NICStats struct {
+	RxBytes   uint64 `json:"rx_bytes"`
+	TxBytes   uint64 `json:"tx_bytes"`
+	RxPackets uint64 `json:"rx_packets"`
+	TxPackets uint64 `json:"tx_packets"`
+	RxErrors  uint64 `json:"rx_errors"`
+	TxErrors  uint64 `json:"tx_errors"`
+	RxDropped uint64 `json:"rx_dropped"`
+	TxDropped uint64 `json:"tx_dropped"`
 }
 
 // HTTPClient abstracts HTTP operations.

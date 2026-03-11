@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -39,7 +40,7 @@ func (p *PerformanceTuner) Category() string    { return "system" }
 func (p *PerformanceTuner) Dependencies() []string { return nil }
 
 func (p *PerformanceTuner) Description() string {
-	return "Kernel and nftables performance tuning. Enables flowtables for established flow bypass, auto-scales conntrack table size, and applies optimized sysctl settings (BBR, TCP fast open, backlog tuning)."
+	return "Kernel and nftables performance tuning. Flowtables, conntrack auto-scaling, sysctl tuning, IRQ affinity distribution, and NIC offload optimization (TSO, GRO, GSO, checksums)."
 }
 
 func (p *PerformanceTuner) DefaultConfig() map[string]string {
@@ -54,6 +55,8 @@ func (p *PerformanceTuner) DefaultConfig() map[string]string {
 		"tcp_fastopen":         "true",
 		"netdev_backlog":       "4096",
 		"somaxconn":            "16384",
+		"irq_affinity":         "true",
+		"nic_offloads":         "true",
 	}
 }
 
@@ -69,6 +72,8 @@ func (p *PerformanceTuner) ConfigSchema() map[string]ConfigField {
 		"tcp_fastopen":         {Description: "Enable TCP Fast Open (client + server)", Default: "true", Type: "bool"},
 		"netdev_backlog":       {Description: "net.core.netdev_max_backlog value", Default: "4096", Type: "int"},
 		"somaxconn":            {Description: "net.core.somaxconn value", Default: "16384", Type: "int"},
+		"irq_affinity":         {Description: "Distribute NIC IRQs across CPUs", Default: "true", Type: "bool"},
+		"nic_offloads":         {Description: "Enable TSO/GRO/GSO/checksum offloads", Default: "true", Type: "bool"},
 	}
 }
 
@@ -91,6 +96,10 @@ func (p *PerformanceTuner) Start(cfg map[string]string) error {
 
 	if cfg["flowtables"] == "true" {
 		p.enableFlowtables(cfg)
+	}
+
+	if cfg["irq_affinity"] == "true" || cfg["nic_offloads"] == "true" {
+		p.tuneNICs(cfg)
 	}
 
 	p.state = StateRunning
@@ -340,4 +349,56 @@ func detectForwardInterfaces() []string {
 		result = append(result, iface.Name)
 	}
 	return result
+}
+
+// --- NIC tuning: IRQ affinity + hardware offloads ---
+
+func (p *PerformanceTuner) tuneNICs(cfg map[string]string) {
+	ifaces := detectForwardInterfaces()
+
+	for _, iface := range ifaces {
+		info, err := Net.NICInfo(iface)
+		if err != nil {
+			slog.Warn("NIC info failed", "iface", iface, "error", err)
+			continue
+		}
+
+		if cfg["irq_affinity"] == "true" && len(info.IRQs) > 0 {
+			p.distributeIRQAffinity(info.Name, info.IRQs)
+		}
+
+		if cfg["nic_offloads"] == "true" {
+			p.enableOffloads(iface)
+		}
+	}
+}
+
+// distributeIRQAffinity pins each NIC IRQ to a different CPU, round-robin.
+// This prevents all interrupts from landing on CPU 0 (the kernel default).
+func (p *PerformanceTuner) distributeIRQAffinity(iface string, irqs []int) {
+	numCPU := runtime.NumCPU()
+	for i, irq := range irqs {
+		cpu := i % numCPU
+		if err := Net.SetIRQAffinity(irq, strconv.Itoa(cpu)); err != nil {
+			slog.Warn("IRQ affinity failed", "irq", irq, "cpu", cpu, "error", err)
+		} else {
+			slog.Debug("IRQ affinity set", "irq", irq, "cpu", cpu, "iface", iface)
+		}
+	}
+	slog.Info("IRQ affinity distributed", "iface", iface, "irqs", len(irqs), "cpus", numCPU)
+}
+
+// enableOffloads turns on TSO, GRO, GSO, and checksum offloads.
+// These are almost always beneficial for a router/firewall — they let the
+// NIC coalesce/segment packets in hardware instead of the CPU.
+func (p *PerformanceTuner) enableOffloads(iface string) {
+	features := []string{"tso", "gro", "gso", "rx_checksum", "tx_checksum"}
+	for _, feat := range features {
+		if err := Net.NICSetOffload(iface, feat, true); err != nil {
+			slog.Warn("offload enable failed", "iface", iface, "feature", feat, "error", err)
+		} else {
+			slog.Debug("offload enabled", "iface", iface, "feature", feat)
+		}
+	}
+	slog.Info("NIC offloads applied", "iface", iface)
 }

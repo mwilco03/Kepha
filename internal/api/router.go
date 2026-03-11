@@ -171,6 +171,7 @@ func NewRouterWithConfig(cfg *RouterConfig) http.Handler {
 
 	mux.HandleFunc("GET /api/v1/diag/interfaces", h.diagInterfaces) // Read-only, no subprocess.
 	mux.HandleFunc("GET /api/v1/diag/leases", h.diagLeases)         // Read-only, file parse.
+	mux.HandleFunc("GET /api/v1/perf/nic", h.perfNIC)               // Read-only, sysfs + ethtool.
 	mux.HandleFunc("GET /api/v1/diag/dry-run", h.dryRun)
 	mux.Handle("GET /api/v1/diag/ping/{target}", diagRL(http.HandlerFunc(h.diagPing)))
 	mux.Handle("GET /api/v1/diag/connections", diagRL(http.HandlerFunc(h.diagConnections)))
