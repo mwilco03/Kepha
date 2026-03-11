@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -147,26 +147,24 @@ func (b *Bridge) createBridge(name string, cfg map[string]string) error {
 	prefix := name + "_"
 
 	// Create bridge if it doesn't exist.
-	if err := run("ip", "link", "add", "name", name, "type", "bridge"); err != nil {
+	if err := Net.LinkAdd(name, "bridge"); err != nil {
 		// Already exists is OK.
 		slog.Debug("bridge may already exist", "name", name, "error", err)
 	}
 
 	// VLAN-aware bridging.
 	if cfg[prefix+"vlan_aware"] == "true" {
-		run("ip", "link", "set", name, "type", "bridge", "vlan_filtering", "1")
+		Net.BridgeSetVlanFiltering(name, true)
 	}
 
 	// STP.
-	if cfg[prefix+"stp"] == "true" {
-		run("ip", "link", "set", name, "type", "bridge", "stp_state", "1")
-	} else {
-		run("ip", "link", "set", name, "type", "bridge", "stp_state", "0")
-	}
+	Net.BridgeSetSTP(name, cfg[prefix+"stp"] == "true")
 
 	// Forward delay.
 	if fd := cfg[prefix+"fd"]; fd != "" {
-		run("ip", "link", "set", name, "type", "bridge", "forward_delay", fd)
+		if v, err := strconv.Atoi(fd); err == nil {
+			Net.BridgeSetForwardDelay(name, v)
+		}
 	}
 
 	// Add ports.
@@ -176,10 +174,10 @@ func (b *Bridge) createBridge(name string, cfg map[string]string) error {
 			if port == "" {
 				continue
 			}
-			if err := run("ip", "link", "set", port, "master", name); err != nil {
+			if err := Net.LinkSetMaster(port, name); err != nil {
 				slog.Warn("failed to add port to bridge", "bridge", name, "port", port, "error", err)
 			}
-			run("ip", "link", "set", port, "up")
+			Net.LinkSetUp(port)
 		}
 	}
 
@@ -190,14 +188,14 @@ func (b *Bridge) createBridge(name string, cfg map[string]string) error {
 			mask = "255.255.255.0"
 		}
 		cidr := addr + "/" + netmaskToCIDR(mask)
-		run("ip", "addr", "flush", "dev", name)
-		if err := run("ip", "addr", "add", cidr, "dev", name); err != nil {
+		Net.AddrFlush(name)
+		if err := Net.AddrAdd(name, cidr); err != nil {
 			return fmt.Errorf("assign address to %s: %w", name, err)
 		}
 	}
 
 	// Bring up.
-	if err := run("ip", "link", "set", name, "up"); err != nil {
+	if err := Net.LinkSetUp(name); err != nil {
 		return fmt.Errorf("bring up %s: %w", name, err)
 	}
 
@@ -206,14 +204,16 @@ func (b *Bridge) createBridge(name string, cfg map[string]string) error {
 		for _, vlan := range strings.Split(cfg[prefix+"vlans"], ",") {
 			vlan = strings.TrimSpace(vlan)
 			if vlan != "" {
-				run("bridge", "vlan", "add", "vid", vlan, "dev", name, "self")
+				if v, err := strconv.Atoi(vlan); err == nil {
+					Net.BridgeVlanAdd(name, v)
+				}
 			}
 		}
 	}
 
 	// Default gateway.
 	if gw := cfg[prefix+"gateway"]; gw != "" {
-		run("ip", "route", "add", "default", "via", gw, "dev", name)
+		Net.RouteAdd("default", gw, name)
 	}
 
 	slog.Info("bridge created", "name", name)
@@ -221,8 +221,8 @@ func (b *Bridge) createBridge(name string, cfg map[string]string) error {
 }
 
 func (b *Bridge) deleteBridge(name string) {
-	run("ip", "link", "set", name, "down")
-	run("ip", "link", "del", name)
+	Net.LinkSetDown(name)
+	Net.LinkDel(name)
 	slog.Info("bridge deleted", "name", name)
 }
 
@@ -292,15 +292,6 @@ func (b *Bridge) generateNetworkdConfig(cfg map[string]string) error {
 		}
 	}
 
-	return nil
-}
-
-func run(name string, args ...string) error {
-	cmd := exec.Command(name, args...)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("%s %s: %s: %w", name, strings.Join(args, " "), string(output), err)
-	}
 	return nil
 }
 

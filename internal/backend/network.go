@@ -377,45 +377,4 @@ func parseConntrackLine(line string) ConntrackEntry {
 	return entry
 }
 
-// Stub implementations for netlink-dependent operations.
-// These will be replaced with vishvananda/netlink calls in Phase 12.
-
-func (m *LinuxNetworkManager) LinkAdd(name string, kind string) error {
-	return fmt.Errorf("LinkAdd requires netlink (vishvananda/netlink) — not yet migrated")
-}
-
-func (m *LinuxNetworkManager) LinkDel(name string) error {
-	return fmt.Errorf("LinkDel requires netlink — not yet migrated")
-}
-
-func (m *LinuxNetworkManager) LinkSetUp(name string) error {
-	return fmt.Errorf("LinkSetUp requires netlink — not yet migrated")
-}
-
-func (m *LinuxNetworkManager) LinkSetDown(name string) error {
-	return fmt.Errorf("LinkSetDown requires netlink — not yet migrated")
-}
-
-func (m *LinuxNetworkManager) LinkSetMaster(name string, master string) error {
-	return fmt.Errorf("LinkSetMaster requires netlink — not yet migrated")
-}
-
-func (m *LinuxNetworkManager) AddrAdd(name string, cidr string) error {
-	return fmt.Errorf("AddrAdd requires netlink — not yet migrated")
-}
-
-func (m *LinuxNetworkManager) AddrFlush(name string) error {
-	return fmt.Errorf("AddrFlush requires netlink — not yet migrated")
-}
-
-func (m *LinuxNetworkManager) RouteAdd(dst string, via string, dev string) error {
-	return fmt.Errorf("RouteAdd requires netlink — not yet migrated")
-}
-
-func (m *LinuxNetworkManager) RouteDel(dst string, via string, dev string) error {
-	return fmt.Errorf("RouteDel requires netlink — not yet migrated")
-}
-
-func (m *LinuxNetworkManager) BridgeVlanAdd(bridge string, vid int) error {
-	return fmt.Errorf("BridgeVlanAdd requires netlink — not yet migrated")
-}
+// Netlink-dependent method implementations are in network_netlink.go.

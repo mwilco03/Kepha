@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -343,27 +344,27 @@ func (v *VPNLegs) startLeg(leg VPNLeg, privateKey string, listenPort int) (*legS
 	}
 
 	// Create WireGuard interface.
-	if err := run("ip", "link", "add", iface, "type", "wireguard"); err != nil {
+	if err := Net.LinkAdd(iface, "wireguard"); err != nil {
 		return nil, fmt.Errorf("create interface %s: %w", iface, err)
 	}
 
 	// Write WireGuard config file.
 	confPath := filepath.Join(v.confDir, iface+".conf")
 	if err := v.writeWGConfig(confPath, leg, privateKey, listenPort); err != nil {
-		// Clean up the interface on failure.
-		run("ip", "link", "del", iface)
+		Net.LinkDel(iface)
 		return nil, fmt.Errorf("write wg config: %w", err)
 	}
 
-	// Apply WireGuard config.
-	if err := run("wg", "setconf", iface, confPath); err != nil {
-		run("ip", "link", "del", iface)
-		return nil, fmt.Errorf("apply wg config on %s: %w", iface, err)
+	// Apply WireGuard config (wg CLI — needs wgctrl for native).
+	cmd := exec.Command("wg", "setconf", iface, confPath)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		Net.LinkDel(iface)
+		return nil, fmt.Errorf("apply wg config on %s: %s: %w", iface, string(output), err)
 	}
 
 	// Bring interface up.
-	if err := run("ip", "link", "set", iface, "up"); err != nil {
-		run("ip", "link", "del", iface)
+	if err := Net.LinkSetUp(iface); err != nil {
+		Net.LinkDel(iface)
 		return nil, fmt.Errorf("bring up %s: %w", iface, err)
 	}
 
@@ -389,8 +390,8 @@ func (v *VPNLegs) stopLeg(ls *legState) {
 		v.withdrawRoutes(ls)
 	}
 
-	run("ip", "link", "set", ls.iface, "down")
-	run("ip", "link", "del", ls.iface)
+	Net.LinkSetDown(ls.iface)
+	Net.LinkDel(ls.iface)
 
 	// Remove config file.
 	confPath := filepath.Join(v.confDir, ls.iface+".conf")
@@ -429,10 +430,9 @@ func (v *VPNLegs) writeWGConfig(path string, leg VPNLeg, privateKey string, list
 // injectRoutes adds routes for the leg's remote subnets via its WireGuard
 // interface with the configured metric (priority).
 func (v *VPNLegs) injectRoutes(ls *legState) error {
-	metric := strconv.Itoa(ls.def.Priority)
 	var firstErr error
 	for _, subnet := range ls.def.RemoteSubnets {
-		if err := run("ip", "route", "add", subnet, "dev", ls.iface, "metric", metric); err != nil {
+		if err := Net.RouteAddMetric(subnet, ls.iface, ls.def.Priority); err != nil {
 			slog.Warn("route inject failed", "leg", ls.def.Name, "subnet", subnet, "error", err)
 			if firstErr == nil {
 				firstErr = err
@@ -440,14 +440,14 @@ func (v *VPNLegs) injectRoutes(ls *legState) error {
 		}
 	}
 	ls.routesUp = true
-	slog.Info("routes injected", "leg", ls.def.Name, "subnets", ls.def.RemoteSubnets, "metric", metric)
+	slog.Info("routes injected", "leg", ls.def.Name, "subnets", ls.def.RemoteSubnets, "metric", ls.def.Priority)
 	return firstErr
 }
 
 // withdrawRoutes removes routes for the leg's remote subnets.
 func (v *VPNLegs) withdrawRoutes(ls *legState) {
 	for _, subnet := range ls.def.RemoteSubnets {
-		if err := run("ip", "route", "del", subnet, "dev", ls.iface); err != nil {
+		if err := Net.RouteDel(subnet, "", ls.iface); err != nil {
 			slog.Warn("route withdrawal failed", "leg", ls.def.Name, "subnet", subnet, "error", err)
 		}
 	}

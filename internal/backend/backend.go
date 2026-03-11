@@ -283,6 +283,33 @@ type NetworkManager interface {
 	// BridgeVlanAdd adds a VLAN to a bridge.
 	BridgeVlanAdd(bridge string, vid int) error
 
+	// BridgeSetSTP enables or disables STP on a bridge.
+	BridgeSetSTP(name string, enabled bool) error
+
+	// BridgeSetForwardDelay sets the forward delay on a bridge (jiffies).
+	BridgeSetForwardDelay(name string, delay int) error
+
+	// BridgeSetVlanFiltering enables or disables VLAN filtering on a bridge.
+	BridgeSetVlanFiltering(name string, enabled bool) error
+
+	// RouteAddTable adds a route in a specific routing table (0 = main table).
+	RouteAddTable(dst string, via string, dev string, table int) error
+
+	// RouteFlushTable removes all routes from a routing table.
+	RouteFlushTable(table int) error
+
+	// RuleAdd adds a policy routing rule.
+	RuleAdd(oif string, table int, priority int) error
+
+	// RuleDel removes all policy routing rules for a table.
+	RuleDel(table int) error
+
+	// RouteAddMetric adds a route via device with a specific metric.
+	RouteAddMetric(dst string, dev string, metric int) error
+
+	// RouteReplace atomically replaces the default route.
+	RouteReplace(via string, dev string) error
+
 	// Ping sends ICMP echo requests and returns results.
 	// If iface is non-empty, binds to that interface for source routing.
 	Ping(target string, count int, timeoutSec int, iface string) (PingResult, error)

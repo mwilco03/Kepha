@@ -149,20 +149,18 @@ func (m *MultiWAN) setupRoutingTables() error {
 
 	// Create routing tables for each WAN.
 	// Table 100: WAN1, Table 200: WAN2.
-	run("ip", "route", "flush", "table", "100")
-	run("ip", "route", "flush", "table", "200")
+	Net.RouteFlushTable(100)
+	Net.RouteFlushTable(200)
 
 	// WAN1 routing table.
-	run("ip", "route", "add", "default", "via", cfg["wan1_gateway"],
-		"dev", cfg["wan1_interface"], "table", "100")
+	Net.RouteAddTable("default", cfg["wan1_gateway"], cfg["wan1_interface"], 100)
 
 	// WAN2 routing table.
-	run("ip", "route", "add", "default", "via", cfg["wan2_gateway"],
-		"dev", cfg["wan2_interface"], "table", "200")
+	Net.RouteAddTable("default", cfg["wan2_gateway"], cfg["wan2_interface"], 200)
 
 	// Set up ip rules for source-based routing.
-	run("ip", "rule", "add", "oif", cfg["wan1_interface"], "table", "100", "priority", "100")
-	run("ip", "rule", "add", "oif", cfg["wan2_interface"], "table", "200", "priority", "200")
+	Net.RuleAdd(cfg["wan1_interface"], 100, 100)
+	Net.RuleAdd(cfg["wan2_interface"], 200, 200)
 
 	// Initial default route via WAN1.
 	m.setDefaultRoute(cfg["wan1_gateway"], cfg["wan1_interface"])
@@ -179,11 +177,10 @@ func (m *MultiWAN) cleanupRoutingTables() {
 	if m.cfg == nil {
 		return
 	}
-	cfg := m.cfg
-	run("ip", "route", "flush", "table", "100")
-	run("ip", "route", "flush", "table", "200")
-	run("ip", "rule", "del", "oif", cfg["wan1_interface"], "table", "100")
-	run("ip", "rule", "del", "oif", cfg["wan2_interface"], "table", "200")
+	Net.RouteFlushTable(100)
+	Net.RouteFlushTable(200)
+	Net.RuleDel(100)
+	Net.RuleDel(200)
 }
 
 func (m *MultiWAN) healthCheckLoop() {
@@ -304,8 +301,8 @@ func (m *MultiWAN) checkWAN(target, iface, timeout string) bool {
 
 func (m *MultiWAN) setDefaultRoute(gateway, iface string) {
 	// Remove existing default, add new.
-	run("ip", "route", "del", "default")
-	run("ip", "route", "add", "default", "via", gateway, "dev", iface)
+	Net.RouteDel("default", "", "")
+	Net.RouteAdd("default", gateway, iface)
 }
 
 func boolState(up bool) string {

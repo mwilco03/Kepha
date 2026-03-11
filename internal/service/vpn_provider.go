@@ -1,6 +1,8 @@
 package service
 
 import (
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -14,6 +16,7 @@ import (
 
 	nft "github.com/google/nftables"
 	"github.com/google/nftables/expr"
+	"golang.org/x/crypto/curve25519"
 )
 
 // VPN provider constants for the top 15 commercial providers + Tailscale.
@@ -270,9 +273,9 @@ func (v *VPNProvider) Stop() error {
 		}
 	}
 
-	// Clean up policy routes.
-	exec.Command("ip", "rule", "del", "table", fmt.Sprintf("%d", v.routeTab)).Run()
-	exec.Command("ip", "route", "flush", "table", fmt.Sprintf("%d", v.routeTab)).Run()
+	// Clean up policy routes via netlink.
+	Net.RuleDel(v.routeTab)
+	Net.RouteFlushTable(v.routeTab)
 
 	v.state = StateStopped
 	slog.Info("vpn-provider stopped", "provider", provider)
@@ -341,21 +344,14 @@ func (v *VPNProvider) generateWireGuardConfig(cfg map[string]string) (string, er
 		return "", fmt.Errorf("no server found for %s in %s", provider, cfg["server_country"])
 	}
 
-	// Generate a client private key.
-	privKeyOut, err := exec.Command("wg", "genkey").Output()
+	// Generate a client private key (native Go crypto, no wg CLI).
+	privKey, err := vpnGenerateWGKey()
 	if err != nil {
 		return "", fmt.Errorf("generate wg key: %w", err)
 	}
-	privKey := strings.TrimSpace(string(privKeyOut))
 
-	// Derive public key.
-	pubCmd := exec.Command("wg", "pubkey")
-	pubCmd.Stdin = strings.NewReader(privKey)
-	pubKeyOut, err := pubCmd.Output()
-	if err != nil {
-		return "", fmt.Errorf("derive wg pubkey: %w", err)
-	}
-	_ = strings.TrimSpace(string(pubKeyOut))
+	// Derive public key (for provider API registration, if needed).
+	_ = vpnWGPublicKey(privKey)
 
 	// Build config.
 	var b strings.Builder
@@ -586,8 +582,8 @@ func (v *VPNProvider) setupSplitTunnel(zones string) error {
 		iface = "tun0"
 	}
 
-	// Create routing table entry.
-	exec.Command("ip", "route", "add", "default", "dev", iface, "table", tab).Run()
+	// Create routing table entry via netlink.
+	Net.RouteAddTable("default", "", iface, v.routeTab)
 
 	// Add rules for specified zones.
 	for _, zone := range strings.Split(zones, ",") {
@@ -843,6 +839,31 @@ func ListProviderServers(provider, country string) []VPNServerEntry {
 		}
 	}
 	return filtered
+}
+
+// --- WireGuard key generation (native Go, no wg CLI) ---
+
+func vpnGenerateWGKey() (string, error) {
+	var key [32]byte
+	if _, err := rand.Read(key[:]); err != nil {
+		return "", err
+	}
+	// Clamp per Curve25519.
+	key[0] &= 248
+	key[31] &= 127
+	key[31] |= 64
+	return base64.StdEncoding.EncodeToString(key[:]), nil
+}
+
+func vpnWGPublicKey(privateKeyB64 string) string {
+	privBytes, err := base64.StdEncoding.DecodeString(privateKeyB64)
+	if err != nil || len(privBytes) != 32 {
+		return ""
+	}
+	var pub, priv [32]byte
+	copy(priv[:], privBytes)
+	curve25519.ScalarBaseMult(&pub, &priv)
+	return base64.StdEncoding.EncodeToString(pub[:])
 }
 
 // Ensure json import is used.
