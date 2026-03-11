@@ -33,6 +33,7 @@ func init() {
 type WebDeps struct {
 	ServiceMgr *service.Manager
 	WG         *driver.WireGuard
+	NFT        *driver.NFTables
 	LeaseFile  string // Path to dnsmasq lease file.
 }
 
@@ -60,6 +61,7 @@ func HandlerWithDeps(store *config.Store, deps *WebDeps) http.Handler {
 	mux.HandleFunc("GET /assign", handleAssignForm(store))
 	mux.HandleFunc("GET /wireguard", handleWireGuard())
 	mux.HandleFunc("GET /leases", handleLeases(deps))
+	mux.HandleFunc("GET /firewall", handleFirewall(store, deps))
 
 	if deps.ServiceMgr != nil {
 		mux.HandleFunc("GET /services", handleServices(deps.ServiceMgr))
@@ -286,6 +288,67 @@ func parseLeaseFile(path string) []leaseEntry {
 		}
 	}
 	return leases
+}
+
+func handleFirewall(store *config.Store, deps *WebDeps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		zones, _ := store.ListZones()
+		policies, _ := store.ListPolicies()
+		profiles, _ := store.ListProfiles()
+
+		// Build zone→policy mapping via profiles.
+		type zonePolicyRow struct {
+			ZoneName      string
+			Interface     string
+			ProfileName   string
+			PolicyName    string
+			DefaultAction string
+			RuleCount     int
+		}
+		policyMap := make(map[string]model.Policy)
+		for _, p := range policies {
+			policyMap[p.Name] = p
+		}
+
+		var rows []zonePolicyRow
+		for _, prof := range profiles {
+			var zoneName, iface string
+			for _, z := range zones {
+				if z.ID == prof.ZoneID {
+					zoneName = z.Name
+					iface = z.Interface
+					break
+				}
+			}
+			pol := policyMap[prof.PolicyName]
+			rows = append(rows, zonePolicyRow{
+				ZoneName:      zoneName,
+				Interface:     iface,
+				ProfileName:   prof.Name,
+				PolicyName:    prof.PolicyName,
+				DefaultAction: string(pol.DefaultAction),
+				RuleCount:     len(pol.Rules),
+			})
+		}
+
+		// Compiled ruleset via dry-run.
+		var ruleset string
+		if deps.NFT != nil {
+			text, err := deps.NFT.DryRun()
+			if err != nil {
+				ruleset = "# Error compiling ruleset: " + err.Error()
+			} else {
+				ruleset = text
+			}
+		}
+
+		render(w, "firewall", map[string]any{
+			"Title":       "Firewall",
+			"ZonePolicies": rows,
+			"Ruleset":     ruleset,
+			"Policies":    policies,
+		})
+	}
 }
 
 func handleServices(mgr *service.Manager) http.HandlerFunc {

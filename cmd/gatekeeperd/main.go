@@ -217,6 +217,7 @@ func main() {
 	webHandler := web.HandlerWithDeps(store, &web.WebDeps{
 		ServiceMgr: svcMgr,
 		WG:         wg,
+		NFT:        nft,
 		LeaseFile:  "/var/lib/misc/dnsmasq.leases",
 	})
 

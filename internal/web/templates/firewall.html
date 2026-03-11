@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <title>{{.Title}} - Gatekeeper</title>
+    {{template "head" .}}
+    <style>
+        .tab-bar { display: flex; gap: 0; margin-bottom: 0; border-bottom: 1px solid var(--border); }
+        .tab { padding: 0.6rem 1.25rem; cursor: pointer; color: var(--fg2); border-bottom: 2px solid transparent; font-size: 0.9rem; }
+        .tab:hover { color: var(--fg); }
+        .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+        .ruleset-pre { font-size: 0.8rem; line-height: 1.5; max-height: 600px; overflow: auto; white-space: pre; tab-size: 4; }
+        .ruleset-pre .comment { color: var(--fg2); }
+        .ruleset-pre .keyword { color: var(--accent); }
+        .ruleset-pre .action-accept { color: var(--green); font-weight: 600; }
+        .ruleset-pre .action-drop { color: var(--red); font-weight: 600; }
+        .ruleset-pre .action-reject { color: var(--yellow); font-weight: 600; }
+    </style>
+</head>
+<body>
+{{template "nav" .}}
+<div class="container">
+    <h1>Firewall</h1>
+
+    <div class="tab-bar">
+        <div class="tab active" onclick="switchTab('overview')">Zone Policies</div>
+        <div class="tab" onclick="switchTab('rules')">Policy Rules</div>
+        <div class="tab" onclick="switchTab('compiled')">Compiled Ruleset</div>
+    </div>
+
+    <div id="tab-overview" class="tab-content active" style="padding-top:1rem;">
+        {{if .ZonePolicies}}
+        <table>
+            <thead><tr><th>Zone</th><th>Interface</th><th>Profile</th><th>Policy</th><th>Default</th><th>Rules</th></tr></thead>
+            <tbody>
+            {{range .ZonePolicies}}
+            <tr>
+                <td><a href="/zones/{{.ZoneName}}">{{.ZoneName}}</a></td>
+                <td>{{.Interface}}</td>
+                <td>{{.ProfileName}}</td>
+                <td>{{.PolicyName}}</td>
+                <td>
+                    {{if eq .DefaultAction "allow"}}<span class="badge badge-green">allow</span>
+                    {{else if eq .DefaultAction "reject"}}<span class="badge badge-yellow">reject</span>
+                    {{else}}<span class="badge badge-red">{{.DefaultAction}}</span>{{end}}
+                </td>
+                <td>{{.RuleCount}}</td>
+            </tr>
+            {{end}}
+            </tbody>
+        </table>
+        {{else}}<p class="empty">No zone-profile-policy mappings configured.</p>{{end}}
+    </div>
+
+    <div id="tab-rules" class="tab-content" style="padding-top:1rem;">
+        {{range .Policies}}
+        <h2 style="margin-top:1.5rem;">{{.Name}}
+            {{if eq (printf "%s" .DefaultAction) "allow"}}<span class="badge badge-green">default: allow</span>
+            {{else}}<span class="badge badge-red">default: {{.DefaultAction}}</span>{{end}}
+        </h2>
+        {{if .Description}}<p class="text-muted" style="margin-bottom:0.5rem;">{{.Description}}</p>{{end}}
+        {{if .Rules}}
+        <table>
+            <thead><tr><th>#</th><th>Source</th><th>Dest</th><th>Proto</th><th>Ports</th><th>Action</th><th>Log</th></tr></thead>
+            <tbody>
+            {{range .Rules}}
+            <tr>
+                <td>{{.Order}}</td>
+                <td>{{if .SrcAlias}}{{.SrcAlias}}{{else}}any{{end}}</td>
+                <td>{{if .DstAlias}}{{.DstAlias}}{{else}}any{{end}}</td>
+                <td>{{if .Protocol}}{{.Protocol}}{{else}}any{{end}}</td>
+                <td>{{if .Ports}}{{.Ports}}{{else}}all{{end}}</td>
+                <td>{{if eq (printf "%s" .Action) "allow"}}<span class="badge badge-green">allow</span>
+                    {{else if eq (printf "%s" .Action) "reject"}}<span class="badge badge-yellow">reject</span>
+                    {{else}}<span class="badge badge-red">{{.Action}}</span>{{end}}</td>
+                <td>{{if .Log}}yes{{else}}-{{end}}</td>
+            </tr>
+            {{end}}
+            </tbody>
+        </table>
+        {{else}}<p class="text-muted" style="margin-bottom:1rem;">No explicit rules (default action applies).</p>{{end}}
+        {{end}}
+    </div>
+
+    <div id="tab-compiled" class="tab-content" style="padding-top:1rem;">
+        {{if .Ruleset}}
+        <pre class="ruleset-pre" id="ruleset-code">{{.Ruleset}}</pre>
+        {{else}}<p class="empty">No compiled ruleset available. Is nftables configured?</p>{{end}}
+    </div>
+</div>
+
+<script>
+function switchTab(name) {
+    document.querySelectorAll('.tab').forEach(function(t) { t.classList.remove('active'); });
+    document.querySelectorAll('.tab-content').forEach(function(t) { t.classList.remove('active'); });
+    document.getElementById('tab-' + name).classList.add('active');
+    // Activate the matching tab button.
+    var tabs = document.querySelectorAll('.tab');
+    var names = ['overview', 'rules', 'compiled'];
+    for (var i = 0; i < tabs.length; i++) {
+        if (names[i] === name) tabs[i].classList.add('active');
+    }
+}
+
+// Syntax highlight the compiled ruleset.
+(function() {
+    var el = document.getElementById('ruleset-code');
+    if (!el) return;
+    var text = el.textContent;
+    var lines = text.split('\n');
+    var html = '';
+    for (var i = 0; i < lines.length; i++) {
+        var line = lines[i];
+        // Escape HTML.
+        line = line.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        // Comments.
+        if (line.match(/^\s*#/)) {
+            html += '<span class="comment">' + line + '</span>\n';
+            continue;
+        }
+        // Highlight actions.
+        line = line.replace(/\baccept\b/g, '<span class="action-accept">accept</span>');
+        line = line.replace(/\bdrop\b/g, '<span class="action-drop">drop</span>');
+        line = line.replace(/\breject\b/g, '<span class="action-reject">reject</span>');
+        line = line.replace(/\bmasquerade\b/g, '<span class="action-accept">masquerade</span>');
+        // Keywords.
+        line = line.replace(/\b(table|chain|set|type|flags|elements|policy|hook|priority)\b/g, '<span class="keyword">$1</span>');
+        html += line + '\n';
+    }
+    el.innerHTML = html;
+})();
+</script>
+</body>
+</html>
