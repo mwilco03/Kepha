@@ -594,6 +594,76 @@ Per rebuttal, these were deferred from v1 but have been implemented ahead of sch
 - Resource quotas per tenant (max zones, max rules, max bandwidth)
 - Cross-tenant traffic policies (explicit allow required, default deny)
 
+### Mini-SIEM (Optional, SQLite FTS5)
+
+**Goal:** Ship a lightweight, zero-dependency security event and incident management engine embedded in the Gatekeeper binary. No Elasticsearch cluster, no Java heap tuning, no external DB — just SQLite FTS5 full-text search over structured security events. Think Security Onion's visibility, but sized for a single-site / home-lab / SMB deployment that runs on the same LXC as the firewall.
+
+**Enable via:** `gk service enable siem` — when disabled, zero overhead (no log capture, no indexing, no storage). All SIEM tables live in a separate `siem.db` file with independent WAL and retention policy.
+
+#### Event Ingestion Pipeline
+- **nftables log → structured events:** Parse nftables log prefixes (already tagged with zone, policy, rule ID) into typed event records: `(timestamp, zone_src, zone_dst, src_ip, dst_ip, proto, sport, dport, action, rule_id, bytes, packets)`
+- **Suricata EVE JSON → alerts:** Ingest Suricata's `eve.json` output (when IDS service is enabled) — map alert signature, severity, category, flow metadata
+- **DNS query log → dns_events:** Capture dnsmasq query/reply logs — domain, client IP, zone, response code, blocked (yes/no from DNS filter)
+- **DHCP events → dhcp_events:** Lease grant/renew/release with MAC, IP, hostname, zone
+- **Auth events → auth_events:** API login attempts, Web UI sessions, VPN auth, captive portal completions
+- **Conntrack flow records → flow_events:** Periodically snapshot `/proc/net/nf_conntrack` for completed flows — duration, bytes, packets, NAT mappings
+- **Threat feed matches → threat_events:** Blocked IPs/domains from threat intelligence feeds with feed source and IOC type
+- **Zeek logs (optional):** If NetFlow/Zeek is enabled, ingest `conn.log`, `dns.log`, `http.log`, `ssl.log`, `files.log` as structured events
+- **Custom syslog ingestion:** UDP/TCP syslog listener (RFC 5424) for third-party device logs (APs, switches, other LXCs)
+
+#### SQLite FTS5 Search Engine
+- **Full-text index** over all event types — search across IPs, domains, hostnames, alert messages, rule names in a single query
+- **Zone-aware tokenizer:** Every event tagged with source/destination zone IDs — filter or facet by zone in milliseconds
+- **Columnar virtual tables** for time-range queries: `SELECT * FROM events WHERE timestamp BETWEEN ? AND ? AND zone_src = 'iot' AND action = 'drop'`
+- **Retention policy:** Configurable per-event-type TTL (default: 30 days firewall logs, 90 days alerts, 7 days flow records). Background pruner runs hourly
+- **Storage budget:** Configurable max DB size (default 1 GB). Oldest events evicted first when budget exceeded. VACUUM on schedule
+- **Compression:** zstd-compress raw payloads (EVE JSON, syslog lines) in a `raw_payload` BLOB column; FTS index covers extracted fields only
+
+#### Pre-Baked Dashboards (Web UI)
+
+| Dashboard | Description |
+|---|---|
+| **Security Overview** | Event volume sparkline (24h), top 10 blocked IPs, top 10 triggered IDS signatures, threat feed hit count, failed auth attempts |
+| **Zone Activity** | Per-zone event heatmap (time × zone matrix), inter-zone traffic flow sankey diagram, top talkers per zone |
+| **Threat Hunt** | Full-text search bar with auto-complete, filter by time/zone/severity/event-type, drill-down to raw event, export results as CSV/JSON |
+| **Blocked Traffic** | Firewall drops grouped by source zone → dest zone, top denied ports/protocols, geo-IP map (MaxMind GeoLite2 optional) |
+| **DNS Analytics** | Top queried domains, NXDOMAIN volume (DGA detection signal), blocked domains by category (ads/trackers/malware), DNS over time |
+| **IDS/IPS Alerts** | Suricata alerts by severity (critical/high/medium/low), alert timeline, signature drill-down, affected hosts |
+| **Authentication** | Login attempts (success/fail) by source, brute-force detection (>N failures in window), VPN auth events, API key usage |
+| **Flow Analysis** | Long-lived connections, high-bandwidth flows, unusual port usage, internal lateral movement detection |
+| **Compliance** | PCI-DSS / CIS log review summary — were all zones logged? Any gaps? Retention policy compliance status |
+
+#### Detection & Alerting
+- **Built-in detection rules** (sigma-style YAML):
+  - Port scan detection (>N unique dst ports from single src in window)
+  - Brute-force detection (>N failed auths from single src in window)
+  - DNS tunneling (high-entropy subdomain queries, excessive TXT records)
+  - DGA detection (NXDOMAIN spike from single host)
+  - Lateral movement (internal host contacting >N internal hosts on privileged ports)
+  - C2 beaconing (periodic outbound connections with low jitter)
+  - Data exfiltration (large outbound transfer from internal zone to WAN, outside business hours)
+- **Custom rules:** User-defined SQL-based detection rules — `SELECT` query that returns rows = alert fires
+- **Alert actions:** syslog forward, webhook (Slack/Teams/Discord/PagerDuty), email (SMTP), nftables auto-block (quarantine to captive portal)
+- **Alert deduplication:** Group repeated alerts by (src, dst, signature) within configurable window
+
+#### API & CLI
+- `GET /api/v1/siem/search?q=<fts5-query>&zone=<zone>&from=<ts>&to=<ts>&type=<event-type>` — full-text search with filters
+- `GET /api/v1/siem/events?type=firewall|ids|dns|dhcp|auth|flow|threat` — typed event listing with pagination
+- `GET /api/v1/siem/stats` — event counts by type, storage usage, index size, oldest/newest event
+- `GET /api/v1/siem/alerts` — triggered detection rule alerts
+- `POST /api/v1/siem/rules` — CRUD for custom detection rules
+- `gk siem search "1.2.3.4"` — CLI full-text search
+- `gk siem tail --zone iot --type firewall` — live tail (SSE stream)
+- `gk siem stats` — storage and ingestion summary
+- `gk siem export --from 2025-01-01 --to 2025-01-31 --format csv` — bulk export for external SIEM
+
+#### Architecture Notes
+- **Single-process:** Ingestion, indexing, detection, and query all run inside `gatekeeperd` — no sidecar daemons
+- **Non-blocking ingestion:** Events buffered in channel, batch-inserted every 1s or 1000 events (whichever comes first)
+- **FTS5 vs Elasticsearch tradeoff:** FTS5 handles ~50K events/sec insert on NVMe, ~10K on spinning disk. Sufficient for edge firewall (typically <5K events/sec). For higher volumes, the NetFlow/sFlow export path sends to external SIEM
+- **No replacing a real SIEM:** This is a first-responder tool — see what's happening now, search recent history, catch low-hanging fruit. For SOC-scale operations, compliance archival, or cross-site correlation, export to Splunk/OpenSearch/Elastic via the NetFlow/sFlow or syslog forward paths
+- **Upgrade path:** If the mini-SIEM outgrows SQLite, the schema maps 1:1 to OpenSearch index templates — `gk siem export` can seed an external cluster
+
 ### Remaining Items
 - [ ] Cloud-init support for headless provisioning
 - [ ] Formal external security audit
