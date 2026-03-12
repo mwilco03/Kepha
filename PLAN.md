@@ -513,15 +513,86 @@ Per rebuttal, these were deferred from v1 but have been implemented ahead of sch
 
 ## V3 Roadmap (Future)
 
-### Multi-Node Proxmox Support
-- Cluster-aware deployment across multiple Proxmox nodes
+### Proxmox API Integration
+- Auto-discover VMs/CTs across cluster via Proxmox REST API
+- Map VMs/CTs to zones/profiles automatically via VMID tagging or numerical ID ranges
+- React to VM migrations — firewall rules follow the workload
+- Surface Proxmox node/CT/VM status in Gatekeeper dashboard
+- Tag-based policy assignment (e.g. tag `trusted` → LAN zone, tag `iot` → IoT zone)
+
+### Cluster-Wide Web Dashboard
+- Unified view across all Gatekeeper nodes
 - Centralized policy management with per-node rule compilation
 - Config replication between nodes (etcd or built-in Raft consensus)
 - Cross-node HA failover with VRRP and conntrack sync
 - Distributed firewall rules that follow VM/CT migrations between nodes
-- Per-node health monitoring with cluster-wide dashboard
-- Proxmox API integration for automatic node discovery and VM tracking
 - Split-brain protection and quorum-based leader election
+
+### SD-WAN
+- Application-aware routing (identify flows by DPI / SNI / JA4)
+- WAN optimization: TCP acceleration, deduplication, compression
+- Traffic shaping by application (e.g. prioritize VoIP, throttle bulk downloads)
+- Per-app path selection across multiple WAN links (latency-based, jitter-based)
+- SLA monitoring per WAN link with automatic failover on degradation
+- Integration with Multi-WAN service for policy-based path steering
+
+### Zero Trust Network Access (ZTNA)
+- Identity-based micro-segmentation beyond IP/MAC
+- VPN ingress zone for compliance — authenticate before network access
+- Device posture checks (OS version, patch level, endpoint agent) before granting access
+- Per-user / per-group firewall policies (integrate with LDAP/OIDC identity providers)
+- Continuous trust evaluation — re-assess posture on session, not just at connect time
+- mTLS enforcement for service-to-service traffic within trusted zones
+
+### Threat Intelligence Feeds
+- Auto-block known malicious IPs/domains from curated feeds:
+  - abuse.ch (Feodo Tracker, URLhaus, ThreatFox)
+  - Emerging Threats (Proofpoint ET Open)
+  - Spamhaus DROP/EDROP
+  - Custom user-defined feed URLs
+- Feed update scheduler with configurable TTL, hash pinning, last-known-good caching
+- nftables set-based blocklists for O(1) lookup at line rate
+- Per-zone opt-in — enable threat blocking selectively (e.g. WAN ingress only)
+- Alert/log on match with optional auto-quarantine to captive portal
+
+### NetFlow/sFlow Export & Traffic Analysis
+- NetFlow v5/v9 and sFlow export for SIEM integration
+- Per-zone enable/disable — opt-in to avoid overhead on high-throughput zones
+- Extensible with Zeek (formerly Bro) for protocol-level analysis
+- Streaming output targets: Splunk HEC, OpenSearch, Elasticsearch, syslog
+- Built-in flow summary dashboard (top talkers, top protocols, bandwidth by zone)
+- IPFIX template support for custom field export
+
+### ACME / Let's Encrypt Integration
+- Auto-provision TLS certificates via ACME (Let's Encrypt, ZeroSSL, BuyPass)
+- Build on existing `CertStore` service stub
+- HTTP-01 and DNS-01 challenge support (DNS-01 via provider API plugins)
+- Auto-renewal with configurable lead time
+- Distribute certs to services (web UI, API, captive portal, reverse proxy)
+- ACME account management via CLI: `gk cert acme register/renew/revoke`
+
+### Terraform / Ansible Provider
+- Terraform provider for declarative firewall config (zones, policies, aliases, rules)
+- Ansible collection with modules for all Gatekeeper API resources
+- Import existing config into Terraform state (`gk export` → tfstate)
+- Plan/apply workflow with dry-run support mapped to Gatekeeper's `?dry_run=true`
+- CI/CD integration examples (GitHub Actions, GitLab CI)
+
+### REST API v2 (gRPC / GraphQL)
+- gRPC API for bulk operations and streaming (config watch, live flow data)
+- Protobuf schema mirroring OpenAPI v1 resources
+- GraphQL alternative for flexible frontend queries (fetch only needed fields)
+- Bidirectional streaming for real-time log/event tailing
+- Backward-compatible — v1 REST remains supported
+
+### Multi-Tenancy
+- Isolated config namespaces for MSP / hosting use cases
+- VXLAN overlay networks for tenant isolation (L2 over L3)
+- VLAN-over-UDP encapsulation for environments without native VLAN support
+- Per-tenant admin accounts with scoped RBAC (tenant admin vs global admin)
+- Tenant-aware API routing: `/api/v1/tenants/{id}/zones`, etc.
+- Resource quotas per tenant (max zones, max rules, max bandwidth)
+- Cross-tenant traffic policies (explicit allow required, default deny)
 
 ### Remaining Items
 - [ ] Cloud-init support for headless provisioning
