@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -99,9 +98,8 @@ func (u *UPnP) Start(cfg map[string]string) error {
 		return err
 	}
 
-	cmd := exec.Command("systemctl", "start", "miniupnpd")
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("start miniupnpd: %s: %w", string(output), err)
+	if err := Proc.Start("miniupnpd"); err != nil {
+		return fmt.Errorf("start miniupnpd: %w", err)
 	}
 
 	u.state = StateRunning
@@ -112,9 +110,8 @@ func (u *UPnP) Stop() error {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 
-	cmd := exec.Command("systemctl", "stop", "miniupnpd")
-	if output, err := cmd.CombinedOutput(); err != nil {
-		slog.Warn("failed to stop miniupnpd", "error", err, "output", string(output))
+	if err := Proc.Stop("miniupnpd"); err != nil {
+		slog.Warn("failed to stop miniupnpd", "error", err)
 	}
 
 	u.state = StateStopped
@@ -130,9 +127,8 @@ func (u *UPnP) Reload(cfg map[string]string) error {
 		return err
 	}
 
-	cmd := exec.Command("systemctl", "restart", "miniupnpd")
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("restart miniupnpd: %s: %w", string(output), err)
+	if err := Proc.Restart("miniupnpd"); err != nil {
+		return fmt.Errorf("restart miniupnpd: %w", err)
 	}
 	return nil
 }

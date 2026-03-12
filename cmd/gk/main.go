@@ -104,12 +104,8 @@ func initBackend() (cli.Backend, func()) {
 	}
 
 	if mode == "api" {
-		apiURL := os.Getenv("GK_API_URL")
-		if apiURL == "" {
-			apiURL = "http://localhost:8080"
-		}
 		apiKey := os.Getenv("GK_API_KEY")
-		client := cli.NewClient(apiURL, apiKey)
+		client := cli.NewClient("", apiKey) // auto-detect URL
 		return cli.NewAPIBackend(client), func() {}
 	}
 
@@ -423,7 +419,7 @@ func cmdImport(b cli.Backend, args []string) error {
 
 func cmdWG(b cli.Backend, args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: gk wg <peers|add-peer|remove-peer>")
+		return fmt.Errorf("usage: gk wg <peers|add-peer|remove-peer|prune>")
 	}
 	switch args[0] {
 	case "peers":
@@ -447,6 +443,23 @@ func cmdWG(b cli.Backend, args []string) error {
 			return fmt.Errorf("usage: gk wg remove-peer <pubkey>")
 		}
 		return b.RemoveWGPeer(args[1])
+	case "prune":
+		fs := flag.NewFlagSet("wg prune", flag.ExitOnError)
+		maxAge := fs.Int("max-age", 0, "Max seconds since last handshake (0 = prune never-connected only)")
+		_ = fs.Parse(args[1:])
+		pruned, err := b.PruneWGPeers(*maxAge)
+		if err != nil {
+			return err
+		}
+		if len(pruned) == 0 {
+			fmt.Println("no stale peers found")
+			return nil
+		}
+		fmt.Printf("pruned %d stale peer(s):\n", len(pruned))
+		for _, pk := range pruned {
+			fmt.Printf("  %s\n", pk)
+		}
+		return nil
 	default:
 		return fmt.Errorf("unknown wg command: %s", args[0])
 	}
@@ -456,11 +469,7 @@ func cmdLeases(b cli.Backend) error {
 	// Leases are read from a local file — in direct mode, read directly.
 	// In API mode, call the API endpoint.
 	if os.Getenv("GK_MODE") == "api" {
-		apiURL := os.Getenv("GK_API_URL")
-		if apiURL == "" {
-			apiURL = "http://localhost:8080"
-		}
-		client := cli.NewClient(apiURL, os.Getenv("GK_API_KEY"))
+		client := cli.NewClient("", os.Getenv("GK_API_KEY")) // auto-detect URL
 		data, err := client.Get("/api/v1/diag/leases")
 		if err != nil {
 			return err
@@ -597,11 +606,7 @@ func cmdService(args []string) error {
 	}
 
 	// Services always use the API backend since the service manager lives in the daemon.
-	apiURL := os.Getenv("GK_API_URL")
-	if apiURL == "" {
-		apiURL = "http://localhost:8080"
-	}
-	client := cli.NewClient(apiURL, os.Getenv("GK_API_KEY"))
+	client := cli.NewClient("", os.Getenv("GK_API_KEY")) // auto-detect URL
 
 	switch args[0] {
 	case "list":
@@ -712,7 +717,7 @@ Commands:
   diff        Show config differences between revisions
   export      Export configuration as JSON
   import      Import configuration from JSON file
-  wg          Manage WireGuard peers (peers, add-peer, remove-peer)
+  wg          Manage WireGuard peers (peers, add-peer, remove-peer, prune)
   leases      Show DHCP leases
   test        Test packet path (--src <ip> --dst <ip> [--proto tcp] [--port 80])
   explain     Show all matching rules for a src→dst pair
@@ -724,7 +729,7 @@ Commands:
 Environment:
   GK_MODE     Backend mode: direct (default) or api
   GK_DB       SQLite database path (direct mode, default: /var/lib/gatekeeper/gatekeeper.db)
-  GK_API_URL  API base URL (api mode, default: http://localhost:8080)
+  GK_API_URL  API base URL (api mode, auto-detects http/https)
   GK_API_KEY  API key for authentication (api mode)
   GK_OUTPUT   Output format: json (default) or table`)
 }

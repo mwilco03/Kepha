@@ -2,6 +2,7 @@ package ops
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/gatekeeper-firewall/gatekeeper/internal/driver"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/validate"
@@ -47,6 +48,12 @@ func (w *WireGuardOps) AddPeer(peer driver.WGPeer) error {
 // RemovePeer removes a WireGuard peer by public key.
 func (w *WireGuardOps) RemovePeer(publicKey string) error {
 	return w.wg.RemovePeer(publicKey)
+}
+
+// PruneStalePeers removes peers that have not handshaked within maxAge.
+// A maxAge of 0 removes only peers that have never handshaked.
+func (w *WireGuardOps) PruneStalePeers(maxAge time.Duration) ([]string, error) {
+	return w.wg.PruneStalePeers(maxAge)
 }
 
 // GenerateClientConfig generates a client config for a peer.

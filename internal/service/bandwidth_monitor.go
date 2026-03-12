@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
+
+	nft "github.com/google/nftables"
+	"github.com/google/nftables/expr"
 )
 
 // BandwidthMonitor provides per-device and per-interface bandwidth tracking.
@@ -125,7 +127,7 @@ func (bm *BandwidthMonitor) Stop() error {
 	}
 
 	// Remove accounting chain.
-	exec.Command("nft", "delete", "chain", "inet", "gatekeeper", "bw_accounting").Run()
+	nftDeleteChain(nft.TableFamilyINet, "gatekeeper", "bw_accounting")
 
 	bm.state = StateStopped
 	return nil
@@ -201,46 +203,26 @@ func (bm *BandwidthMonitor) sample() {
 }
 
 func (bm *BandwidthMonitor) sampleConntrack() {
-	cmd := exec.Command("conntrack", "-L", "-o", "extended", "-p", "tcp")
-	output, err := cmd.Output()
+	entries, err := Net.ConntrackList("tcp")
 	if err != nil {
-		// Try without -p tcp to get all protocols.
-		cmd = exec.Command("conntrack", "-L", "-o", "extended")
-		output, err = cmd.Output()
+		// Try all protocols.
+		entries, err = Net.ConntrackList("")
 		if err != nil {
 			return
 		}
 	}
 
 	deviceBytes := make(map[string][2]uint64) // ip -> [in, out]
-
-	for _, line := range strings.Split(string(output), "\n") {
-		if line == "" {
-			continue
+	for _, e := range entries {
+		if e.SrcAddr != "" {
+			entry := deviceBytes[e.SrcAddr]
+			entry[1] += uint64(e.Bytes) // outbound
+			deviceBytes[e.SrcAddr] = entry
 		}
-		fields := strings.Fields(line)
-		var src, dst string
-		var bytes uint64
-		for j, f := range fields {
-			if strings.HasPrefix(f, "src=") && src == "" {
-				src = strings.TrimPrefix(f, "src=")
-			}
-			if strings.HasPrefix(f, "dst=") && dst == "" {
-				dst = strings.TrimPrefix(f, "dst=")
-			}
-			if strings.HasPrefix(f, "bytes=") && j > 0 {
-				fmt.Sscanf(strings.TrimPrefix(f, "bytes="), "%d", &bytes)
-			}
-		}
-		if src != "" {
-			entry := deviceBytes[src]
-			entry[1] += bytes // outbound
-			deviceBytes[src] = entry
-		}
-		if dst != "" {
-			entry := deviceBytes[dst]
-			entry[0] += bytes // inbound
-			deviceBytes[dst] = entry
+		if e.DstAddr != "" {
+			entry := deviceBytes[e.DstAddr]
+			entry[0] += uint64(e.Bytes) // inbound
+			deviceBytes[e.DstAddr] = entry
 		}
 	}
 
@@ -303,21 +285,17 @@ func (bm *BandwidthMonitor) readProcNetDev() []InterfaceTraffic {
 }
 
 func (bm *BandwidthMonitor) setupAccountingChain() {
-	rules := `table inet gatekeeper {
-  chain bw_accounting {
-    type filter hook forward priority -200; policy accept;
-    counter
-  }
-}
-`
-	rulesPath := filepath.Join(bm.dataDir, "bw-accounting.nft")
-	if err := os.WriteFile(rulesPath, []byte(rules), 0o640); err != nil {
-		slog.Warn("failed to write accounting rules", "error", err)
-		return
-	}
-	cmd := exec.Command("nft", "-f", rulesPath)
-	if output, err := cmd.CombinedOutput(); err != nil {
-		slog.Warn("failed to apply accounting rules", "error", err, "output", string(output))
+	prio := nft.ChainPriority(-200)
+	policy := nft.ChainPolicyAccept
+	if err := nftApplyRules(nft.TableFamilyINet, "gatekeeper", []nftChainSpec{{
+		Name:     "bw_accounting",
+		Type:     nft.ChainTypeFilter,
+		Hook:     nft.ChainHookForward,
+		Priority: &prio,
+		Policy:   &policy,
+		Rules:    [][]expr.Any{{nftCounter()}},
+	}}); err != nil {
+		slog.Warn("failed to apply accounting rules", "error", err)
 	}
 }
 

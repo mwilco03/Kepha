@@ -22,6 +22,14 @@
                 <div class="value blue">{{.AliasCount}}</div>
             </div>
             <div class="card">
+                <div class="label">WG Peers</div>
+                <div class="value green">{{.PeerCount}}</div>
+            </div>
+            <div class="card">
+                <div class="label">DHCP Leases</div>
+                <div class="value blue">{{.LeaseCount}}</div>
+            </div>
+            <div class="card">
                 <div class="label">Last Commit</div>
                 <div class="value" style="font-size: 1rem;">{{if .LastCommit}}{{.LastCommit}}{{else}}None{{end}}</div>
             </div>
@@ -45,6 +53,22 @@
             {{end}}
             </tbody>
         </table>
+
+        {{if .Leases}}
+        <h2>Active DHCP Leases</h2>
+        <table>
+            <thead><tr><th>IP Address</th><th>MAC Address</th><th>Hostname</th></tr></thead>
+            <tbody>
+            {{range .Leases}}
+            <tr>
+                <td>{{.IP}}</td>
+                <td>{{.MAC}}</td>
+                <td>{{.Hostname}}</td>
+            </tr>
+            {{end}}
+            </tbody>
+        </table>
+        {{end}}
     </div>
 </body>
 </html>

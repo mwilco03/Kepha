@@ -11,12 +11,16 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/gatekeeper-firewall/gatekeeper/internal/api"
+	"github.com/gatekeeper-firewall/gatekeeper/internal/backend"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/config"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/driver"
+	"github.com/gatekeeper-firewall/gatekeeper/internal/ha"
+	"github.com/gatekeeper-firewall/gatekeeper/internal/ipv6"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/mcp"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/ops"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/plugin"
@@ -36,6 +40,10 @@ var (
 	tlsCert     = flag.String("tls-cert", "", "TLS certificate file (enables HTTPS)")
 	tlsKey      = flag.String("tls-key", "", "TLS private key file")
 	pluginDir   = flag.String("plugin-dir", "/var/lib/gatekeeper/plugins", "Plugin directory")
+	upstreamDNS = flag.String("upstream-dns", "1.1.1.1,8.8.8.8", "Comma-separated upstream DNS servers")
+	localDomain = flag.String("local-domain", "gk.local", "Local DNS domain")
+	dnsmasqPID  = flag.String("dnsmasq-pid", "/run/dnsmasq.pid", "dnsmasq PID file path")
+	pxeServer   = flag.String("pxe-server", "", "PXE server IP for dhcp-boot (empty = disabled)")
 	enableMCP   = flag.Bool("enable-mcp", false, "Enable MCP (Model Context Protocol) server")
 	enableRBAC  = flag.Bool("enable-rbac", false, "Enable RBAC (replaces simple API key auth)")
 )
@@ -67,16 +75,40 @@ func main() {
 		os.Exit(1)
 	}
 
-	nft := driver.NewNFTables(store, *rulesetDir)
+	// Native nftables backend (netlink, no exec.Command).
+	nftBackend := backend.NewNftablesBackend(*rulesetDir)
+	fw := backend.NewFirewallController(nftBackend, store)
+	if *wgInterface != "" {
+		fw.WGListenPort = 51820
+	}
 
 	// Boot-time safe mode: attempt to apply last known config.
 	// On failure, log the error but continue starting the daemon so the
 	// operator can fix the config via API/CLI rather than losing access.
-	if err := nft.SafeApply(); err != nil {
+	if err := fw.SafeApply(); err != nil {
 		slog.Warn("boot-time rule apply failed, starting in safe mode", "error", err)
 	}
 
 	dnsmasq := driver.NewDnsmasq(store, *dnsmasqDir)
+	if *upstreamDNS != "" {
+		dnsmasq.UpstreamDNS = strings.Split(*upstreamDNS, ",")
+	}
+	if *localDomain != "" {
+		dnsmasq.LocalDomain = *localDomain
+	}
+	if *dnsmasqPID != "" {
+		dnsmasq.PIDFile = *dnsmasqPID
+	}
+	if *pxeServer != "" {
+		dnsmasq.PXEServer = *pxeServer
+	}
+
+	// Boot-time: generate and apply dnsmasq config from current DB state.
+	if err := dnsmasq.Apply(); err != nil {
+		slog.Warn("boot-time dnsmasq apply failed", "error", err)
+	} else {
+		slog.Info("dnsmasq config applied at boot")
+	}
 
 	var wg *driver.WireGuard
 	if *wgInterface != "" {
@@ -99,6 +131,15 @@ func main() {
 			defer os.Remove(pidFile)
 		}
 	}
+
+	// Initialize the process manager (OpenRC on Alpine, no exec.Command).
+	procMgr := backend.NewOpenRCManager()
+	service.SetProcessManager(procMgr)
+	ha.SetProcessManager(procMgr)
+	ipv6.SetProcessManager(procMgr)
+
+	// Initialize the network manager (native /proc + netlink, no exec.Command).
+	netMgr := backend.NewLinuxNetworkManager()
 
 	// Initialize the pluggable service manager.
 	svcMgr, err := service.NewManager(store.DB())
@@ -128,6 +169,9 @@ func main() {
 	svcMgr.Register(service.NewFRRouting("/etc/frr"))
 	svcMgr.Register(service.NewCertStore())
 
+	// Performance tuner: flowtables, conntrack auto-scaling, sysctl tuning.
+	svcMgr.Register(service.NewPerformanceTuner())
+
 	// HA service (wrapped for Service interface compatibility).
 	svcMgr.Register(service.NewHAWrapper())
 
@@ -150,10 +194,15 @@ func main() {
 	go func() {
 		for range sighupCh {
 			slog.Info("received SIGHUP, re-applying config")
-			if err := nft.Apply(); err != nil {
-				slog.Error("SIGHUP apply failed", "error", err)
+			if err := fw.Apply(); err != nil {
+				slog.Error("SIGHUP nft apply failed", "error", err)
 			} else {
-				slog.Info("config applied successfully via SIGHUP")
+				slog.Info("nftables config applied via SIGHUP")
+			}
+			if err := dnsmasq.Apply(); err != nil {
+				slog.Error("SIGHUP dnsmasq apply failed", "error", err)
+			} else {
+				slog.Info("dnsmasq config applied via SIGHUP")
 			}
 		}
 	}()
@@ -174,15 +223,22 @@ func main() {
 
 	apiHandler := api.NewRouterWithConfig(&api.RouterConfig{
 		Store:        store,
-		NFT:          nft,
+		NFT:          fw,
 		WG:           wg,
 		Dnsmasq:      dnsmasq,
 		APIKey:       *apiKey,
 		Metrics:      metrics,
 		ServiceMgr:   svcMgr,
 		RBACEnforcer: enforcer,
+		Net:          netMgr,
 	})
-	webHandler := web.Handler(store, svcMgr)
+	webHandler := web.HandlerWithDeps(store, &web.WebDeps{
+		ServiceMgr: svcMgr,
+		WG:         wg,
+		NFT:        fw,
+		LeaseFile:  "/var/lib/misc/dnsmasq.leases",
+		APIKey:     *apiKey,
+	})
 
 	// MCP server (optional).
 	var mcpHandler http.Handler
@@ -194,7 +250,7 @@ func main() {
 		}
 		mcpSrv := mcp.New(mcp.MCPConfig{
 			Ops:          o,
-			NFT:          nft,
+			NFT:          fw,
 			WireGuardOps: wgOps,
 			Dnsmasq:      dnsmasq,
 			ServiceMgr:   svcMgr,

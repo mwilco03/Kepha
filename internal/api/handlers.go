@@ -2,12 +2,17 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
-	"os/exec"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/gatekeeper-firewall/gatekeeper/internal/backend"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/compiler"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/config"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/driver"
@@ -21,8 +26,9 @@ var apiActor = ops.Actor{Source: "api", User: "api"}
 type handlers struct {
 	ops     *ops.Ops
 	wgOps   *ops.WireGuardOps
-	nft     *driver.NFTables  // Only used for apply/dry-run (daemon-owned)
-	dnsmasq *driver.Dnsmasq   // Only used for lease parsing (daemon-owned)
+	nft     backend.Firewall       // Was *driver.NFTables; now any Firewall implementation.
+	dnsmasq *driver.Dnsmasq        // Only used for lease parsing (daemon-owned)
+	net     backend.NetworkManager // For ping, connections, conntrack (no exec.Command).
 }
 
 // --- Zones ---
@@ -521,8 +527,15 @@ func (h *handlers) commitConfig(w http.ResponseWriter, r *http.Request) {
 	// Daemon-owned: apply nftables after commit.
 	if h.nft != nil {
 		if err := h.nft.Apply(); err != nil {
-			writeError(w, http.StatusInternalServerError, "commit saved but apply failed: "+err.Error())
+			writeError(w, http.StatusInternalServerError, "commit saved but nft apply failed: "+err.Error())
 			return
+		}
+	}
+
+	// Daemon-owned: apply dnsmasq config after commit.
+	if h.dnsmasq != nil {
+		if err := h.dnsmasq.Apply(); err != nil {
+			slog.Error("dnsmasq apply after commit failed", "error", err)
 		}
 	}
 
@@ -544,8 +557,15 @@ func (h *handlers) rollbackConfig(w http.ResponseWriter, r *http.Request) {
 	// Daemon-owned: apply nftables after rollback.
 	if h.nft != nil {
 		if err := h.nft.Apply(); err != nil {
-			writeError(w, http.StatusInternalServerError, "rollback saved but apply failed: "+err.Error())
+			writeError(w, http.StatusInternalServerError, "rollback saved but nft apply failed: "+err.Error())
 			return
+		}
+	}
+
+	// Daemon-owned: apply dnsmasq config after rollback.
+	if h.dnsmasq != nil {
+		if err := h.dnsmasq.Apply(); err != nil {
+			slog.Error("dnsmasq apply after rollback failed", "error", err)
 		}
 	}
 
@@ -633,7 +653,7 @@ func (h *handlers) diagPing(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "target is required")
 		return
 	}
-	// Validate target is an IP or hostname (no shell injection).
+	// Validate target is an IP or hostname.
 	for _, c := range target {
 		valid := (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '.' || c == '-' || c == ':'
 		if !valid {
@@ -641,21 +661,45 @@ func (h *handlers) diagPing(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	out, err := exec.CommandContext(r.Context(), "ping", "-c", "3", "-W", "2", target).CombinedOutput()
-	if err != nil {
-		writeJSON(w, http.StatusOK, map[string]any{"target": target, "reachable": false, "output": string(out)})
+
+	if h.net == nil {
+		writeError(w, http.StatusServiceUnavailable, "network manager not available")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"target": target, "reachable": true, "output": string(out)})
+
+	result, err := h.net.Ping(target, 3, 2, "")
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"target": target, "reachable": false, "output": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"target":    target,
+		"reachable": result.Received > 0,
+		"output":    result.Output,
+		"sent":      result.Sent,
+		"received":  result.Received,
+		"avg_rtt":   result.AvgRTT.String(),
+	})
 }
 
 func (h *handlers) diagConnections(w http.ResponseWriter, r *http.Request) {
-	out, err := exec.CommandContext(r.Context(), "ss", "-tunap").CombinedOutput()
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to get connections: "+err.Error())
+	if h.net == nil {
+		writeError(w, http.StatusServiceUnavailable, "network manager not available")
 		return
 	}
-	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+
+	conns, err := h.net.Connections()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to get connections: %v", err))
+		return
+	}
+
+	// Format as lines for backward compatibility.
+	var lines []string
+	lines = append(lines, "Proto\tLocal\tPeer\tState")
+	for _, c := range conns {
+		lines = append(lines, fmt.Sprintf("%s\t%s\t%s\t%s", c.Protocol, c.LocalAddr, c.PeerAddr, c.State))
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"connections": lines})
 }
 
@@ -714,6 +758,28 @@ func (h *handlers) removeWGPeer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "removed"})
+}
+
+func (h *handlers) pruneWGPeers(w http.ResponseWriter, r *http.Request) {
+	if h.wgOps == nil {
+		writeError(w, http.StatusServiceUnavailable, "wireguard not configured")
+		return
+	}
+	var body struct {
+		MaxAgeSeconds int `json:"max_age_seconds"`
+	}
+	// Body is optional — default to 0 (prune never-handshaked only).
+	_ = readJSON(r, &body)
+	maxAge := time.Duration(body.MaxAgeSeconds) * time.Second
+	pruned, err := h.wgOps.PruneStalePeers(maxAge)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"pruned": pruned,
+		"count":  len(pruned),
+	})
 }
 
 func (h *handlers) generateWGClientConfig(w http.ResponseWriter, r *http.Request) {
@@ -815,6 +881,39 @@ func (h *handlers) listAuditLog(w http.ResponseWriter, r *http.Request) {
 		entries = []config.AuditEntry{}
 	}
 	writeJSON(w, http.StatusOK, entries)
+}
+
+// --- Performance ---
+
+func (h *handlers) perfNIC(w http.ResponseWriter, r *http.Request) {
+	entries, err := os.ReadDir("/sys/class/net")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	var nics []backend.NICInfo
+	for _, e := range entries {
+		name := e.Name()
+		if name == "lo" {
+			continue
+		}
+		// In sysfs, real interfaces are symlinks to directories.
+		// Non-interface entries (e.g. bonding_masters) are plain files.
+		fi, err := os.Stat(filepath.Join("/sys/class/net", name))
+		if err != nil || !fi.IsDir() {
+			continue
+		}
+		info, err := h.net.NICInfo(name)
+		if err != nil {
+			continue
+		}
+		nics = append(nics, *info)
+	}
+	if nics == nil {
+		nics = []backend.NICInfo{}
+	}
+	writeJSON(w, http.StatusOK, nics)
 }
 
 // --- Helpers ---

@@ -1,16 +1,27 @@
 package web
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
 	"encoding/json"
 	"html/template"
 	"log/slog"
 	"net/http"
+	"os"
+	"strconv"
+	"strings"
+	"time"
 
+	"github.com/gatekeeper-firewall/gatekeeper/internal/backend"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/config"
+	"github.com/gatekeeper-firewall/gatekeeper/internal/driver"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/model"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/service"
 )
+
+const sessionCookieName = "gk_session"
 
 //go:embed templates/*.html
 var templateFS embed.FS
@@ -24,12 +35,38 @@ func init() {
 	templates = template.Must(template.ParseFS(templateFS, "templates/*.html"))
 }
 
+// WebDeps holds optional dependencies for the web UI.
+type WebDeps struct {
+	ServiceMgr *service.Manager
+	WG         *driver.WireGuard
+	NFT        backend.Firewall // Was *driver.NFTables; now any Firewall implementation.
+	LeaseFile  string           // Path to dnsmasq lease file.
+	APIKey     string // API key for web session auth (empty = no auth).
+}
+
 // Handler creates the web UI HTTP handler.
 func Handler(store *config.Store, svcMgrs ...*service.Manager) http.Handler {
+	deps := &WebDeps{}
+	if len(svcMgrs) > 0 {
+		deps.ServiceMgr = svcMgrs[0]
+	}
+	return HandlerWithDeps(store, deps)
+}
+
+// HandlerWithDeps creates the web UI with full dependency injection.
+func HandlerWithDeps(store *config.Store, deps *WebDeps) http.Handler {
 	mux := http.NewServeMux()
 
+	// Static assets are always public.
 	mux.Handle("GET /static/", http.FileServerFS(staticFS))
-	mux.HandleFunc("GET /", handleDashboard(store))
+
+	// Login page is always accessible.
+	mux.HandleFunc("GET /login", handleLoginPage())
+	mux.HandleFunc("POST /login", handleLoginSubmit(deps.APIKey))
+	mux.HandleFunc("GET /logout", handleLogout())
+
+	// All other routes require session auth.
+	mux.HandleFunc("GET /", handleDashboard(store, deps))
 	mux.HandleFunc("GET /zones", handleZones(store))
 	mux.HandleFunc("GET /zones/{name}", handleZoneDetail(store))
 	mux.HandleFunc("GET /aliases", handleAliases(store))
@@ -38,16 +75,21 @@ func Handler(store *config.Store, svcMgrs ...*service.Manager) http.Handler {
 	mux.HandleFunc("GET /config", handleConfig(store))
 	mux.HandleFunc("GET /assign", handleAssignForm(store))
 	mux.HandleFunc("GET /wireguard", handleWireGuard())
+	mux.HandleFunc("GET /leases", handleLeases(deps))
+	mux.HandleFunc("GET /firewall", handleFirewall(store, deps))
 
-	// Services page — available when service manager is provided.
-	if len(svcMgrs) > 0 && svcMgrs[0] != nil {
-		mux.HandleFunc("GET /services", handleServices(svcMgrs[0]))
+	if deps.ServiceMgr != nil {
+		mux.HandleFunc("GET /services", handleServices(deps.ServiceMgr))
 	}
 
+	// Wrap with session auth if API key is configured.
+	if deps.APIKey != "" {
+		return sessionAuth(deps.APIKey, mux)
+	}
 	return mux
 }
 
-func handleDashboard(store *config.Store) http.HandlerFunc {
+func handleDashboard(store *config.Store, deps *WebDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
 			http.NotFound(w, r)
@@ -63,6 +105,13 @@ func handleDashboard(store *config.Store) http.HandlerFunc {
 			lastCommit = revs[0].Timestamp
 		}
 
+		var peerCount int
+		if deps.WG != nil {
+			peerCount = len(deps.WG.ListPeers())
+		}
+
+		leases := parseLeaseFile(deps.LeaseFile)
+
 		render(w, "dashboard", map[string]any{
 			"Title":       "Dashboard",
 			"Zones":       zones,
@@ -71,6 +120,9 @@ func handleDashboard(store *config.Store) http.HandlerFunc {
 			"ZoneCount":   len(zones),
 			"DeviceCount": len(devices),
 			"AliasCount":  len(aliases),
+			"PeerCount":   peerCount,
+			"LeaseCount":  len(leases),
+			"Leases":      leases,
 			"LastCommit":  lastCommit,
 		})
 	}
@@ -208,6 +260,116 @@ func handleWireGuard() http.HandlerFunc {
 	}
 }
 
+func handleLeases(deps *WebDeps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		leases := parseLeaseFile(deps.LeaseFile)
+		render(w, "leases", map[string]any{
+			"Title":  "DHCP Leases",
+			"Leases": leases,
+		})
+	}
+}
+
+// leaseEntry represents a parsed DHCP lease for the web UI.
+type leaseEntry struct {
+	Expiry   string
+	MAC      string
+	IP       string
+	Hostname string
+}
+
+// parseLeaseFile reads dnsmasq leases from the given file path.
+func parseLeaseFile(path string) []leaseEntry {
+	if path == "" {
+		path = "/var/lib/misc/dnsmasq.leases"
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	var leases []leaseEntry
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		if line == "" {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) >= 4 {
+			expiry := fields[0]
+			if ts, err := strconv.ParseInt(expiry, 10, 64); err == nil {
+				expiry = time.Unix(ts, 0).Format("2006-01-02 15:04:05")
+			}
+			leases = append(leases, leaseEntry{
+				Expiry:   expiry,
+				MAC:      fields[1],
+				IP:       fields[2],
+				Hostname: fields[3],
+			})
+		}
+	}
+	return leases
+}
+
+func handleFirewall(store *config.Store, deps *WebDeps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		zones, _ := store.ListZones()
+		policies, _ := store.ListPolicies()
+		profiles, _ := store.ListProfiles()
+
+		// Build zone→policy mapping via profiles.
+		type zonePolicyRow struct {
+			ZoneName      string
+			Interface     string
+			ProfileName   string
+			PolicyName    string
+			DefaultAction string
+			RuleCount     int
+		}
+		policyMap := make(map[string]model.Policy)
+		for _, p := range policies {
+			policyMap[p.Name] = p
+		}
+
+		var rows []zonePolicyRow
+		for _, prof := range profiles {
+			var zoneName, iface string
+			for _, z := range zones {
+				if z.ID == prof.ZoneID {
+					zoneName = z.Name
+					iface = z.Interface
+					break
+				}
+			}
+			pol := policyMap[prof.PolicyName]
+			rows = append(rows, zonePolicyRow{
+				ZoneName:      zoneName,
+				Interface:     iface,
+				ProfileName:   prof.Name,
+				PolicyName:    prof.PolicyName,
+				DefaultAction: string(pol.DefaultAction),
+				RuleCount:     len(pol.Rules),
+			})
+		}
+
+		// Compiled ruleset via dry-run.
+		var ruleset string
+		if deps.NFT != nil {
+			text, err := deps.NFT.DryRun()
+			if err != nil {
+				ruleset = "# Error compiling ruleset: " + err.Error()
+			} else {
+				ruleset = text
+			}
+		}
+
+		render(w, "firewall", map[string]any{
+			"Title":       "Firewall",
+			"ZonePolicies": rows,
+			"Ruleset":     ruleset,
+			"Policies":    policies,
+		})
+	}
+}
+
 func handleServices(mgr *service.Manager) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		services := mgr.List()
@@ -224,6 +386,91 @@ func handleServices(mgr *service.Manager) http.HandlerFunc {
 			"Categories": categories,
 		})
 	}
+}
+
+// sessionAuth wraps a handler with cookie-based session authentication.
+// Static assets and the login page bypass auth.
+func sessionAuth(apiKey string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Public paths: static assets, login, logout.
+		if strings.HasPrefix(r.URL.Path, "/static/") ||
+			r.URL.Path == "/login" || r.URL.Path == "/logout" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if !validSession(r, apiKey) {
+			http.Redirect(w, r, "/login", http.StatusSeeOther)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func handleLoginPage() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		render(w, "login", map[string]any{
+			"Title": "Login",
+			"Error": r.URL.Query().Get("error"),
+		})
+	}
+}
+
+func handleLoginSubmit(apiKey string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		key := r.FormValue("api_key")
+		if key != apiKey {
+			http.Redirect(w, r, "/login?error=invalid", http.StatusSeeOther)
+			return
+		}
+		setSessionCookie(w, apiKey)
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+	}
+}
+
+func handleLogout() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		http.SetCookie(w, &http.Cookie{
+			Name:     sessionCookieName,
+			Value:    "",
+			Path:     "/",
+			MaxAge:   -1,
+			HttpOnly: true,
+			SameSite: http.SameSiteStrictMode,
+		})
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+	}
+}
+
+// setSessionCookie creates an HMAC-signed session cookie.
+func setSessionCookie(w http.ResponseWriter, apiKey string) {
+	sig := signSession(apiKey)
+	http.SetCookie(w, &http.Cookie{
+		Name:     sessionCookieName,
+		Value:    sig,
+		Path:     "/",
+		MaxAge:   86400, // 24 hours.
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteStrictMode,
+	})
+}
+
+// validSession checks the session cookie against the API key.
+func validSession(r *http.Request, apiKey string) bool {
+	cookie, err := r.Cookie(sessionCookieName)
+	if err != nil {
+		return false
+	}
+	expected := signSession(apiKey)
+	return hmac.Equal([]byte(cookie.Value), []byte(expected))
+}
+
+// signSession produces an HMAC-SHA256 of a fixed payload using the API key.
+func signSession(apiKey string) string {
+	mac := hmac.New(sha256.New, []byte(apiKey))
+	mac.Write([]byte("gatekeeper-web-session"))
+	return hex.EncodeToString(mac.Sum(nil))
 }
 
 func render(w http.ResponseWriter, name string, data any) {

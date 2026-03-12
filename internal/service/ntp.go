@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -74,12 +73,10 @@ func (n *NTP) Start(cfg map[string]string) error {
 		return err
 	}
 
-	cmd := exec.Command("systemctl", "restart", "chronyd")
-	if output, err := cmd.CombinedOutput(); err != nil {
+	if err := Proc.Restart("chronyd"); err != nil {
 		// Try systemd-timesyncd as fallback.
-		cmd2 := exec.Command("systemctl", "restart", "systemd-timesyncd")
-		if output2, err2 := cmd2.CombinedOutput(); err2 != nil {
-			return fmt.Errorf("start chronyd: %s; start timesyncd: %s", string(output), string(output2))
+		if err2 := Proc.Restart("systemd-timesyncd"); err2 != nil {
+			return fmt.Errorf("start chronyd: %v; start timesyncd: %v", err, err2)
 		}
 	}
 
@@ -91,7 +88,7 @@ func (n *NTP) Stop() error {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 
-	exec.Command("systemctl", "stop", "chronyd").Run()
+	Proc.Stop("chronyd")
 
 	n.state = StateStopped
 	return nil
@@ -106,9 +103,11 @@ func (n *NTP) Reload(cfg map[string]string) error {
 		return err
 	}
 
-	cmd := exec.Command("systemctl", "reload-or-restart", "chronyd")
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("reload chronyd: %s: %w", string(output), err)
+	if err := Proc.Reload("chronyd"); err != nil {
+		// Fallback to restart if reload not supported.
+		if err2 := Proc.Restart("chronyd"); err2 != nil {
+			return fmt.Errorf("reload chronyd: %v", err2)
+		}
 	}
 	return nil
 }

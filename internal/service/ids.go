@@ -8,6 +8,11 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+
+	nft "github.com/google/nftables"
+	"github.com/google/nftables/expr"
+
+	"github.com/gatekeeper-firewall/gatekeeper/internal/backend"
 )
 
 // IDS provides Intrusion Detection and Prevention via Suricata.
@@ -156,16 +161,14 @@ func (i *IDS) Stop() error {
 	i.mu.Lock()
 	defer i.mu.Unlock()
 
-	// Kill suricata.
-	pidFile := filepath.Join(i.logDir, "suricata.pid")
-	if data, err := os.ReadFile(pidFile); err == nil {
-		pid := strings.TrimSpace(string(data))
-		exec.Command("kill", pid).Run()
+	// Kill suricata via ProcessManager.
+	if err := Proc.Stop("suricata"); err != nil {
+		slog.Warn("failed to stop suricata", "error", err)
 	}
 
 	// Remove IPS nftables queue if active.
 	if i.cfg != nil && i.cfg["mode"] == "ips" {
-		exec.Command("nft", "delete", "chain", "inet", "gatekeeper", "ids_queue").Run()
+		nftDeleteChain(nft.TableFamilyINet, "gatekeeper", "ids_queue")
 	}
 
 	i.state = StateStopped
@@ -182,11 +185,12 @@ func (i *IDS) Reload(cfg map[string]string) error {
 	}
 
 	// Send SIGUSR2 to Suricata for live rule reload.
-	pidFile := filepath.Join(i.logDir, "suricata.pid")
-	if data, err := os.ReadFile(pidFile); err == nil {
-		pid := strings.TrimSpace(string(data))
-		exec.Command("kill", "-USR2", pid).Run()
-		slog.Info("suricata rules reloaded")
+	if pid, err := Proc.FindProcess("suricata"); err == nil {
+		if err := Proc.Signal(pid, backend.SigUSR2); err != nil {
+			slog.Warn("failed to send SIGUSR2 to suricata", "error", err)
+		} else {
+			slog.Info("suricata rules reloaded")
+		}
 	}
 
 	return nil
@@ -287,30 +291,29 @@ func (i *IDS) updateRules() error {
 }
 
 func (i *IDS) setupNFQueue(cfg map[string]string) {
-	// Create nftables chain that sends traffic to Suricata's NFQUEUE.
-	var rules strings.Builder
-	rules.WriteString("table inet gatekeeper {\n")
-	rules.WriteString("  chain ids_queue {\n")
-	rules.WriteString("    type filter hook forward priority -150; policy accept;\n")
+	prio := nft.ChainPriority(-150)
+	policy := nft.ChainPolicyAccept
 
+	var rules [][]expr.Any
 	for _, iface := range strings.Split(cfg["interfaces"], ",") {
 		iface = strings.TrimSpace(iface)
-		if iface != "" {
-			rules.WriteString(fmt.Sprintf("    iifname \"%s\" queue num 0 bypass\n", iface))
-			rules.WriteString(fmt.Sprintf("    oifname \"%s\" queue num 0 bypass\n", iface))
+		if iface == "" {
+			continue
 		}
+		// iifname "iface" queue num 0 bypass
+		rules = append(rules, nftRule(nftMatchIifname(iface), nftExpr(nftQueue(0))))
+		// oifname "iface" queue num 0 bypass
+		rules = append(rules, nftRule(nftMatchOifname(iface), nftExpr(nftQueue(0))))
 	}
 
-	rules.WriteString("  }\n}\n")
-
-	rulesPath := filepath.Join(i.confDir, "ids-nfqueue.nft")
-	if err := os.WriteFile(rulesPath, []byte(rules.String()), 0o640); err != nil {
-		slog.Warn("failed to write IPS nftables rules", "error", err)
-		return
-	}
-
-	cmd := exec.Command("nft", "-f", rulesPath)
-	if output, err := cmd.CombinedOutput(); err != nil {
-		slog.Warn("failed to apply IPS nftables rules", "error", err, "output", string(output))
+	if err := nftApplyRules(nft.TableFamilyINet, "gatekeeper", []nftChainSpec{{
+		Name:     "ids_queue",
+		Type:     nft.ChainTypeFilter,
+		Hook:     nft.ChainHookForward,
+		Priority: &prio,
+		Policy:   &policy,
+		Rules:    rules,
+	}}); err != nil {
+		slog.Warn("failed to apply IPS nftables rules", "error", err)
 	}
 }

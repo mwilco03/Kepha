@@ -5,7 +5,6 @@ import (
 	"log/slog"
 	"net"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -312,15 +311,14 @@ func (d *DNSFilter) fetchBlocklists() error {
 }
 
 func (d *DNSFilter) fetchHostsFile(url string) ([]string, error) {
-	// Use curl for fetching — available on all target systems.
-	cmd := exec.Command("curl", "-sS", "--max-time", "30", "-L", url)
-	output, err := cmd.Output()
+	// Fetch via native HTTP client (no exec.Command).
+	body, _, err := HTTP.Get(url, nil, 30)
 	if err != nil {
 		return nil, fmt.Errorf("fetch %s: %w", url, err)
 	}
 
 	var domains []string
-	for _, line := range strings.Split(string(output), "\n") {
+	for _, line := range strings.Split(string(body), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue

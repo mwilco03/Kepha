@@ -9,6 +9,8 @@
 package cli
 
 import (
+	"time"
+
 	"github.com/gatekeeper-firewall/gatekeeper/internal/compiler"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/config"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/driver"
@@ -74,6 +76,7 @@ type Backend interface {
 	ListWGPeers() ([]driver.WGPeer, error)
 	AddWGPeer(peer driver.WGPeer) error
 	RemoveWGPeer(publicKey string) error
+	PruneWGPeers(maxAgeSeconds int) ([]string, error)
 }
 
 // DirectBackend implements Backend by calling the ops layer directly.
@@ -171,4 +174,10 @@ func (d *DirectBackend) RemoveWGPeer(publicKey string) error {
 		return nil
 	}
 	return d.wg.RemovePeer(publicKey)
+}
+func (d *DirectBackend) PruneWGPeers(maxAgeSeconds int) ([]string, error) {
+	if d.wg == nil {
+		return nil, nil
+	}
+	return d.wg.PruneStalePeers(time.Duration(maxAgeSeconds) * time.Second)
 }

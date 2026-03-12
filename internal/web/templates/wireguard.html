@@ -1,10 +1,48 @@
-{{template "head" .}}
-<title>{{.Title}} - Gatekeeper</title>
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <title>{{.Title}} - Gatekeeper</title>
+    {{template "head" .}}
+    <style>
+        .actions { display: flex; gap: 0.5rem; align-items: center; }
+        .btn-sm { padding: 0.3rem 0.75rem; font-size: 0.8rem; }
+        .btn-red { background: var(--red); }
+        .btn-yellow { background: var(--yellow); color: var(--bg); }
+        .add-form { display: grid; grid-template-columns: 1fr 1fr 1fr auto; gap: 0.75rem; align-items: end; margin-bottom: 1.5rem; }
+        .add-form .field { margin-bottom: 0; }
+        #status-msg { margin: 1rem 0; padding: 0.75rem; border-radius: 0.25rem; display: none; }
+        #status-msg.ok { display: block; background: rgba(74,222,128,0.1); border: 1px solid var(--green); color: var(--green); }
+        #status-msg.err { display: block; background: rgba(248,113,113,0.1); border: 1px solid var(--red); color: var(--red); }
+    </style>
 </head>
 <body>
 {{template "nav" .}}
 <div class="container">
     <h1>WireGuard VPN</h1>
+
+    <h2>Add Peer</h2>
+    <form class="add-form" onsubmit="addPeer(event)">
+        <div class="field">
+            <label>Public Key</label>
+            <input type="text" id="add-pubkey" placeholder="base64 public key" required>
+        </div>
+        <div class="field">
+            <label>Allowed IPs</label>
+            <input type="text" id="add-allowed" placeholder="10.50.0.X/32" required>
+        </div>
+        <div class="field">
+            <label>Name (optional)</label>
+            <input type="text" id="add-name" placeholder="client name">
+        </div>
+        <button type="submit" class="btn btn-sm">Add Peer</button>
+    </form>
+
+    <div id="status-msg"></div>
+
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.75rem;">
+        <h2 style="margin:0;">Peers</h2>
+        <button onclick="prunePeers()" class="btn btn-sm btn-yellow">Prune Stale</button>
+    </div>
 
     <div id="peers-table">
         <div class="empty">Loading peers...</div>
@@ -23,21 +61,40 @@
 
 <script src="https://unpkg.com/qrcode-generator@1.4.4/qrcode.js"></script>
 <script>
+var apiKey = '';
+
+function getHeaders() {
+    var h = {'Content-Type': 'application/json'};
+    if (apiKey) h['X-API-Key'] = apiKey;
+    return h;
+}
+
+function showStatus(msg, ok) {
+    var el = document.getElementById('status-msg');
+    el.textContent = msg;
+    el.className = ok ? 'ok' : 'err';
+    setTimeout(function() { el.style.display = 'none'; el.className = ''; }, 4000);
+}
+
 function loadPeers() {
-    fetch('/api/v1/wg/peers')
-    .then(r => { if (r.status === 401) return []; return r.json(); })
-    .then(peers => {
+    fetch('/api/v1/wg/peers', {headers: getHeaders()})
+    .then(function(r) { if (r.status === 401) return []; return r.json(); })
+    .then(function(peers) {
         var el = document.getElementById('peers-table');
         if (!peers || peers.length === 0) {
             el.innerHTML = '<div class="empty">No WireGuard peers configured.</div>';
             return;
         }
-        var html = '<table><thead><tr><th>Name</th><th>Public Key</th><th>Allowed IPs</th><th>Config</th></tr></thead><tbody>';
+        var html = '<table><thead><tr><th>Name</th><th>Public Key</th><th>Allowed IPs</th><th>Actions</th></tr></thead><tbody>';
         peers.forEach(function(p) {
             var name = p.name || '-';
             var pk = p.public_key;
-            html += '<tr><td>' + name + '</td><td>' + pk + '</td><td>' + p.allowed_ips + '</td>';
-            html += '<td><button onclick="showQR(\'' + pk + '\', \'' + name + '\')" class="btn" style="padding:0.3rem 0.75rem;font-size:0.8rem;">QR Code</button></td></tr>';
+            var shortPk = pk.substring(0, 12) + '...';
+            html += '<tr><td>' + name + '</td><td title="' + pk + '">' + shortPk + '</td><td>' + p.allowed_ips + '</td>';
+            html += '<td class="actions">';
+            html += '<button onclick="showQR(\'' + pk + '\', \'' + name + '\')" class="btn btn-sm">QR</button>';
+            html += '<button onclick="deletePeer(\'' + pk + '\')" class="btn btn-sm btn-red">Delete</button>';
+            html += '</td></tr>';
         });
         html += '</tbody></table>';
         el.innerHTML = html;
@@ -47,14 +104,69 @@ function loadPeers() {
     });
 }
 
+function addPeer(e) {
+    e.preventDefault();
+    var pubkey = document.getElementById('add-pubkey').value.trim();
+    var allowed = document.getElementById('add-allowed').value.trim();
+    var name = document.getElementById('add-name').value.trim();
+    fetch('/api/v1/wg/peers', {
+        method: 'POST',
+        headers: getHeaders(),
+        body: JSON.stringify({public_key: pubkey, allowed_ips: allowed, name: name})
+    })
+    .then(function(r) { return r.json().then(function(d) { return {status: r.status, data: d}; }); })
+    .then(function(res) {
+        if (res.status >= 400) { showStatus('Error: ' + (res.data.error || 'failed'), false); return; }
+        showStatus('Peer added: ' + (name || pubkey.substring(0, 12)), true);
+        document.getElementById('add-pubkey').value = '';
+        document.getElementById('add-allowed').value = '';
+        document.getElementById('add-name').value = '';
+        loadPeers();
+    })
+    .catch(function(err) { showStatus('Error: ' + err, false); });
+}
+
+function deletePeer(pubkey) {
+    if (!confirm('Remove peer ' + pubkey.substring(0, 12) + '...?')) return;
+    fetch('/api/v1/wg/peers/' + encodeURIComponent(pubkey), {
+        method: 'DELETE',
+        headers: getHeaders()
+    })
+    .then(function(r) { return r.json().then(function(d) { return {status: r.status, data: d}; }); })
+    .then(function(res) {
+        if (res.status >= 400) { showStatus('Error: ' + (res.data.error || 'failed'), false); return; }
+        showStatus('Peer removed', true);
+        loadPeers();
+    })
+    .catch(function(err) { showStatus('Error: ' + err, false); });
+}
+
+function prunePeers() {
+    fetch('/api/v1/wg/prune', {
+        method: 'POST',
+        headers: getHeaders(),
+        body: JSON.stringify({max_age_seconds: 0})
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        if (data.count > 0) {
+            showStatus('Pruned ' + data.count + ' stale peer(s)', true);
+        } else {
+            showStatus('No stale peers found', true);
+        }
+        loadPeers();
+    })
+    .catch(function(err) { showStatus('Error: ' + err, false); });
+}
+
 function showQR(pubkey, name) {
     fetch('/api/v1/wg/client-config', {
         method: 'POST',
-        headers: {'Content-Type': 'application/json'},
+        headers: getHeaders(),
         body: JSON.stringify({public_key: pubkey, server_endpoint: window.location.hostname})
     })
-    .then(r => r.json())
-    .then(data => {
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
         if (data.error) { alert(data.error); return; }
         document.getElementById('qr-title').textContent = 'Config: ' + (name !== '-' ? name : pubkey.substring(0, 8));
         document.getElementById('qr-config').textContent = data.config;
@@ -64,10 +176,9 @@ function showQR(pubkey, name) {
         qr.make();
         document.getElementById('qr-canvas').innerHTML = qr.createSvgTag(4);
 
-        var modal = document.getElementById('qr-modal');
-        modal.style.display = 'flex';
+        document.getElementById('qr-modal').style.display = 'flex';
     })
-    .catch(err => alert('Error generating config: ' + err));
+    .catch(function(err) { alert('Error generating config: ' + err); });
 }
 
 function closeQR() {

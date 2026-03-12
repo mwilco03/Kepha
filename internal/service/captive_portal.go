@@ -3,11 +3,15 @@ package service
 import (
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
-	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
+
+	nft "github.com/google/nftables"
+	"github.com/google/nftables/expr"
 )
 
 // CaptivePortal provides a captive portal for guest network access.
@@ -114,12 +118,12 @@ func (c *CaptivePortal) Stop() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	// Remove captive portal nft rules.
+	// Remove captive portal nft rules file if it exists.
 	rulesPath := filepath.Join(c.confDir, "captive-portal.nft")
 	os.Remove(rulesPath)
 
-	// Flush the captive portal chain.
-	exec.Command("nft", "delete", "chain", "inet", "gatekeeper", "captive_portal").Run()
+	// Flush the captive portal chain via netlink.
+	nftDeleteChain(nft.TableFamilyINet, "gatekeeper", "captive_portal")
 
 	c.state = StateStopped
 	return nil
@@ -140,54 +144,51 @@ func (c *CaptivePortal) Status() State {
 
 func (c *CaptivePortal) generateNftRules() error {
 	cfg := c.cfg
-	var b strings.Builder
-
-	b.WriteString("# Gatekeeper Captive Portal rules — auto-generated\n\n")
-
 	portalPort := cfg["portal_port"]
 	if portalPort == "" {
 		portalPort = "8888"
 	}
-
-	b.WriteString("table inet gatekeeper {\n")
-	b.WriteString("  chain captive_portal {\n")
-
-	// Allow captive portal detection domains.
-	if domains := cfg["allowed_domains"]; domains != "" {
-		b.WriteString("    # Allow captive portal detection\n")
-		b.WriteString("    tcp dport 80 meta mark 0xcp accept\n")
+	pp, _ := strconv.ParseUint(portalPort, 10, 16)
+	if pp == 0 {
+		pp = 8888
 	}
+
+	var rules [][]expr.Any
 
 	// Allow already-authenticated MACs.
 	if macs := cfg["allowed_macs"]; macs != "" {
 		for _, mac := range strings.Split(macs, ",") {
 			mac = strings.TrimSpace(mac)
-			if mac != "" {
-				b.WriteString(fmt.Sprintf("    ether saddr %s accept\n", mac))
+			if mac == "" {
+				continue
 			}
+			hw, err := net.ParseMAC(mac)
+			if err != nil {
+				slog.Warn("invalid MAC in captive portal allowlist", "mac", mac)
+				continue
+			}
+			rules = append(rules, nftRule(nftMatchEtherSaddr(hw), nftExpr(nftAccept())))
 		}
 	}
 
 	// Redirect HTTP to portal.
-	b.WriteString(fmt.Sprintf("    tcp dport 80 redirect to :%s\n", portalPort))
-	// Block HTTPS for unauthenticated (can't transparently redirect).
-	b.WriteString("    tcp dport 443 drop\n")
+	rules = append(rules, nftRule(nftMatchTCPDport(80), nftRedirectToPort(uint16(pp))))
+	// Block HTTPS for unauthenticated.
+	rules = append(rules, nftRule(nftMatchTCPDport(443), nftExpr(nftDrop())))
 
-	b.WriteString("  }\n")
-	b.WriteString("}\n")
-
-	rulesPath := filepath.Join(c.confDir, "captive-portal.nft")
-	if err := os.WriteFile(rulesPath, []byte(b.String()), 0o640); err != nil {
-		return fmt.Errorf("write captive portal rules: %w", err)
+	policy := nft.ChainPolicyAccept
+	if err := nftApplyRules(nft.TableFamilyINet, "gatekeeper", []nftChainSpec{{
+		Name:     "captive_portal",
+		Type:     nft.ChainTypeNAT,
+		Hook:     nft.ChainHookPrerouting,
+		Priority: nft.ChainPriorityNATDest,
+		Policy:   &policy,
+		Rules:    rules,
+	}}); err != nil {
+		slog.Warn("captive portal nft apply failed", "error", err)
 	}
 
-	// Apply the rules.
-	cmd := exec.Command("nft", "-f", rulesPath)
-	if output, err := cmd.CombinedOutput(); err != nil {
-		slog.Warn("captive portal nft apply failed", "error", err, "output", string(output))
-	}
-
-	slog.Info("captive portal rules generated", "path", rulesPath)
+	slog.Info("captive portal rules applied")
 	return nil
 }
 
@@ -203,11 +204,13 @@ func (c *CaptivePortal) AuthorizeMAC(mac string) error {
 		c.cfg["allowed_macs"] = macs + "," + mac
 	}
 
-	// Add to nftables immediately.
-	cmd := exec.Command("nft", "add", "rule", "inet", "gatekeeper", "captive_portal",
-		"ether", "saddr", mac, "accept")
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("authorize MAC: %s: %w", string(output), err)
+	hw, err := net.ParseMAC(mac)
+	if err != nil {
+		return fmt.Errorf("invalid MAC: %s: %w", mac, err)
+	}
+	if err := nftAddRule(nft.TableFamilyINet, "gatekeeper", "captive_portal",
+		nftRule(nftMatchEtherSaddr(hw), nftExpr(nftAccept()))); err != nil {
+		return fmt.Errorf("authorize MAC: %w", err)
 	}
 
 	slog.Info("captive portal: MAC authorized", "mac", mac)

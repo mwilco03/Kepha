@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -114,9 +113,8 @@ func (s *Samba) Start(cfg map[string]string) error {
 
 	// Start smbd and nmbd.
 	for _, svc := range []string{"smbd", "nmbd"} {
-		cmd := exec.Command("systemctl", "start", svc)
-		if output, err := cmd.CombinedOutput(); err != nil {
-			return fmt.Errorf("start %s: %s: %w", svc, string(output), err)
+		if err := Proc.Start(svc); err != nil {
+			return fmt.Errorf("start %s: %w", svc, err)
 		}
 	}
 
@@ -129,9 +127,8 @@ func (s *Samba) Stop() error {
 	defer s.mu.Unlock()
 
 	for _, svc := range []string{"smbd", "nmbd"} {
-		cmd := exec.Command("systemctl", "stop", svc)
-		if output, err := cmd.CombinedOutput(); err != nil {
-			slog.Warn("failed to stop samba service", "service", svc, "error", err, "output", string(output))
+		if err := Proc.Stop(svc); err != nil {
+			slog.Warn("failed to stop samba service", "service", svc, "error", err)
 		}
 	}
 
@@ -148,9 +145,9 @@ func (s *Samba) Reload(cfg map[string]string) error {
 		return err
 	}
 
-	cmd := exec.Command("smbcontrol", "all", "reload-config")
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("reload samba: %s: %w", string(output), err)
+	// Reload Samba by sending SIGHUP to smbd.
+	if err := Proc.Reload("smbd"); err != nil {
+		return fmt.Errorf("reload samba: %w", err)
 	}
 	return nil
 }

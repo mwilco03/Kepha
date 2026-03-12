@@ -15,11 +15,12 @@ type CompiledRuleset struct {
 
 // Input holds all config needed for compilation.
 type Input struct {
-	Zones    []model.Zone
-	Aliases  []model.Alias
-	Policies []model.Policy
-	Profiles []model.Profile
-	Devices  []model.DeviceAssignment
+	Zones        []model.Zone
+	Aliases      []model.Alias
+	Policies     []model.Policy
+	Profiles     []model.Profile
+	Devices      []model.DeviceAssignment
+	WGListenPort int // WireGuard listen port (0 = disabled).
 }
 
 // Compile transforms the config model into an nftables ruleset.
@@ -69,8 +70,12 @@ func Compile(input *Input) (*CompiledRuleset, error) {
 			continue
 		}
 		setType := inferSetType(a.Type)
+		needsInterval := a.Type == model.AliasTypeNetwork
 		b.WriteString(fmt.Sprintf("\tset %s {\n", sanitizeName(a.Name)))
 		b.WriteString(fmt.Sprintf("\t\ttype %s\n", setType))
+		if needsInterval {
+			b.WriteString("\t\tflags interval\n")
+		}
 		b.WriteString(fmt.Sprintf("\t\telements = { %s }\n", strings.Join(members, ", ")))
 		b.WriteString("\t}\n\n")
 	}
@@ -102,6 +107,12 @@ func writeInputChain(b *strings.Builder, input *Input) {
 			fmt.Fprintf(b, "\t\t# Allow API from %s.\n", z.Name)
 			fmt.Fprintf(b, "\t\tiifname %q tcp dport 8080 accept\n\n", z.Interface)
 		}
+	}
+
+	// Allow WireGuard if configured.
+	if input.WGListenPort > 0 {
+		fmt.Fprintf(b, "\t\t# Allow WireGuard.\n")
+		fmt.Fprintf(b, "\t\tudp dport %d accept\n\n", input.WGListenPort)
 	}
 
 	// Allow DHCP/DNS from all internal zones.
@@ -160,6 +171,8 @@ func writeForwardChain(b *strings.Builder, input *Input, policyMap map[string]*m
 			// Apply default action for this policy's unmatched traffic from this zone.
 			if policy.DefaultAction == model.RuleActionAllow {
 				fmt.Fprintf(b, "\t\tiifname %q accept\n", zone.Interface)
+			} else if policy.DefaultAction == model.RuleActionReject {
+				fmt.Fprintf(b, "\t\tiifname %q reject\n", zone.Interface)
 			}
 			b.WriteString("\n")
 		}
@@ -198,18 +211,26 @@ func compileRule(r model.Rule, srcIface, wanIface string, aliasMap map[string]*m
 		parts = append(parts, fmt.Sprintf("oifname %q", wanIface))
 	}
 
-	if r.Protocol != "" {
-		if validate.Protocol(r.Protocol) != nil {
+	proto := strings.ToLower(r.Protocol)
+	if proto != "" {
+		if validate.Protocol(proto) != nil {
 			return "" // Skip rules with invalid protocol.
 		}
-		parts = append(parts, strings.ToLower(r.Protocol))
-	}
-
-	if r.Ports != "" && r.Protocol != "" {
-		if validate.Ports(r.Ports) != nil {
-			return "" // Skip rules with invalid ports.
+		switch proto {
+		case "icmp":
+			parts = append(parts, "ip protocol icmp")
+		case "icmpv6":
+			parts = append(parts, "ip6 nexthdr icmpv6")
+		case "tcp", "udp":
+			// For TCP/UDP with ports, emit "tcp dport {X}" as a single expression.
+			if r.Ports != "" && validate.Ports(r.Ports) == nil {
+				parts = append(parts, fmt.Sprintf("%s dport { %s }", proto, r.Ports))
+			} else {
+				parts = append(parts, "meta l4proto "+proto)
+			}
+		default:
+			parts = append(parts, "meta l4proto "+proto)
 		}
-		parts = append(parts, fmt.Sprintf("dport { %s }", r.Ports))
 	}
 
 	if r.SrcAlias != "" {
@@ -232,7 +253,8 @@ func compileRule(r model.Rule, srcIface, wanIface string, aliasMap map[string]*m
 	if validate.Action(action) != nil {
 		return "" // Skip rules with invalid action.
 	}
-	parts = append(parts, action)
+	// Translate model actions to nftables verdicts.
+	parts = append(parts, modelActionToNFT(action))
 
 	return strings.Join(parts, " ")
 }
@@ -273,6 +295,22 @@ func inferSetType(aliasType model.AliasType) string {
 		return "ether_addr"
 	default:
 		return "ipv4_addr"
+	}
+}
+
+// modelActionToNFT translates gatekeeper rule actions to nftables verdicts.
+func modelActionToNFT(action string) string {
+	switch action {
+	case "allow":
+		return "accept"
+	case "deny":
+		return "drop"
+	case "reject":
+		return "reject"
+	case "log":
+		return "log"
+	default:
+		return "drop"
 	}
 }
 
