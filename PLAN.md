@@ -594,6 +594,7 @@ Per rebuttal, these were deferred from v1 but have been implemented ahead of sch
 - Resource quotas per tenant (max zones, max rules, max bandwidth)
 - Cross-tenant traffic policies (explicit allow required, default deny)
 
+<<<<<<< HEAD
 ### Mini-SIEM (Optional, SQLite FTS5)
 
 **Goal:** Ship a lightweight, zero-dependency security event and incident management engine embedded in the Gatekeeper binary. No Elasticsearch cluster, no Java heap tuning, no external DB — just SQLite FTS5 full-text search over structured security events. Think Security Onion's visibility, but sized for a single-site / home-lab / SMB deployment that runs on the same LXC as the firewall.
@@ -791,6 +792,292 @@ Pi-hole is excellent at what it does: network-wide DNS sinkhole with a clean das
 **The practical takeaway:** We ship a DNS filter service that covers Pi-hole's use case completely. The proxy service extends that to cover every scenario Pi-hole users ask for but can't get. The two layers are complementary — DNS filter handles 95% of blocking cheaply (no TLS overhead, no proxy latency), and the proxy layer catches the 5% that leaks through.
 
 Users who want Pi-hole simplicity get it with `gk service enable dns_filter`. Users who want full L7 visibility add `gk service enable proxy`. Neither requires the other.
+
+### Proposal: Device Groups & Group-Based Policy
+
+**Problem:** Zones and profiles provide macro-level segmentation (IoT zone, server profile), but users need finer-grained grouping within a zone. Pi-hole's group management is popular precisely because it lets you say "these 5 devices get strict filtering, those 3 get relaxed rules" without creating separate network segments.
+
+**Proposal:** Add a `groups` concept that sits between zones and individual devices. A device belongs to a zone (network placement) and a profile (firewall template), but can also be a member of one or more groups. Groups are the policy binding point for per-service configuration.
+
+#### Data Model
+
+```
+Device → Zone (1:1, physical placement)
+Device → Profile (1:1, firewall template)
+Device → Groups (1:many, policy overlay)
+Group → Service configs (DNS filter lists, proxy policy, bandwidth limit, schedule)
+```
+
+#### Concrete Features
+- **Group CRUD:** `gk group create kids --description "Children's devices"`
+- **Group membership:** `gk group add-member kids --mac aa:bb:cc:dd:ee:ff` / `gk group remove-member`
+- **Per-group DNS filter policy:** Different blocklists per group (kids get strict, adults get standard, IoT gets ad-only)
+- **Per-group proxy policy:** Different URL filter rules, TLS inspection depth, cache policy per group
+- **Per-group bandwidth limits:** QoS/traffic shaping applied per-group, not just per-zone
+- **Per-group schedules:** Time-of-day policies (kids' devices off after 10pm, guest Wi-Fi limited hours)
+- **Per-group captive portal:** Different portal pages/auth requirements per group
+- **Group priority/precedence:** When a device is in multiple groups, explicit priority ordering resolves conflicts
+- **Default group:** Every device implicitly belongs to a zone-default group; explicit groups override
+
+#### API
+- `GET/POST /api/v1/groups`, `GET/PUT/DELETE /api/v1/groups/{name}`
+- `POST /api/v1/groups/{name}/members`, `DELETE /api/v1/groups/{name}/members/{mac}`
+- `GET/PUT /api/v1/groups/{name}/policy/{service}` — per-service group policy
+- `GET /api/v1/devices/{mac}/groups` — list groups for a device
+
+#### Implementation Notes
+- Groups stored in SQLite: `groups` table + `group_members` join table + `group_policies` table
+- DNS filter: generate per-group dnsmasq config blocks using `tag:` mechanism (dnsmasq natively supports this)
+- Proxy: group membership resolved at connection time via client IP → MAC → group lookup
+- nftables: group-based rules compiled into per-group chains, matched via nftables sets of IPs
+- Dashboard: group management page with drag-and-drop member assignment
+
+---
+
+### Proposal: Admin Approval Workflow (User-Requestable Actions)
+
+**Problem:** In multi-user environments (families, small offices, MSPs), end users need a way to request changes without having admin access. "Unblock this site," "Give me more bandwidth," "Let me access this server." Currently, the admin has to be told out-of-band and manually make the change.
+
+**Proposal:** A request/approval workflow where non-admin users can submit change requests through the captive portal or a lightweight self-service UI, and admins get notified to approve or deny.
+
+#### User Flow
+1. User visits a blocked page → captive portal intercept shows "This site is blocked by policy"
+2. User clicks "Request Access" → submits request with optional reason
+3. Admin gets notification (webhook: Slack/Teams/Discord/email/push, or dashboard badge)
+4. Admin reviews request in dashboard or via CLI → approves or denies
+5. If approved: policy change applied immediately (group override, temporary allow, schedule)
+6. If denied: user gets notification with optional admin comment
+7. Optional: auto-expire approved exceptions after configurable TTL
+
+#### Request Types
+| Request | What It Does When Approved |
+|---|---|
+| **Unblock domain** | Adds domain to group/device allowlist (DNS filter + proxy bypass) |
+| **Unblock URL** | Adds URL path to proxy allowlist |
+| **Extend schedule** | Temporarily extends time-of-day access window |
+| **Bandwidth boost** | Temporarily raises QoS limit for device/group |
+| **Port access** | Adds temporary firewall rule allowing specific port/protocol |
+| **Zone transfer** | Moves device to a different zone (e.g. guest → trusted) |
+
+#### Admin Interface
+- **Dashboard widget:** "Pending Requests (3)" badge on nav, dedicated approval queue page
+- **Per-request detail:** Who requested, what device, what change, when, reason text
+- **Bulk actions:** Approve/deny multiple requests at once
+- **Auto-approve rules:** Admin can pre-configure "requests matching X from group Y → auto-approve" (e.g. unblock requests from `adults` group auto-approved, from `kids` group require manual review)
+- **Audit trail:** All requests, approvals, denials logged with timestamps in SIEM
+
+#### Notification Channels
+- Webhook (Slack, Teams, Discord, PagerDuty, generic HTTP POST)
+- Email (SMTP, reuse existing alert infrastructure)
+- Push notification (web push via service worker in dashboard)
+- In-dashboard badge + sound (real-time via SSE)
+- CLI: `gk requests list --pending` / `gk requests approve <id>` / `gk requests deny <id> --reason "not allowed"`
+
+#### API
+- `POST /api/v1/requests` — submit a request (low-privilege, authenticated via captive portal session or limited API key)
+- `GET /api/v1/requests?status=pending|approved|denied` — list requests (admin only)
+- `POST /api/v1/requests/{id}/approve` / `POST /api/v1/requests/{id}/deny` — admin action
+- `GET /api/v1/requests/{id}` — request detail with audit trail
+
+#### Implementation Notes
+- Requests stored in SQLite: `requests` table with status enum, timestamps, device MAC, change type, change payload (JSON), admin response
+- Captive portal integration: blocked page includes "Request Access" form (no extra auth needed — device MAC identifies requester)
+- TTL enforcement: background goroutine expires approved-with-TTL changes, reverts policy
+- Self-service portal: lightweight HTML page at `http://gatekeeper.local/self-service` — authenticated users can see their own request history and submit new ones
+- MSP mode: per-tenant approval queues, tenant admin approves their own users' requests
+
+---
+
+### Proposal: Context-Aware Dashboards
+
+**Problem:** Current dashboards show data. Users want dashboards that let them *act* on data — click a connection and block it, click a device and assign it, click a domain and add it to a list. Pi-hole users consistently request richer historical views and top lists. We should exceed that by making every data point actionable.
+
+#### Actionable Data Points
+
+Every item in every dashboard should be a click target with contextual actions:
+
+| Dashboard Element | Click Actions Available |
+|---|---|
+| **IP address** | Block/allow, assign to zone, assign to profile, add to group, lookup WHOIS, view connections, view DNS queries, add static lease |
+| **Domain name** | Block/allow (DNS filter), add to proxy bypass, view query history, view all clients that queried it, add to custom list |
+| **Connection row** | Kill connection (conntrack delete), block src/dst, add firewall rule, view JA4 fingerprint, view flow duration/bytes |
+| **DHCP lease** | Convert to static assignment, assign to profile/group, view device history, rename device |
+| **Firewall rule hit** | View matching connections, edit rule, disable rule, view in policy context |
+| **IDS alert** | Block source, quarantine device to captive portal, view full event in SIEM, mark false positive |
+| **DNS query** | Block/allow domain, view response, view client, add to list |
+
+#### RFC1918 Internal Connection Visibility
+
+Dedicated dashboard panel for internal (east-west) traffic — something Pi-hole can never show because it doesn't see connections:
+
+- **Internal connection matrix:** Source device × Destination device heatmap showing connection volume
+- **Unexpected internal connections:** Highlight when IoT devices talk to each other (lateral movement signal)
+- **Service discovery view:** Which internal services (ports) are being accessed by which devices
+- **Static assignment quick-actions:** From any internal IP, one click to: assign static lease, name the device, place in a group
+- **Remove assignment:** One click to revoke static lease, return to DHCP pool
+
+#### Long-Term Data & Historical Analytics
+
+Go beyond Pi-hole's "Long-term data graphics and top lists" request:
+
+- **Retention tiers:** Hot (SQLite, 30 days, full detail) → Warm (SQLite, 1 year, 5-minute rollups) → Cold (compressed export, unlimited, hourly rollups)
+- **Top-N lists with trend:** Top blocked domains, top queried domains, top talkers, top blocked IPs — each with sparkline showing 7-day/30-day/90-day trend
+- **LFO (Least Frequently Observed) statistics:** Identify rare/unusual connections and domains — things seen only once or a few times are more interesting for security than the top-N. LFO dashboard surfaces:
+  - Domains queried only once (potential DGA, C2 check-in)
+  - Destination IPs contacted only once (one-shot exfiltration)
+  - Unusual port/protocol combinations (rare = suspicious)
+  - New-to-network devices (first-seen timestamp, no prior history)
+  - JA4 fingerprints seen only once (novel client software)
+- **Comparison views:** This week vs. last week, this month vs. last month — highlight deviations
+- **Per-device timeline:** Full activity history for any device — DNS queries, connections, bandwidth, alerts — on a single scrollable timeline
+- **Exportable reports:** PDF/CSV export of any dashboard view for compliance or review
+
+#### Policy & Profile Dashboards
+
+- **Policy effectiveness:** For each firewall policy, show: rules hit count, rules never hit (dead rules), traffic volume matched, deny/allow ratio
+- **Profile comparison:** Side-by-side view of two profiles — what rules differ, what services differ, what groups use each
+- **Zone health:** Per-zone dashboard — device count, bandwidth, top talkers, alert count, DHCP utilization, DNS query volume
+- **Group overview:** Per-group — member devices, active policies, pending requests, bandwidth usage, block stats
+
+#### Real-Time Action Feedback
+
+- **Block/allow actions show immediate result:** Click "block" on a domain → see it appear in the blocklist, see subsequent queries denied in real-time log below
+- **Connection kill confirmation:** Kill a connection → see it disappear from conntrack table, see the nftables rule that prevents reconnection
+- **SSE-powered live updates:** Dashboard panels refresh via Server-Sent Events, not polling. Actions taken in one tab reflect immediately in all tabs
+
+---
+
+### Proposal: Automatic Maintenance & Convenience
+
+**Problem:** Pi-hole's "Automatic Gravity Update" was one of its most requested features. Network appliances should maintain themselves — stale data, expired leases, bloated logs, outdated blocklists shouldn't require manual intervention.
+
+#### Scheduled Maintenance Tasks
+
+| Task | Default Schedule | Configurable | What It Does |
+|---|---|---|---|
+| **Blocklist update** | Daily 03:00 | Yes | Re-fetch DNS filter lists, proxy URL lists, threat intel feeds. Diff against current, apply changes, log delta |
+| **DHCP lease cleanup** | Hourly | Yes | Remove expired leases from tracking, flag abandoned static assignments (device not seen in >30 days) |
+| **Log rotation** | Daily 04:00 | Yes | Rotate access logs, DNS query logs, proxy logs. Compress previous day. Apply retention policy |
+| **SIEM compaction** | Daily 05:00 | Yes | Roll up old events into summary rows (5-minute buckets), prune beyond retention window, VACUUM |
+| **Config backup** | Daily 02:00 | Yes | Export current config to timestamped JSON file. Keep last N backups (default 30). Optional push to remote (S3, SFTP, git) |
+| **Certificate renewal check** | Daily 06:00 | Yes | Check ACME cert expiry, renew if within lead time, reload services with new cert |
+| **Stale device pruning** | Weekly Sunday 03:00 | Yes | Flag devices not seen in >90 days, optionally archive and remove from active config |
+| **Database maintenance** | Weekly Sunday 04:00 | Yes | SQLite VACUUM, ANALYZE, integrity check. Report corruption if detected |
+| **Health self-check** | Every 5 minutes | Yes | Verify all enabled services running, nftables rules loaded, DNS resolving, WAN connectivity. Auto-restart failed services |
+| **Proxy cache eviction** | Hourly | Yes | Enforce cache storage budget, evict LRU entries, report hit ratio |
+
+#### Maintenance Dashboard
+- Calendar view showing scheduled tasks and their last/next run times
+- Per-task status: last run result (success/warning/failure), duration, items processed
+- Manual trigger button for any task ("Run gravity update now")
+- Alert on failure: if a maintenance task fails, surface it in the dashboard and optionally notify via webhook
+
+#### API & CLI
+- `gk maintenance status` — show all tasks, last run, next run
+- `gk maintenance run <task>` — manually trigger a task
+- `gk maintenance schedule <task> --cron "0 3 * * *"` — change schedule
+- `GET /api/v1/maintenance` — task list with status
+- `POST /api/v1/maintenance/{task}/run` — manual trigger
+
+---
+
+### Proposal: Guaranteed Enforcement Despite DNS Caching
+
+**Problem:** Pi-hole users constantly request "temporary unblock" and hit DNS cache issues. The maintainers correctly note this is a fundamental DNS limitation. We don't have this limitation — but we should explicitly architect the guarantee and expose it as a feature.
+
+#### The Guarantee
+
+When an admin (or approved request) changes a block/allow policy, the change takes effect on the **next packet**, not the next DNS query. This is architecturally guaranteed because enforcement happens at three independent layers:
+
+```
+Layer 1: DNS Filter (dnsmasq/unbound)
+  ↓ catches ~95% — domains resolved through Gatekeeper's DNS
+Layer 2: nftables (IP/port rules)
+  ↓ catches bypass — hardcoded IPs, cached DNS, DoH/DoT
+Layer 3: Proxy (HTTP/TLS inspection)
+  ↓ catches evasion — SNI inspection, URL filtering, JA4
+```
+
+A policy change updates ALL THREE layers atomically. No TTL wait. No cache flush needed. No "try clearing your browser cache."
+
+#### Features Built on This Guarantee
+
+- **Instant temporary allow/deny:** `gk allow example.com --ttl 1h --device aa:bb:cc:dd:ee:ff` — works immediately, auto-expires, no DNS cache concern
+- **Scheduled access windows:** "Allow social media 6pm-9pm for kids group" — transitions are instant at boundary times because enforcement is at L3/L7, not DNS
+- **Emergency block:** `gk block 1.2.3.4 --immediate` — kills existing connections (conntrack flush for that IP) AND prevents new ones. Pi-hole can't do this at all
+- **Per-device override:** Even if device X has cached `evil.com = 1.2.3.4`, the nftables rule blocks `1.2.3.4` for device X. Cache is irrelevant
+- **DoH/DoT defeat:** Devices using private DNS bypass local DNS entirely. Gatekeeper detects DoH/DoT traffic (known provider IPs + JA4 fingerprint) and either redirects through proxy or blocks at firewall. Configurable per-zone: `gk service configure dns_filter --set block_doh=true --zone iot`
+- **Cache-bust assist:** For cases where users want the DNS cache specifically cleared (not just enforcement), provide: `gk dns flush-cache` (clears dnsmasq cache) and optionally `gk dns flush-client <ip>` (sends DHCP force-renew to trigger client DNS refresh on supported OSes)
+
+#### Dashboard Integration
+- Policy change log shows "effective at: [timestamp]" — always the moment the change was made, not "after TTL expires"
+- Active temporary allows/blocks shown with countdown timer
+- "Currently enforced" view: composite view of what's actually blocked/allowed for a specific device across all three layers
+
+---
+
+### Proposal: Public Service Hosting & Controlled Internet Exposure
+
+**Problem:** Pi-hole maintainers correctly refuse to make Pi-hole publicly accessible — it's a local DNS resolver with no business being internet-facing. But Gatekeeper IS the edge device. It's already the thing between the internet and the network. Controlled public exposure isn't out of scope — it's the entire point of a gateway.
+
+#### What's Already Planned (Validation)
+- **DDNS:** Already implemented as a v2 service — dynamic DNS updates so the WAN IP is reachable by hostname
+- **ACME/Let's Encrypt:** Already planned in V3 — auto-provision TLS certs for public-facing services
+- **WireGuard VPN:** Already implemented — secure remote access to the network
+- **Captive Portal:** Already implemented — authentication gateway
+- **Certificate Store:** Already implemented — internal CA for TLS everywhere
+
+#### What We Should Add: Reverse Proxy / Ingress Controller
+
+Gatekeeper already sits at the network edge. Adding a reverse proxy makes it the ingress point for self-hosted services, eliminating the need for a separate Nginx/Caddy/Traefik in front:
+
+- **Reverse proxy service:** `gk service enable reverse_proxy`
+- **Virtual hosts:** Map `service.mydomain.com` → internal `192.168.1.50:8080`
+- **Automatic TLS:** ACME cert provisioned per virtual host, auto-renewed via CertStore
+- **Path-based routing:** `/api/*` → backend A, `/app/*` → backend B
+- **Health checks:** Probe backends, remove unhealthy from rotation, alert on failure
+- **Rate limiting:** Per-virtual-host, per-client rate limits (builds on existing rate limit middleware)
+- **WAF rules:** Basic OWASP protection — SQL injection, XSS, path traversal detection on inbound requests
+- **GeoIP filtering:** Block/allow by country per virtual host (MaxMind GeoLite2)
+- **IP allowlisting:** Restrict access to specific virtual hosts by source IP/CIDR
+
+#### Port Forwarding Management (Replaces Manual nftables DNAT)
+
+Currently port forwarding requires manual policy rules. Formalize it:
+
+- **Port forward CRUD:** `gk portforward add --wan-port 8443 --dest 192.168.1.50:443 --proto tcp --name "Nextcloud"`
+- **UPnP visibility:** Show which port forwards were created by UPnP (already have UPnP service) with option to pin (make permanent) or revoke
+- **Security defaults:** Port forwards default to rate-limited + logged. Optional geo-restrict and IP allowlist per forward
+- **Dashboard:** Port forward table showing: name, WAN port, destination, protocol, connection count, bytes forwarded, last connection time
+- **Conflict detection:** Warn if a port forward conflicts with a Gatekeeper service (e.g. forwarding port 443 while reverse proxy uses 443)
+
+#### Controlled Control-Plane Exposure
+
+The admin interface should be accessible remotely — but safely:
+
+- **WireGuard-only admin:** Default: admin UI/API only accessible from LAN + WireGuard. Not exposed on WAN interface
+- **Optional WAN admin with hardening:** If user explicitly enables WAN admin access:
+  - Mandatory 2FA (TOTP/WebAuthn)
+  - IP allowlist (only accessible from specific IPs/CIDRs)
+  - Separate TLS cert (ACME-provisioned, not self-signed)
+  - Rate limiting (aggressive: 5 req/s per IP)
+  - Fail2ban-style auto-block (3 failed auth attempts → 15-minute IP ban)
+  - Geo-restrict (optional: only allow from your country)
+  - Audit log emphasis: all WAN admin actions highlighted in SIEM
+- **API key scoping:** API keys can be scoped to WAN-allowed or LAN-only. By default, new API keys are LAN-only
+- **Emergency lockout recovery:** If you lock yourself out of WAN admin, LAN/console access always works (can't lock yourself out of local access)
+
+#### Self-Hosted Service Discovery
+
+For users running multiple self-hosted services behind Gatekeeper:
+
+- **Service registry:** Register internal services with name, IP, port, health check URL
+- **Automatic DNS:** `service-name.lan` resolves to internal IP (via dnsmasq)
+- **Automatic reverse proxy:** `service-name.mydomain.com` → internal IP:port (via reverse proxy)
+- **Status dashboard:** All registered services with health status, uptime, response time
+- **Integration with Proxmox API:** Auto-discover services running in VMs/CTs (already planned)
+
+---
 
 ### Remaining Items
 - [ ] Cloud-init support for headless provisioning
