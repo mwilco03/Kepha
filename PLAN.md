@@ -664,6 +664,134 @@ Per rebuttal, these were deferred from v1 but have been implemented ahead of sch
 - **No replacing a real SIEM:** This is a first-responder tool — see what's happening now, search recent history, catch low-hanging fruit. For SOC-scale operations, compliance archival, or cross-site correlation, export to Splunk/OpenSearch/Elastic via the NetFlow/sFlow or syslog forward paths
 - **Upgrade path:** If the mini-SIEM outgrows SQLite, the schema maps 1:1 to OpenSearch index templates — `gk siem export` can seed an external cluster
 
+### Web Proxy & Content Cache
+
+**Goal:** Transparent and explicit HTTP/HTTPS proxy with content caching, TLS inspection, and application-layer filtering. This is the layer that closes every gap DNS-only filtering can't reach.
+
+**Enable via:** `gk service enable proxy` — when disabled, traffic passes through nftables as normal (pure L3/L4 firewall). Enabling per-zone: `gk service configure proxy --set zones=lan,iot` — only intercept traffic from specified zones.
+
+#### Why This Exists (The Pi-hole Gap)
+
+DNS-based filtering (Pi-hole, our own DNS Filter service) has a fundamental positional limitation: it only controls name resolution. Once a client has an IP address — from cache, from DNS-over-HTTPS, from a hardcoded value — DNS filtering is blind. The client talks directly to the server and the DNS filter never knows.
+
+Gatekeeper doesn't have this problem because every packet transits the firewall. But without a proxy layer, we can only make L3/L4 decisions (IP, port, protocol). A proxy gives us L7 visibility:
+
+| DNS-only limitation | Proxy layer answer |
+|---|---|
+| Client cached the DNS response | Irrelevant — proxy intercepts the connection by IP:port |
+| Client uses DoH/DoT to bypass local DNS | Proxy sees the SNI in TLS ClientHello, or terminates and inspects |
+| Smart TV calls home by hardcoded IP | nftables redirects to proxy; proxy inspects and decides |
+| Can't distinguish apps on same domain | HTTP host/path inspection, JA4 fingerprint distinguishes Chrome from malware |
+| "Temporary allow" breaks on DNS TTL | Proxy allowlist is instant — no cache to expire |
+| Can't block specific URLs, only whole domains | URL-level filtering with path/regex matching |
+| Can't see or cache content | Caching proxy reduces bandwidth, speeds repeat fetches |
+| No visibility into server behavior | TLS termination reveals server cert chain, response headers, content type |
+
+#### Transparent Proxy (No Client Config)
+
+- **nftables TPROXY/REDIRECT** rules intercept outbound HTTP (80) and HTTPS (443) from configured zones
+- **Per-zone opt-in:** Only zones listed in proxy config get intercepted; others pass through at wire speed
+- No client configuration needed — works for IoT devices, smart TVs, guest devices that can't configure a proxy
+- **CONNECT tunnel** support for HTTPS: proxy sees SNI, applies policy, then either tunnels or terminates
+- **Bypass list:** Domains/IPs that should never be proxied (banking, healthcare, known-sensitive destinations)
+
+#### Explicit Proxy (PAC / WPAD)
+
+- **PAC file** served at `http://gatekeeper.local/proxy.pac` — auto-configure browsers via WPAD/DHCP option 252
+- **WPAD DNS entry** via dnsmasq: `wpad.lan` → Gatekeeper IP
+- Explicit proxy mode for environments that prefer client-configured proxying over transparent interception
+- **Authentication:** Tie proxy auth to Gatekeeper RBAC — per-user/per-group browsing policies (integrates with ZTNA)
+
+#### TLS Inspection (Optional, Per-Zone)
+
+- **MITM TLS termination** using Gatekeeper's internal CA (from CertStore service)
+- Decrypt → inspect → re-encrypt for configured zones
+- **Client CA distribution:** `gk cert export-ca --format pem|der|p12` for manual install; SCEP endpoint for MDM push
+- **Per-zone granularity:** Full inspection on `iot` zone (devices you own), passthrough on `guest` zone (privacy)
+- **Certificate pinning detection:** If a client rejects the proxy cert (HPKP, pinned app), log and optionally allow passthrough
+- **Selective inspection:** Only inspect categories (e.g. inspect unknown domains, passthrough known-good banking)
+- **Privacy controls:** Log metadata only (domain, client, action) by default; full content logging opt-in per-zone
+
+#### Content Caching
+
+- **Disk-backed HTTP cache** with configurable storage budget (default 5 GB)
+- **Cache-Control/ETag/Last-Modified** compliant — respect origin headers, no stale serving unless configured
+- **Per-zone cache policies:** Cache aggressively for `iot` zone (firmware updates, CDN content), minimal for `lan`
+- **Bandwidth savings dashboard:** Show cache hit ratio, bytes saved, top cached objects
+- **Cache bypass:** `Cache-Control: no-store` always respected; admin can force-cache specific domains (e.g. `dl-cdn.alpinelinux.org`)
+- **Deduplication:** Multiple devices fetching same update → single upstream fetch, served from cache to all
+
+#### Application-Layer Filtering
+
+- **URL filtering:** Block by full URL path, not just domain (e.g. allow `youtube.com` but block `youtube.com/shorts`)
+- **Content-type filtering:** Block file downloads by MIME type (e.g. block `.exe` downloads on IoT zone)
+- **Header injection/stripping:** Add `X-Forwarded-For` for logging; strip tracking headers if configured
+- **JA3/JA4 enforcement at proxy level:** Known malware JA4 fingerprints blocked before connection completes
+- **SNI-based filtering (no termination needed):** For HTTPS without MITM — read SNI from ClientHello, apply domain policy, tunnel or block. Zero decryption, still effective for domain-level control
+- **Safe search enforcement:** Rewrite DNS or inject headers to force SafeSearch on Google/YouTube/Bing per-zone
+- **Ad/tracker blocking at HTTP level:** Supplement DNS blocking with URL-path-level blocking (catches same-origin ads that DNS can't touch)
+
+#### Integration with Existing Services
+
+- **DNS Filter:** Proxy is the enforcement backstop — if DNS block is bypassed (DoH, cache, hardcoded IP), proxy catches it
+- **Threat Intelligence Feeds:** Apply IP/domain blocklists at proxy layer too, not just nftables/DNS
+- **IDS/Suricata:** Proxy can feed decrypted traffic to Suricata for deep inspection (eliminates TLS blind spot)
+- **Mini-SIEM:** Proxy access logs feed into SIEM event pipeline (who visited what, when, from which zone)
+- **Bandwidth Monitor:** Proxy provides exact byte counts per-domain per-client, more accurate than packet sampling
+- **Captive Portal:** Unauthenticated clients redirected to portal by proxy before any browsing
+- **JA4 Fingerprinting:** Proxy sees the raw ClientHello — ideal capture point for fingerprint extraction
+
+#### Architecture
+
+- **Built on Go's `net/http` + `httputil.ReverseProxy`** — no external proxy daemon (no Squid, no mitmproxy)
+- **Single-process:** Runs inside `gatekeeperd` as a service, same as all other services
+- **Connection pooling:** Keep-alive to upstream origins, multiplexed where possible
+- **Memory-bounded:** Streaming proxy — doesn't buffer entire responses in RAM; streams through with tee for cache write
+- **Graceful degradation:** If proxy service crashes or overloads, nftables rules auto-remove and traffic falls back to direct forwarding (fail-open by default, configurable fail-closed per-zone)
+
+#### API & CLI
+
+- `gk service configure proxy --set zones=lan,iot --set tls_inspect=iot --set cache_size=5G`
+- `gk proxy stats` — connections/sec, cache hit ratio, bandwidth saved, top domains
+- `gk proxy bypass add banking.example.com` — add to inspection bypass list
+- `gk proxy cache clear` / `gk proxy cache stats`
+- `GET /api/v1/proxy/stats` — real-time proxy metrics
+- `GET /api/v1/proxy/cache` — cache inventory and hit/miss stats
+- `PUT /api/v1/proxy/bypass` — manage bypass list
+- `GET /api/v1/proxy/connections` — active proxy sessions
+
+---
+
+### Design Note: Gatekeeper vs. DNS-Only Filtering (Pi-hole et al.)
+
+Pi-hole is excellent at what it does: network-wide DNS sinkhole with a clean dashboard, low resource usage, and per-group management. Its maintainers are right to reject requests for traffic inspection, proxy behavior, session termination, and app-aware filtering — those require being on the packet path, which a DNS resolver is not.
+
+**Gatekeeper occupies a fundamentally different position in the network.** As the gateway/firewall, every packet transits through it. This isn't a philosophical difference — it's a topological one that determines what's physically possible:
+
+**What Gatekeeper's DNS Filter service already matches Pi-hole on:**
+- Network-wide DNS blocking via blocklists (same lists: Steven Black, Energized, OISD, etc.)
+- Per-zone/per-group filtering (Pi-hole's group management = our zone/profile model)
+- Query logging and analytics (our DNS Analytics SIEM dashboard)
+- Local DNS / custom records (dnsmasq-based, same as Pi-hole)
+- DHCP integration (we run dnsmasq for both DNS and DHCP)
+- Upstream DNS caching
+- Encrypted upstream DNS (DoH/DoT via Unbound — Pi-hole added this later)
+
+**What Gatekeeper does that Pi-hole architecturally cannot:**
+- **Enforce after DNS cache:** nftables blocks at the IP layer — doesn't matter if the client cached the answer 2 hours ago
+- **Catch DoH/DoT bypass:** If a device uses its own encrypted DNS (Android Private DNS, Chrome DoH), Pi-hole sees nothing. Gatekeeper can redirect port 443 to known DoH providers through the proxy, or block them outright at the firewall
+- **Block hardcoded IPs:** Smart TVs and IoT devices that phone home by IP address, never issuing a DNS query. Pi-hole is blind. Gatekeeper's threat feed blocklists operate at L3
+- **TLS inspection:** See the actual server certificate, JA3/JA4 fingerprint, SNI — detect C2 channels that use legitimate-looking domain fronting
+- **Per-connection policy:** Conntrack state + nftables marks = make decisions per-flow, not per-name-resolution
+- **Instant enforcement changes:** Modify a firewall rule or proxy policy → takes effect on the next packet. No DNS TTL to wait out
+- **URL-level filtering:** Allow a domain but block specific paths (same-origin ads, specific video categories)
+- **Content caching:** Reduce bandwidth at the HTTP layer — firmware updates, CDN content, repeated fetches
+- **Integration depth:** DNS filtering + firewall + IDS + proxy + SIEM all share context. Pi-hole's DNS data lives in isolation from the packet path
+
+**The practical takeaway:** We ship a DNS filter service that covers Pi-hole's use case completely. The proxy service extends that to cover every scenario Pi-hole users ask for but can't get. The two layers are complementary — DNS filter handles 95% of blocking cheaply (no TLS overhead, no proxy latency), and the proxy layer catches the 5% that leaks through.
+
+Users who want Pi-hole simplicity get it with `gk service enable dns_filter`. Users who want full L7 visibility add `gk service enable proxy`. Neither requires the other.
+
 ### Remaining Items
 - [ ] Cloud-init support for headless provisioning
 - [ ] Formal external security audit
