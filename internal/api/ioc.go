@@ -136,9 +136,10 @@ func (ih *iocHandlers) removeIOC(w http.ResponseWriter, r *http.Request) {
 }
 
 // matchIOC checks if a value matches any active IOC.
-// GET /api/v1/iocs/match?ip=10.0.0.1
+// GET /api/v1/iocs/match?ip=10.0.0.1      (checks IP, CIDR, and ASN)
 // GET /api/v1/iocs/match?fingerprint=t13d1516h2_xxx
 // GET /api/v1/iocs/match?domain=evil.com
+// GET /api/v1/iocs/match?asn=AS14618       (direct ASN lookup)
 func (ih *iocHandlers) matchIOC(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 
@@ -146,7 +147,7 @@ func (ih *iocHandlers) matchIOC(w http.ResponseWriter, r *http.Request) {
 	var matchType string
 
 	if ip := q.Get("ip"); ip != "" {
-		ioc = ih.store.MatchIP(ip)
+		ioc = ih.store.MatchIP(ip) // Also checks CIDR and ASN via resolver.
 		matchType = "ip"
 	} else if fp := q.Get("fingerprint"); fp != "" {
 		ioc = ih.store.MatchFingerprint(fp)
@@ -154,9 +155,12 @@ func (ih *iocHandlers) matchIOC(w http.ResponseWriter, r *http.Request) {
 	} else if domain := q.Get("domain"); domain != "" {
 		ioc = ih.store.MatchDomain(domain)
 		matchType = "domain"
+	} else if asn := q.Get("asn"); asn != "" {
+		ioc = ih.store.GetIOC(inspect.IOCTypeASN, asn)
+		matchType = "asn"
 	} else {
 		writeJSON(w, http.StatusBadRequest, map[string]string{
-			"error": "specify ip, fingerprint, or domain query parameter",
+			"error": "specify ip, fingerprint, domain, or asn query parameter",
 		})
 		return
 	}

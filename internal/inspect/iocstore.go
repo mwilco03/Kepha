@@ -21,6 +21,7 @@ const (
 	IOCTypeJA4T            IOCType = "ja4t"
 	IOCTypeJA4H            IOCType = "ja4h"
 	IOCTypeDomain          IOCType = "domain"
+	IOCTypeASN             IOCType = "asn" // Autonomous system number (e.g. "AS14618")
 )
 
 // IOCSource identifies where the indicator came from.
@@ -101,6 +102,14 @@ type IOCStore struct {
 	// is fine. If this becomes a bottleneck, replace with a radix tree.
 	cidrs []*IOC
 
+	// ASN index — maps ASN string (e.g. "AS14618") to IOC.
+	byASN map[string]*IOC
+
+	// ASN resolver maps IP → ASN for the MatchIP fast path.
+	// When set, MatchIP also checks ASN IOCs after IP/CIDR checks.
+	// Optional — nil means ASN matching is disabled.
+	asnResolver ASNResolver
+
 	// Response templates define what happens when an IOC matches.
 	templates []ResponseTemplate
 }
@@ -112,6 +121,7 @@ func NewIOCStore(db *sql.DB) (*IOCStore, error) {
 		byIP:          make(map[string]*IOC),
 		byFingerprint: make(map[string]*IOC),
 		byDomain:      make(map[string]*IOC),
+		byASN:         make(map[string]*IOC),
 	}
 
 	if db != nil {
@@ -196,6 +206,15 @@ func (s *IOCStore) seedTemplates() {
 		},
 		{
 			ID:          4,
+			Name:        "asn_block",
+			IOCType:     IOCTypeASN,
+			MinSeverity: IOCSeverityMedium,
+			Techniques:  []string{"bandwidth", "syn_cookie"},
+			Duration:    24 * time.Hour,
+			Enabled:     true,
+		},
+		{
+			ID:          5,
 			Name:        "critical_full",
 			IOCType:     IOCTypeIP,
 			MinSeverity: IOCSeverityCritical,
@@ -204,6 +223,14 @@ func (s *IOCStore) seedTemplates() {
 			Enabled:     true,
 		},
 	}
+}
+
+// SetASNResolver configures the IP-to-ASN resolver for ASN-based IOC matching.
+// When set, MatchIP will also check if the source IP's ASN matches any ASN IOC.
+func (s *IOCStore) SetASNResolver(resolver ASNResolver) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.asnResolver = resolver
 }
 
 // --- Write path ---
@@ -309,6 +336,9 @@ func (s *IOCStore) existsLocked(iocType IOCType, value string) bool {
 	case IOCTypeDomain:
 		_, ok := s.byDomain[value]
 		return ok
+	case IOCTypeASN:
+		_, ok := s.byASN[value]
+		return ok
 	default:
 		_, ok := s.byFingerprint[value]
 		return ok
@@ -388,23 +418,41 @@ func (s *IOCStore) BulkAddIOCs(iocs []IOC) (added int, err error) {
 // --- Fast-path read ---
 
 // MatchIP checks if an IP matches any active IOC.
-// O(1) for exact IP matches. Linear scan for CIDRs (acceptable at typical scale).
+// Check order: exact IP (O(1)) → CIDR (linear) → ASN (O(1) after resolver lookup).
 func (s *IOCStore) MatchIP(ip string) *IOC {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
+	now := time.Now()
+
+	// 1. Exact IP match — O(1).
 	if ioc := s.byIP[ip]; ioc != nil && s.isActive(ioc) {
 		ioc.HitCount++
-		ioc.LastHit = time.Now()
+		ioc.LastHit = now
 		return ioc
 	}
 
-	// CIDR scan.
+	// 2. CIDR scan.
 	for _, ioc := range s.cidrs {
 		if s.isActive(ioc) && matchCIDRNet(ip, ioc.Value) {
 			ioc.HitCount++
-			ioc.LastHit = time.Now()
+			ioc.LastHit = now
 			return ioc
+		}
+	}
+
+	// 3. ASN match — resolve IP to ASN, then O(1) map lookup.
+	if s.asnResolver != nil && len(s.byASN) > 0 {
+		parsed := net.ParseIP(ip)
+		if parsed != nil {
+			if asn := s.asnResolver.Resolve(parsed); asn != nil {
+				asnKey := asn.String() // "AS14618"
+				if ioc := s.byASN[asnKey]; ioc != nil && s.isActive(ioc) {
+					ioc.HitCount++
+					ioc.LastHit = now
+					return ioc
+				}
+			}
 		}
 	}
 
@@ -495,6 +543,8 @@ func (s *IOCStore) GetIOC(iocType IOCType, value string) *IOC {
 		}
 	case IOCTypeDomain:
 		return s.byDomain[value]
+	case IOCTypeASN:
+		return s.byASN[value]
 	default:
 		return s.byFingerprint[value]
 	}
@@ -513,6 +563,7 @@ func (s *IOCStore) MatchResponse(ioc *IOC) *ResponseTemplate {
 
 	sevRank := severityRank(ioc.Severity)
 	var best *ResponseTemplate
+	bestExact := false // Track whether best is an exact type match.
 
 	for i := range s.templates {
 		t := &s.templates[i]
@@ -520,20 +571,23 @@ func (s *IOCStore) MatchResponse(ioc *IOC) *ResponseTemplate {
 			continue
 		}
 
-		// Type match: template IOC type must match, or template is for
-		// the broader "ip" type and the IOC is ip/cidr.
-		typeMatch := t.IOCType == ioc.Type ||
-			(t.IOCType == IOCTypeIP && ioc.Type == IOCTypeCIDR)
-		if !typeMatch {
-			// Fingerprint types: template for "fingerprint" matches any ja4* type.
+		// Type matching: exact match first, then broadened matches.
+		exact := t.IOCType == ioc.Type
+		broad := false
+		if !exact {
+			// IP templates also cover CIDR and ASN (network-level types).
+			if t.IOCType == IOCTypeIP && (ioc.Type == IOCTypeCIDR || ioc.Type == IOCTypeASN) {
+				broad = true
+			}
+			// Fingerprint templates cover all ja4* subtypes.
 			if t.IOCType == IOCTypeFingerprintHash {
 				switch ioc.Type {
 				case IOCTypeJA4, IOCTypeJA4S, IOCTypeJA4T, IOCTypeJA4H:
-					typeMatch = true
+					broad = true
 				}
 			}
 		}
-		if !typeMatch {
+		if !exact && !broad {
 			continue
 		}
 
@@ -542,9 +596,18 @@ func (s *IOCStore) MatchResponse(ioc *IOC) *ResponseTemplate {
 			continue
 		}
 
-		// Prefer the template with the highest minimum severity (most specific).
-		if best == nil || severityRank(t.MinSeverity) > severityRank(best.MinSeverity) {
+		// Selection priority: exact type match > broad match > higher min severity.
+		if best == nil {
 			best = t
+			bestExact = exact
+		} else if exact && !bestExact {
+			// Exact match always beats broad match.
+			best = t
+			bestExact = true
+		} else if exact == bestExact && severityRank(t.MinSeverity) > severityRank(best.MinSeverity) {
+			// Same match class — prefer higher minimum severity (more specific).
+			best = t
+			bestExact = exact
 		}
 	}
 
@@ -611,17 +674,21 @@ func (s *IOCStore) Stats() IOCStoreStats {
 		TotalCIDRs:        len(s.cidrs),
 		TotalFingerprints: len(s.byFingerprint),
 		TotalDomains:      len(s.byDomain),
+		TotalASNs:         len(s.byASN),
+		ASNResolverActive: s.asnResolver != nil,
 		Templates:         len(s.templates),
 	}
 }
 
 // IOCStoreStats contains store statistics.
 type IOCStoreStats struct {
-	TotalIPs          int `json:"total_ips"`
-	TotalCIDRs        int `json:"total_cidrs"`
-	TotalFingerprints int `json:"total_fingerprints"`
-	TotalDomains      int `json:"total_domains"`
-	Templates         int `json:"templates"`
+	TotalIPs          int  `json:"total_ips"`
+	TotalCIDRs        int  `json:"total_cidrs"`
+	TotalFingerprints int  `json:"total_fingerprints"`
+	TotalDomains      int  `json:"total_domains"`
+	TotalASNs         int  `json:"total_asns"`
+	ASNResolverActive bool `json:"asn_resolver_active"`
+	Templates         int  `json:"templates"`
 }
 
 // --- Internal helpers ---
@@ -641,6 +708,8 @@ func (s *IOCStore) index(ioc *IOC) {
 		s.cidrs = append(s.cidrs, ioc)
 	case IOCTypeDomain:
 		s.byDomain[ioc.Value] = ioc
+	case IOCTypeASN:
+		s.byASN[ioc.Value] = ioc
 	case IOCTypeJA4, IOCTypeJA4S, IOCTypeJA4T, IOCTypeJA4H, IOCTypeFingerprintHash:
 		s.byFingerprint[ioc.Value] = ioc
 	}
@@ -659,6 +728,8 @@ func (s *IOCStore) deindex(iocType IOCType, value string) {
 		}
 	case IOCTypeDomain:
 		delete(s.byDomain, value)
+	case IOCTypeASN:
+		delete(s.byASN, value)
 	default:
 		delete(s.byFingerprint, value)
 	}
@@ -718,6 +789,9 @@ func (s *IOCStore) listFromMemory(iocType IOCType, source IOCSource, activeOnly 
 		all = append(all, ioc)
 	}
 	for _, ioc := range s.byDomain {
+		all = append(all, ioc)
+	}
+	for _, ioc := range s.byASN {
 		all = append(all, ioc)
 	}
 
