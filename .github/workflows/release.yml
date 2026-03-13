@@ -1,0 +1,63 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+env:
+  GO_VERSION: "1.24"
+  BINARY_DAEMON: gatekeeperd
+  BINARY_CLI: gk
+  ARTIFACT_NAME: gatekeeper-linux-amd64
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      VERSION: v0.0.${{ github.run_number }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Build binaries
+        run: |
+          go build -ldflags "-X main.version=${{ env.VERSION }}" -o bin/${{ env.BINARY_DAEMON }} ./cmd/gatekeeperd
+          go build -ldflags "-X main.version=${{ env.VERSION }}" -o bin/${{ env.BINARY_CLI }} ./cmd/gk
+
+      - name: Run tests
+        run: go test ./... -race -count=1
+
+      - name: Package artifacts
+        run: |
+          tar -czf ${{ env.ARTIFACT_NAME }}.tar.gz \
+            -C bin ${{ env.BINARY_DAEMON }} ${{ env.BINARY_CLI }} \
+            -C "${{ github.workspace }}" README.md LICENSE \
+            -C "${{ github.workspace }}" scripts/install-alpine.sh scripts/install.sh \
+            -C "${{ github.workspace }}" init/gatekeeperd.openrc init/gatekeeperd.service
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ARTIFACT_NAME }}
+          path: ${{ env.ARTIFACT_NAME }}.tar.gz
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      VERSION: v0.0.${{ github.run_number }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.ARTIFACT_NAME }}
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.VERSION }}
+          name: Release ${{ env.VERSION }}
+          body: ${{ github.event.head_commit.message }}
+          files: ${{ env.ARTIFACT_NAME }}.tar.gz

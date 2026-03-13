@@ -4,18 +4,23 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"net"
 	"os"
 	"strconv"
 	"strings"
 	"syscall"
 	"text/tabwriter"
 
+	"github.com/gatekeeper-firewall/gatekeeper/internal/backend"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/cli"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/compiler"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/config"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/driver"
+	"github.com/gatekeeper-firewall/gatekeeper/internal/inspect"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/model"
+	"github.com/gatekeeper-firewall/gatekeeper/internal/xdp"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/ops"
+	"github.com/gatekeeper-firewall/gatekeeper/internal/service"
 )
 
 var version = "dev"
@@ -42,15 +47,15 @@ func main() {
 		fmt.Printf("gk %s\n", version)
 		return
 	case "status":
-		err = cmdStatus(backend)
+		err = cmdStatus(backend, outputFmt)
 	case "zone":
-		err = cmdZone(backend, os.Args[2:])
+		err = cmdZone(backend, os.Args[2:], outputFmt)
 	case "alias":
-		err = cmdAlias(backend, os.Args[2:])
+		err = cmdAlias(backend, os.Args[2:], outputFmt)
 	case "profile":
-		err = cmdProfile(backend, os.Args[2:])
+		err = cmdProfile(backend, os.Args[2:], outputFmt)
 	case "policy":
-		err = cmdPolicy(backend, os.Args[2:])
+		err = cmdPolicy(backend, os.Args[2:], outputFmt)
 	case "assign":
 		err = cmdAssign(backend, os.Args[2:])
 	case "unassign":
@@ -66,9 +71,9 @@ func main() {
 	case "import":
 		err = cmdImport(backend, os.Args[2:])
 	case "wg":
-		err = cmdWG(backend, os.Args[2:])
+		err = cmdWG(backend, os.Args[2:], outputFmt)
 	case "leases":
-		err = cmdLeases(backend)
+		err = cmdLeases(backend, outputFmt)
 	case "test":
 		err = cmdTest(backend, os.Args[2:])
 	case "explain":
@@ -79,6 +84,14 @@ func main() {
 		err = cmdService(os.Args[2:])
 	case "ping":
 		err = cmdPing(os.Args[2:])
+	case "perf":
+		err = cmdPerf(os.Args[2:], outputFmt)
+	case "fingerprint", "fp":
+		err = cmdFingerprint(os.Args[2:], outputFmt)
+	case "xdp":
+		err = cmdXDP(os.Args[2:], outputFmt)
+	case "deps":
+		err = cmdDeps(os.Args[2:])
 	case "help", "--help", "-h":
 		printUsage()
 		return
@@ -143,16 +156,20 @@ func signalDaemon() error {
 	return nil
 }
 
-func cmdStatus(b cli.Backend) error {
+func cmdStatus(b cli.Backend, outputFmt string) error {
 	// Status is a simple health check — list zones as a proxy.
 	zones, err := b.ListZones()
 	if err != nil {
 		return err
 	}
+	if outputFmt == "table" {
+		fmt.Printf("Status: ok\nZones:  %d\n", len(zones))
+		return nil
+	}
 	return printJSON(map[string]any{"status": "ok", "zones": len(zones)})
 }
 
-func cmdZone(b cli.Backend, args []string) error {
+func cmdZone(b cli.Backend, args []string, outputFmt string) error {
 	if len(args) == 0 {
 		return fmt.Errorf("usage: gk zone <list|show|create|delete> [options]")
 	}
@@ -162,6 +179,14 @@ func cmdZone(b cli.Backend, args []string) error {
 		if err != nil {
 			return err
 		}
+		if outputFmt == "table" {
+			tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+			fmt.Fprintln(tw, "ID\tNAME\tINTERFACE\tCIDR\tTRUST\tDESCRIPTION")
+			for _, z := range zones {
+				fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\t%s\n", z.ID, z.Name, z.Interface, z.NetworkCIDR, z.TrustLevel, z.Description)
+			}
+			return tw.Flush()
+		}
 		return printJSON(zones)
 	case "show":
 		if len(args) < 2 {
@@ -170,6 +195,12 @@ func cmdZone(b cli.Backend, args []string) error {
 		zone, err := b.GetZone(args[1])
 		if err != nil {
 			return err
+		}
+		if outputFmt == "table" {
+			tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+			fmt.Fprintln(tw, "ID\tNAME\tINTERFACE\tCIDR\tTRUST\tDESCRIPTION")
+			fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\t%s\n", zone.ID, zone.Name, zone.Interface, zone.NetworkCIDR, zone.TrustLevel, zone.Description)
+			return tw.Flush()
 		}
 		return printJSON(zone)
 	case "create":
@@ -194,7 +225,7 @@ func cmdZone(b cli.Backend, args []string) error {
 	}
 }
 
-func cmdAlias(b cli.Backend, args []string) error {
+func cmdAlias(b cli.Backend, args []string, outputFmt string) error {
 	if len(args) == 0 {
 		return fmt.Errorf("usage: gk alias <list|show|create|delete|add-member>")
 	}
@@ -204,6 +235,14 @@ func cmdAlias(b cli.Backend, args []string) error {
 		if err != nil {
 			return err
 		}
+		if outputFmt == "table" {
+			tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+			fmt.Fprintln(tw, "ID\tNAME\tTYPE\tMEMBERS\tDESCRIPTION")
+			for _, a := range aliases {
+				fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\n", a.ID, a.Name, a.Type, strings.Join(a.Members, ", "), a.Description)
+			}
+			return tw.Flush()
+		}
 		return printJSON(aliases)
 	case "show":
 		if len(args) < 2 {
@@ -212,6 +251,12 @@ func cmdAlias(b cli.Backend, args []string) error {
 		alias, err := b.GetAlias(args[1])
 		if err != nil {
 			return err
+		}
+		if outputFmt == "table" {
+			tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+			fmt.Fprintln(tw, "ID\tNAME\tTYPE\tMEMBERS\tDESCRIPTION")
+			fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\n", alias.ID, alias.Name, alias.Type, strings.Join(alias.Members, ", "), alias.Description)
+			return tw.Flush()
 		}
 		return printJSON(alias)
 	case "create":
@@ -244,7 +289,7 @@ func cmdAlias(b cli.Backend, args []string) error {
 	}
 }
 
-func cmdProfile(b cli.Backend, args []string) error {
+func cmdProfile(b cli.Backend, args []string, outputFmt string) error {
 	if len(args) == 0 {
 		return fmt.Errorf("usage: gk profile <list|show|create>")
 	}
@@ -254,6 +299,14 @@ func cmdProfile(b cli.Backend, args []string) error {
 		if err != nil {
 			return err
 		}
+		if outputFmt == "table" {
+			tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+			fmt.Fprintln(tw, "ID\tNAME\tZONE_ID\tPOLICY\tDESCRIPTION")
+			for _, p := range profiles {
+				fmt.Fprintf(tw, "%d\t%s\t%d\t%s\t%s\n", p.ID, p.Name, p.ZoneID, p.PolicyName, p.Description)
+			}
+			return tw.Flush()
+		}
 		return printJSON(profiles)
 	case "show":
 		if len(args) < 2 {
@@ -262,6 +315,12 @@ func cmdProfile(b cli.Backend, args []string) error {
 		profile, err := b.GetProfile(args[1])
 		if err != nil {
 			return err
+		}
+		if outputFmt == "table" {
+			tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+			fmt.Fprintln(tw, "ID\tNAME\tZONE_ID\tPOLICY\tDESCRIPTION")
+			fmt.Fprintf(tw, "%d\t%s\t%d\t%s\t%s\n", profile.ID, profile.Name, profile.ZoneID, profile.PolicyName, profile.Description)
+			return tw.Flush()
 		}
 		return printJSON(profile)
 	case "create":
@@ -280,7 +339,7 @@ func cmdProfile(b cli.Backend, args []string) error {
 	}
 }
 
-func cmdPolicy(b cli.Backend, args []string) error {
+func cmdPolicy(b cli.Backend, args []string, outputFmt string) error {
 	if len(args) == 0 {
 		return fmt.Errorf("usage: gk policy <list|show>")
 	}
@@ -290,6 +349,14 @@ func cmdPolicy(b cli.Backend, args []string) error {
 		if err != nil {
 			return err
 		}
+		if outputFmt == "table" {
+			tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+			fmt.Fprintln(tw, "ID\tNAME\tDEFAULT_ACTION\tRULES\tDESCRIPTION")
+			for _, p := range policies {
+				fmt.Fprintf(tw, "%d\t%s\t%s\t%d\t%s\n", p.ID, p.Name, p.DefaultAction, len(p.Rules), p.Description)
+			}
+			return tw.Flush()
+		}
 		return printJSON(policies)
 	case "show":
 		if len(args) < 2 {
@@ -298,6 +365,24 @@ func cmdPolicy(b cli.Backend, args []string) error {
 		policy, err := b.GetPolicy(args[1])
 		if err != nil {
 			return err
+		}
+		if outputFmt == "table" {
+			fmt.Printf("Policy: %s (default: %s)\n", policy.Name, policy.DefaultAction)
+			if policy.Description != "" {
+				fmt.Printf("Description: %s\n", policy.Description)
+			}
+			fmt.Println()
+			tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+			fmt.Fprintln(tw, "ORDER\tSRC\tDST\tPROTO\tPORTS\tACTION\tLOG\tDESCRIPTION")
+			for _, r := range policy.Rules {
+				logStr := ""
+				if r.Log {
+					logStr = "yes"
+				}
+				fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+					r.Order, r.SrcAlias, r.DstAlias, r.Protocol, r.Ports, r.Action, logStr, r.Description)
+			}
+			return tw.Flush()
 		}
 		return printJSON(policy)
 	default:
@@ -417,7 +502,7 @@ func cmdImport(b cli.Backend, args []string) error {
 	return b.Import(&snap)
 }
 
-func cmdWG(b cli.Backend, args []string) error {
+func cmdWG(b cli.Backend, args []string, outputFmt string) error {
 	if len(args) == 0 {
 		return fmt.Errorf("usage: gk wg <peers|add-peer|remove-peer|prune>")
 	}
@@ -426,6 +511,14 @@ func cmdWG(b cli.Backend, args []string) error {
 		peers, err := b.ListWGPeers()
 		if err != nil {
 			return err
+		}
+		if outputFmt == "table" {
+			tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+			fmt.Fprintln(tw, "NAME\tPUBLIC_KEY\tALLOWED_IPS\tENDPOINT")
+			for _, p := range peers {
+				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", p.Name, p.PublicKey, p.AllowedIPs, p.Endpoint)
+			}
+			return tw.Flush()
 		}
 		return printJSON(peers)
 	case "add-peer":
@@ -465,7 +558,7 @@ func cmdWG(b cli.Backend, args []string) error {
 	}
 }
 
-func cmdLeases(b cli.Backend) error {
+func cmdLeases(b cli.Backend, outputFmt string) error {
 	// Leases are read from a local file — in direct mode, read directly.
 	// In API mode, call the API endpoint.
 	if os.Getenv("GK_MODE") == "api" {
@@ -501,6 +594,14 @@ func cmdLeases(b cli.Backend) error {
 		if len(fields) >= 4 {
 			leases = append(leases, lease{Expiry: fields[0], MAC: fields[1], IP: fields[2], Hostname: fields[3]})
 		}
+	}
+	if outputFmt == "table" {
+		tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+		fmt.Fprintln(tw, "EXPIRY\tMAC\tIP\tHOSTNAME")
+		for _, l := range leases {
+			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", l.Expiry, l.MAC, l.IP, l.Hostname)
+		}
+		return tw.Flush()
 	}
 	return printJSON(leases)
 }
@@ -683,6 +784,463 @@ func cmdService(args []string) error {
 	}
 }
 
+func cmdDeps(args []string) error {
+	pm, err := backend.DetectPackageManager()
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Detected package manager: %s\n", pm.Name())
+
+	subcmd := "check"
+	if len(args) > 0 {
+		subcmd = args[0]
+	}
+
+	switch subcmd {
+	case "check":
+		fmt.Println("Checking Gatekeeper dependencies...")
+		installed, err := pm.EnsureDeps()
+		if err != nil {
+			return err
+		}
+		if len(installed) == 0 {
+			fmt.Println("All dependencies are already installed.")
+		} else {
+			fmt.Printf("Installed %d package(s): %s\n", len(installed), strings.Join(installed, ", "))
+		}
+		return nil
+	case "install":
+		if len(args) < 2 {
+			return fmt.Errorf("usage: gk deps install <package> [package...]")
+		}
+		return pm.Install(args[1:]...)
+	default:
+		return fmt.Errorf("usage: gk deps <check|install> [packages...]")
+	}
+}
+
+func cmdPerf(args []string, outputFmt string) error {
+	subcmd := "status"
+	if len(args) > 0 {
+		subcmd = args[0]
+	}
+
+	switch subcmd {
+	case "status":
+		tuner := service.NewPerformanceTuner()
+		status := tuner.GetPerfStatus()
+		if outputFmt == "table" {
+			fmt.Println("=== Conntrack ===")
+			fmt.Printf("  Max entries:   %d\n", status.Conntrack.Max)
+			fmt.Printf("  Buckets:       %d\n", status.Conntrack.Buckets)
+			fmt.Printf("  Active:        %d\n", status.Conntrack.Count)
+			fmt.Printf("  System RAM:    %d MB\n", status.Conntrack.RAMMB)
+			fmt.Println()
+			fmt.Println("=== TCP ===")
+			fmt.Printf("  Congestion:    %s\n", status.TCPCongestion)
+			fmt.Printf("  Fast Open:     %s\n", status.TCPFastOpen)
+			fmt.Println()
+			fmt.Println("=== Flowtables ===")
+			fmt.Printf("  Enabled:       %v\n", status.Flowtables)
+			if len(status.FlowtableZones) > 0 {
+				fmt.Printf("  Zone filter:   %s\n", strings.Join(status.FlowtableZones, ", "))
+			}
+			if len(status.NotrackZones) > 0 {
+				fmt.Printf("  Notrack zones: %s\n", strings.Join(status.NotrackZones, ", "))
+			}
+			if len(status.NICs) > 0 {
+				fmt.Println()
+				fmt.Println("=== NICs ===")
+				tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+				fmt.Fprintln(tw, "NAME\tDRIVER\tSPEED\tRX_Q\tTX_Q\tIRQS\tTSO\tGRO\tGSO")
+				for _, n := range status.NICs {
+					speed := fmt.Sprintf("%d Mbps", n.SpeedMbps)
+					if n.SpeedMbps < 0 {
+						speed = "unknown"
+					}
+					fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%d\t%d\t%v\t%v\t%v\n",
+						n.Name, n.Driver, speed, n.RxQueues, n.TxQueues, n.IRQs,
+						n.Offloads["tso"], n.Offloads["gro"], n.Offloads["gso"])
+				}
+				tw.Flush()
+			}
+			return nil
+		}
+		return printJSON(status)
+
+	case "conntrack":
+		if len(args) > 1 && args[1] == "--max" && len(args) > 2 {
+			// gk perf conntrack --max 262144
+			// Configure conntrack_max via the service config API.
+			client := cli.NewClient("", os.Getenv("GK_API_KEY"))
+			cfg := map[string]string{"conntrack_max": args[2], "conntrack_auto": "false"}
+			data, err := client.Put("/api/v1/services/performance-tuner/config", cfg)
+			if err != nil {
+				return err
+			}
+			return printJSONRaw(data)
+		}
+		// Show conntrack status.
+		st := service.GetConntrackStatus()
+		if outputFmt == "table" {
+			fmt.Printf("Max entries:   %d\n", st.Max)
+			fmt.Printf("Buckets:       %d\n", st.Buckets)
+			fmt.Printf("Active:        %d\n", st.Count)
+			fmt.Printf("Usage:         %.1f%%\n", float64(st.Count)/float64(max(st.Max, 1))*100)
+			fmt.Printf("System RAM:    %d MB\n", st.RAMMB)
+			return nil
+		}
+		return printJSON(st)
+
+	case "nic":
+		ifaces := detectCLIInterfaces()
+		if len(args) > 1 {
+			ifaces = args[1:]
+		}
+		nm := backend.NewLinuxNetworkManager()
+		var nics []service.NICPerfInfo
+		for _, iface := range ifaces {
+			info, err := nm.NICInfo(iface)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "warning: %s: %v\n", iface, err)
+				continue
+			}
+			nics = append(nics, service.NICPerfInfo{
+				Name:      info.Name,
+				Driver:    info.Driver,
+				SpeedMbps: info.SpeedMbps,
+				RxQueues:  info.RxQueues,
+				TxQueues:  info.TxQueues,
+				IRQs:      len(info.IRQs),
+				Offloads:  info.Offloads,
+			})
+		}
+		if outputFmt == "table" {
+			tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+			fmt.Fprintln(tw, "NAME\tDRIVER\tSPEED\tRX_Q\tTX_Q\tIRQS\tTSO\tGRO\tGSO\tRX_CSUM\tTX_CSUM")
+			for _, n := range nics {
+				speed := fmt.Sprintf("%d Mbps", n.SpeedMbps)
+				if n.SpeedMbps < 0 {
+					speed = "unknown"
+				}
+				fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%d\t%d\t%v\t%v\t%v\t%v\t%v\n",
+					n.Name, n.Driver, speed, n.RxQueues, n.TxQueues, n.IRQs,
+					n.Offloads["tso"], n.Offloads["gro"], n.Offloads["gso"],
+					n.Offloads["rx_checksum"], n.Offloads["tx_checksum"])
+			}
+			return tw.Flush()
+		}
+		return printJSON(nics)
+
+	default:
+		return fmt.Errorf("usage: gk perf <status|conntrack|nic> [options]")
+	}
+}
+
+// detectCLIInterfaces returns non-loopback, up interfaces for CLI use.
+func detectCLIInterfaces() []string {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return nil
+	}
+	var result []string
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		if iface.Flags&net.FlagUp == 0 {
+			continue
+		}
+		result = append(result, iface.Name)
+	}
+	return result
+}
+
+func cmdFingerprint(args []string, outputFmt string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("usage: gk fingerprint <list|identify|assign> [options]")
+	}
+
+	dbPath := os.Getenv("GK_DB")
+	if dbPath == "" {
+		dbPath = "/var/lib/gatekeeper/gatekeeper.db"
+	}
+
+	switch args[0] {
+	case "list":
+		fs := flag.NewFlagSet("fingerprint list", flag.ExitOnError)
+		fpType := fs.String("type", "", "Filter by type (ja4, ja4s, ja4t, ja4h)")
+		limit := fs.Int("limit", 100, "Maximum entries to return")
+		_ = fs.Parse(args[1:])
+
+		store, err := openFingerprintStore(dbPath)
+		if err != nil {
+			return err
+		}
+
+		fps, err := store.ListFingerprints(*fpType, *limit)
+		if err != nil {
+			return err
+		}
+
+		if outputFmt == "table" {
+			tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+			fmt.Fprintln(tw, "TYPE\tHASH\tSRC_IP\tSNI\tCOUNT\tLAST_SEEN\tPROFILE")
+			for _, fp := range fps {
+				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%d\t%s\t%s\n",
+					fp.Type, fp.Hash, fp.SrcIP, fp.SNI, fp.Count,
+					fp.LastSeen.Format("2006-01-02 15:04:05"), fp.AssignedProfile)
+			}
+			return tw.Flush()
+		}
+		return printJSON(fps)
+
+	case "identify":
+		if len(args) < 2 {
+			return fmt.Errorf("usage: gk fingerprint identify <hash>")
+		}
+		hash := args[1]
+
+		engine := inspect.NewEngine(nil)
+		identity, confidence, err := engine.IdentifyDevice(hash)
+		if err != nil {
+			return err
+		}
+
+		result := map[string]any{
+			"hash":       hash,
+			"identity":   identity,
+			"confidence": confidence,
+		}
+
+		threat, err := engine.CheckThreat(hash)
+		if err == nil {
+			result["threat"] = threat
+		}
+
+		if outputFmt == "table" {
+			if identity != nil {
+				fmt.Printf("Hash:       %s\n", hash)
+				fmt.Printf("Device:     %s\n", identity.Name)
+				fmt.Printf("Category:   %s\n", identity.Category)
+				fmt.Printf("OS:         %s\n", identity.OS)
+				fmt.Printf("Confidence: %.0f%%\n", confidence*100)
+			} else {
+				fmt.Printf("Hash:       %s\n", hash)
+				fmt.Printf("Device:     Unknown\n")
+			}
+			if threat != nil && threat.Matched {
+				fmt.Printf("THREAT:     %s (%s) — %s [%s]\n",
+					threat.ThreatName, threat.ThreatType, threat.Severity, threat.FeedName)
+			}
+			return nil
+		}
+		return printJSON(result)
+
+	case "assign":
+		if len(args) < 3 {
+			return fmt.Errorf("usage: gk fingerprint assign <hash> <profile>")
+		}
+		hash := args[1]
+		profile := args[2]
+
+		store, err := openFingerprintStore(dbPath)
+		if err != nil {
+			return err
+		}
+
+		if err := store.AssignProfile(hash, profile); err != nil {
+			return err
+		}
+		fmt.Printf("Assigned fingerprint %s to profile %q\n", hash, profile)
+		return nil
+
+	case "show":
+		if len(args) < 2 {
+			return fmt.Errorf("usage: gk fingerprint show <hash>")
+		}
+		hash := args[1]
+
+		store, err := openFingerprintStore(dbPath)
+		if err != nil {
+			return err
+		}
+
+		fp, err := store.GetFingerprint(hash)
+		if err != nil {
+			return err
+		}
+		if fp == nil {
+			return fmt.Errorf("fingerprint %q not found", hash)
+		}
+
+		if outputFmt == "table" {
+			fmt.Printf("Type:     %s\n", fp.Type)
+			fmt.Printf("Hash:     %s\n", fp.Hash)
+			fmt.Printf("Source:   %s\n", fp.SrcIP)
+			fmt.Printf("Dest:     %s\n", fp.DstIP)
+			fmt.Printf("SNI:      %s\n", fp.SNI)
+			fmt.Printf("Profile:  %s\n", fp.AssignedProfile)
+			fmt.Printf("Count:    %d\n", fp.Count)
+			fmt.Printf("First:    %s\n", fp.FirstSeen.Format("2006-01-02 15:04:05"))
+			fmt.Printf("Last:     %s\n", fp.LastSeen.Format("2006-01-02 15:04:05"))
+			if fp.ThreatMatch {
+				fmt.Printf("Threat:   YES\n")
+			}
+			return nil
+		}
+		return printJSON(fp)
+
+	default:
+		return fmt.Errorf("unknown fingerprint subcommand: %s\nusage: gk fingerprint <list|show|identify|assign>", args[0])
+	}
+}
+
+func cmdXDP(args []string, outputFmt string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("usage: gk xdp <status|capabilities|blocklist|stats> [options]")
+	}
+
+	mgr := xdp.NewManager()
+
+	switch args[0] {
+	case "status":
+		caps := mgr.Probe()
+		status := mgr.Status()
+		status.Capabilities = *caps
+
+		if outputFmt == "table" {
+			fmt.Printf("XDP Fast Path Status\n")
+			fmt.Printf("====================\n")
+			fmt.Printf("Running:     %v\n", status.Running)
+			fmt.Printf("Mode:        %s\n", status.Mode)
+			fmt.Printf("Interfaces:  %d\n", status.InterfaceCount)
+			fmt.Printf("Blocklist:   %d entries\n", status.BlocklistSize)
+			fmt.Printf("ACL Rules:   %d\n", status.ACLRuleCount)
+			fmt.Printf("\nCapabilities:\n")
+			fmt.Printf("  Kernel:        %s\n", caps.KernelVersion)
+			fmt.Printf("  Min kernel:    %v (>= 5.10)\n", caps.MinKernelMet)
+			fmt.Printf("  BPF FS:        %v\n", caps.BPFSupported)
+			fmt.Printf("  BTF:           %v\n", caps.BTFAvailable)
+			fmt.Printf("  XDP:           %v\n", caps.XDPSupported)
+			fmt.Printf("  CAP_BPF:       %v\n", caps.HasCAPBPF)
+			fmt.Printf("  CAP_NET_ADMIN: %v\n", caps.HasCAPNetAdmin)
+			fmt.Printf("  Tail calls:    %v\n", caps.TailCallSupported)
+			fmt.Printf("  Ring buffer:   %v\n", caps.RingBufSupported)
+			fmt.Printf("  Ready:         %v\n", caps.Ready)
+			if !caps.Ready {
+				fmt.Printf("  Reason:        %s\n", caps.Reason)
+			}
+			return nil
+		}
+		return printJSON(status)
+
+	case "capabilities", "caps":
+		caps := mgr.Probe()
+		if outputFmt == "table" {
+			fmt.Printf("Kernel:        %s (%d.%d.%d)\n", caps.KernelVersion,
+				caps.KernelMajor, caps.KernelMinor, caps.KernelPatch)
+			fmt.Printf("Min kernel:    %v (>= 5.10)\n", caps.MinKernelMet)
+			fmt.Printf("BPF FS:        %v\n", caps.BPFSupported)
+			fmt.Printf("BTF:           %v\n", caps.BTFAvailable)
+			fmt.Printf("XDP:           %v\n", caps.XDPSupported)
+			fmt.Printf("CAP_BPF:       %v\n", caps.HasCAPBPF)
+			fmt.Printf("CAP_NET_ADMIN: %v\n", caps.HasCAPNetAdmin)
+			fmt.Printf("Tail calls:    %v\n", caps.TailCallSupported)
+			fmt.Printf("Ring buffer:   %v\n", caps.RingBufSupported)
+			fmt.Printf("Ready:         %v\n", caps.Ready)
+			if !caps.Ready {
+				fmt.Printf("Reason:        %s\n", caps.Reason)
+			}
+			return nil
+		}
+		return printJSON(caps)
+
+	case "blocklist":
+		if len(args) >= 2 {
+			switch args[1] {
+			case "add":
+				if len(args) < 3 {
+					return fmt.Errorf("usage: gk xdp blocklist add <ip> [reason]")
+				}
+				reason := "manual"
+				if len(args) >= 4 {
+					reason = args[3]
+				}
+				err := mgr.AddToBlocklist(xdp.BlocklistEntry{
+					IP:     args[2],
+					Reason: reason,
+					Source: "admin",
+				})
+				if err != nil {
+					return err
+				}
+				fmt.Printf("Added %s to XDP blocklist\n", args[2])
+				return nil
+			case "remove":
+				if len(args) < 3 {
+					return fmt.Errorf("usage: gk xdp blocklist remove <ip>")
+				}
+				if err := mgr.RemoveFromBlocklist(args[2]); err != nil {
+					return err
+				}
+				fmt.Printf("Removed %s from XDP blocklist\n", args[2])
+				return nil
+			case "list":
+				// Fall through to default list behavior.
+			default:
+				return fmt.Errorf("unknown blocklist subcommand: %s", args[1])
+			}
+		}
+
+		entries := mgr.BlocklistEntries()
+		if outputFmt == "table" {
+			if len(entries) == 0 {
+				fmt.Println("Blocklist is empty")
+				return nil
+			}
+			tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+			fmt.Fprintln(tw, "IP\tREASON\tSOURCE\tHITS\tADDED")
+			for _, e := range entries {
+				fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%s\n",
+					e.IP, e.Reason, e.Source, e.HitCount,
+					e.AddedAt.Format("2006-01-02 15:04:05"))
+			}
+			return tw.Flush()
+		}
+		return printJSON(entries)
+
+	case "stats":
+		stats := mgr.AllStats()
+		if outputFmt == "table" {
+			if len(stats) == 0 {
+				fmt.Println("No interfaces attached")
+				return nil
+			}
+			tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+			fmt.Fprintln(tw, "INTERFACE\tMODE\tPKT_TOTAL\tPKT_DROP\tPKT_PASS\tBYTES")
+			for _, s := range stats {
+				fmt.Fprintf(tw, "%s\t%s\t%d\t%d\t%d\t%d\n",
+					s.Interface, s.AttachMode, s.PacketsTotal,
+					s.PacketsDropped, s.PacketsPassed, s.BytesTotal)
+			}
+			return tw.Flush()
+		}
+		return printJSON(stats)
+
+	default:
+		return fmt.Errorf("unknown xdp subcommand: %s\nusage: gk xdp <status|capabilities|blocklist|stats>", args[0])
+	}
+}
+
+func openFingerprintStore(dbPath string) (*inspect.SQLiteStore, error) {
+	store, err := config.NewStore(dbPath)
+	if err != nil {
+		return nil, fmt.Errorf("cannot open database: %w", err)
+	}
+	return inspect.NewSQLiteStore(store.DB())
+}
+
 func printJSON(v any) error {
 	out, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
@@ -723,7 +1281,11 @@ Commands:
   explain     Show all matching rules for a src→dst pair
   audit       Show audit log of mutations
   service     Manage services (list, show, enable, disable, config)
+  fingerprint Manage TLS fingerprints (list, show, identify, assign)
+  xdp         XDP/eBPF fast path (status, capabilities, blocklist, stats)
+  perf        Performance tuning (status, conntrack, nic)
   ping        Ping a target host
+  deps        Manage system dependencies (check, install)
   version     Show version
 
 Environment:

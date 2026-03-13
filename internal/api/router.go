@@ -31,6 +31,12 @@ type RouterConfig struct {
 	// When nil, falls back to the legacy single API key auth.
 	RBACEnforcer *rbac.Enforcer
 
+	// FingerprintSvc is the TLS fingerprint service (optional).
+	FingerprintSvc *service.FingerprintService
+
+	// XDPSvc is the XDP fast path service (optional).
+	XDPSvc *service.XDPService
+
 	// RateLimit controls API rate limiting (requests/sec). 0 = default (100/s).
 	RateLimit int
 	// DiagRateLimit controls diagnostic endpoint rate limiting. 0 = default (5/s).
@@ -149,6 +155,29 @@ func NewRouterWithConfig(cfg *RouterConfig) http.Handler {
 		mux.HandleFunc("POST /api/v1/services/{name}/enable", sh.enableService)
 		mux.HandleFunc("POST /api/v1/services/{name}/disable", sh.disableService)
 		mux.HandleFunc("PUT /api/v1/services/{name}/config", sh.configureService)
+	}
+
+	// Fingerprint endpoints (requires fingerprint service).
+	if cfg.FingerprintSvc != nil {
+		fph := &fingerprintHandlers{svc: cfg.FingerprintSvc}
+		mux.HandleFunc("GET /api/v1/fingerprints", fph.listFingerprints)
+		mux.HandleFunc("GET /api/v1/fingerprints/{hash}", fph.getFingerprint)
+		mux.HandleFunc("GET /api/v1/fingerprints/{hash}/identify", fph.identifyFingerprint)
+		mux.HandleFunc("POST /api/v1/fingerprints/{hash}/assign", fph.assignProfile)
+		mux.HandleFunc("GET /api/v1/fingerprints/{hash}/threat", fph.checkThreat)
+	}
+
+	// XDP fast path endpoints (requires XDP service).
+	if cfg.XDPSvc != nil {
+		xh := &xdpHandlers{svc: cfg.XDPSvc}
+		mux.HandleFunc("GET /api/v1/xdp/status", xh.xdpStatus)
+		mux.HandleFunc("GET /api/v1/xdp/capabilities", xh.xdpCapabilities)
+		mux.HandleFunc("GET /api/v1/xdp/stats", xh.xdpStats)
+		mux.HandleFunc("GET /api/v1/xdp/blocklist", xh.listBlocklist)
+		mux.HandleFunc("POST /api/v1/xdp/blocklist", xh.addBlocklistEntry)
+		mux.HandleFunc("DELETE /api/v1/xdp/blocklist/{ip}", xh.removeBlocklistEntry)
+		mux.HandleFunc("GET /api/v1/xdp/acls", xh.listACLRules)
+		mux.HandleFunc("POST /api/v1/xdp/acls", xh.addACLRule)
 	}
 
 	// RBAC key management (requires RBAC to be enabled).

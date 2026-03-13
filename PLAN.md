@@ -269,7 +269,8 @@ Per rebuttal: start with **2 zones** (wan, lan), not 8.
   - First-boot setup script (generate API key, TLS cert, seed config)
 - [x] ~~Proxmox-compatible container template~~ Install script approach (simpler, more flexible)
 - [x] Install script (`scripts/install-alpine.sh`) — builds from source, configures everything
-- [ ] Cloud-init support for headless provisioning
+- [x] Cloud-init support for headless provisioning (`scripts/cloud-init.yaml` + enhanced `scripts/first-boot.sh`)
+- [x] Proxmox LXC template builder (`scripts/build-lxc.sh`) with cloud-init, systemd + OpenRC init, sysctl tuning
 - [ ] ~~Image size target: < 100 MB~~ Binary is 19MB, container is ~50MB total
 - [x] CalVer versioning (in Makefile)
 
@@ -432,13 +433,13 @@ Per rebuttal, these were deferred from v1 but have been implemented ahead of sch
 - [x] Auto-enable flowtables on all inter-zone forward paths (`PerformanceTuner` service)
 - [x] Hardware offload flag support (`flowtable_hw_offload` config option)
 - [x] Auto-detect non-loopback interfaces for flowtable device list
-- [ ] Configurable per-zone: some zones may need full inspection on every packet
+- [x] Configurable per-zone: `flowtable_zones` config restricts offload to specific zone interfaces
 
 #### Conntrack Tuning ✅
 - [x] Auto-scale `nf_conntrack_max` based on available RAM (256 entries/MB)
 - [x] Auto-set `nf_conntrack_buckets` (hashsize) to max/4
-- [ ] Per-zone conntrack bypass option (bulk-forward zones)
-- [ ] Expose tuning via API/CLI: `gk perf conntrack --max 262144`
+- [x] Per-zone conntrack bypass (notrack) via `conntrack_notrack_zones` config — skips connection tracking on trusted zones
+- [x] Expose tuning via CLI: `gk perf conntrack` (status), `gk perf conntrack --max 262144` (set via API)
 
 #### Sysctl Tuning ✅
 - [x] `net.core.netdev_max_backlog` (configurable, default 4096)
@@ -447,15 +448,48 @@ Per rebuttal, these were deferred from v1 but have been implemented ahead of sch
 - [x] `net.ipv4.tcp_congestion_control` = bbr
 - [x] IP forwarding and rp_filter tuning
 
-#### IRQ Affinity & NIC Optimization (Deferred)
-- [ ] Auto-detect NIC queue count, configure RSS (Receive Side Scaling)
-- [ ] IRQ affinity pinning to avoid cross-core bouncing
-- [ ] Verify and enable offloads: TSO, GRO, GSO, checksum offload
-- [ ] Expose via API: `gk perf nic --show` / `gk perf nic --optimize`
+#### IRQ Affinity & NIC Optimization ✅
+- [x] Auto-detect NIC queue count via sysfs, distribute IRQs across CPUs round-robin
+- [x] IRQ affinity pinning via `/proc/irq/{irq}/smp_affinity_list`
+- [x] Verify and enable offloads: TSO, GRO, GSO, RX/TX checksum via ethtool ioctl
+- [x] Expose via CLI: `gk perf nic` (show all NICs), `gk perf status` (full performance overview)
 
-#### XDP/eBPF Fast Path (Deferred)
-- [ ] XDP program for known-bad IP blocklists (drops before kernel stack)
-- [ ] XDP program for simple ACLs on high-throughput zones
+#### XDP/eBPF Fast Path
+- [x] XDP manager with capability probing (`internal/xdp/xdp.go`)
+  - Kernel version parsing, BPF FS detection, BTF check, CAP_BPF/CAP_NET_ADMIN
+  - Minimum kernel 5.10 requirement enforcement
+- [x] Manager lifecycle: attach/detach interfaces, mode selection (native/generic/offload)
+- [x] IPv4/IPv6 blocklist with add/remove/list operations (`internal/xdp/manager.go`)
+- [x] Simple ACL rule engine for XDP fast path (src/dst IP, protocol, port)
+- [x] Per-interface statistics tracking (packets/bytes total/dropped/passed)
+- [x] BPF C program with tail-call architecture (`internal/xdp/bpf/gatekeeper_xdp.c`)
+  - Entry program: Ethernet/IP/TCP/UDP header parsing with VLAN support
+  - Blocklist program: LPM trie lookup for IPv4/IPv6 source IPs
+  - ACL program: linear scan with src/dst IP mask, protocol, port matching
+  - Accounting program: per-CPU statistics counters
+  - Fail-open design: XDP_PASS on any error (never silently drop)
+- [x] Shared header (`internal/xdp/bpf/gatekeeper.h`) — single source of truth for map layouts
+- [x] XDPService plugin implementing Service interface (`internal/service/xdp.go`)
+- [x] REST API endpoints:
+  - GET /api/v1/xdp/status, /capabilities, /stats
+  - GET/POST /api/v1/xdp/blocklist, DELETE /api/v1/xdp/blocklist/{ip}
+  - GET/POST /api/v1/xdp/acls
+- [x] CLI: `gk xdp status`, `gk xdp capabilities`, `gk xdp blocklist`, `gk xdp stats`
+- [x] cilium/ebpf BPFLoader implementation (`internal/xdp/loader.go`)
+  - Dual-map atomic blocklist swap for zero-downtime updates
+  - Failover: native → generic → no-XDP with auto-failback retry
+  - Exponential backoff on failback attempts (30s → 5min cap)
+  - Instant rollback via SwapNow() — old map data preserved
+  - Per-map version tracking and diagnostics
+- [x] Active countermeasures engine (`internal/xdp/countermeasures.go`)
+  - Tarpit: minimum TCP window (1 byte), drain attacker connection slots
+  - Latency injection: 100ms-5s random delay for suspicious sources
+  - Bandwidth throttle: nftables hashlimit to 1 KB/s
+  - RST chaos: probabilistic connection resets for known-bad IPs
+  - SYN cookie enforcement: force SYN cookies per-source
+  - TTL randomization: confuse network mapping tools (nmap, p0f)
+  - Auto-expiring policies (24h threat, 1h anomaly)
+  - nftables rule generation for all active policies
 - [ ] Integration with flowtables for multi-layer fast path
 - [ ] eBPF-based traffic accounting (replace tc-based bandwidth monitor)
 
@@ -466,34 +500,71 @@ Per rebuttal, these were deferred from v1 but have been implemented ahead of sch
 **IMPORTANT: This entire feature is opt-in.** Packet inspection adds overhead. Users who want maximum forwarding throughput (flowtables + zero inspection) can leave this disabled entirely. Enable per-zone or globally via `gk service enable fingerprint` / `gk service disable fingerprint`. When disabled, zero CPU overhead — no capture, no parsing, no matching. The performance stack (Phase 13) and the inspection stack (Phase 14) are independent; neither requires the other.
 
 #### JA4 Fingerprint Engine
-- [ ] Define `PacketInspector` interface:
-  - `FingerprintTLS(conn) (*JA4Fingerprint, error)`
+- [x] Define `PacketInspector` interface:
+  - `FingerprintTLS(hello) (*JA4Fingerprint, error)`
+  - `FingerprintServer(hello) (*JA4SFingerprint, error)`
+  - `FingerprintTCP(syn) (*JA4TFingerprint, error)`
+  - `FingerprintHTTP(headers) (*JA4HFingerprint, error)`
   - `IdentifyDevice(fp) (*DeviceIdentity, float64, error)`
   - `CheckThreat(fp) (*ThreatMatch, error)`
-- [ ] JA4 extraction from TLS ClientHello (cipher suites, extensions, ALPN, SNI)
-- [ ] JA4S extraction from TLS ServerHello
-- [ ] JA4T extraction from TCP SYN (window size, options, TTL — OS detection)
-- [ ] JA4H extraction from HTTP headers (header ordering, values)
+- [x] JA4 extraction from TLS ClientHello (cipher suites, extensions, ALPN, SNI, GREASE filtering)
+- [x] JA4S extraction from TLS ServerHello
+- [x] JA4T extraction from TCP SYN (window size, options, TTL — OS detection)
+- [x] JA4H extraction from HTTP headers (header ordering, values)
+- [x] TLS ClientHello / ServerHello binary parser (`internal/inspect/parser.go`)
+- [x] TCP SYN packet parser with option extraction
 
 #### Passive Device Profiling
-- [ ] Known device fingerprint database (IoT devices, browsers, OS families)
-- [ ] Auto-suggest profile assignment based on JA4 match
-- [ ] Anomaly detection: device fingerprint changed = potential compromise
-- [ ] API: `GET /api/v1/fingerprints` — list observed fingerprints
-- [ ] API: `POST /api/v1/fingerprints/{hash}/assign` — map fingerprint to profile
-- [ ] CLI: `gk fingerprint list` / `gk fingerprint identify <hash>`
+- [x] Known device fingerprint database (IoT devices, browsers, OS families)
+- [x] Auto-suggest profile assignment based on JA4 match
+- [x] Anomaly detection: device fingerprint changed = potential compromise
+  - Per-IP fingerprint history tracking with change count and severity escalation
+  - Exclusion lists: per-IP, per-hash, per-transition pair, per-CIDR, time-bounded
+  - SQLite persistence for alerts and exclusion rules
+  - Auto-severity: warning → high → critical based on change frequency
+- [x] API: `GET /api/v1/fingerprints` — list observed fingerprints
+- [x] API: `GET /api/v1/fingerprints/{hash}` — get specific fingerprint
+- [x] API: `GET /api/v1/fingerprints/{hash}/identify` — identify device
+- [x] API: `POST /api/v1/fingerprints/{hash}/assign` — map fingerprint to profile
+- [x] API: `GET /api/v1/fingerprints/{hash}/threat` — check threat feeds
+- [x] CLI: `gk fingerprint list` / `gk fingerprint show <hash>`
+- [x] CLI: `gk fingerprint identify <hash>` / `gk fingerprint assign <hash> <profile>`
 
 #### Threat Intelligence Integration
-- [ ] Known malware JA3/JA4 hash feeds (Abuse.ch, Proofpoint ET)
-- [ ] Auto-block connections matching known C2 fingerprints
-- [ ] Alert on JA4 match against threat feed
-- [ ] Feed update scheduler with TTL, hash pinning, last-known-good caching
+- [x] Threat feed data model and matching engine (`ThreatFeed`, `ThreatEntry`)
+- [x] Auto-block config flag for connections matching known C2 fingerprints
+- [x] Alert on JA4 match against threat feed via API
+- [x] Feed update scheduler with TTL, hash pinning, last-known-good caching
+  - Configurable TTL per feed, SHA256 hash pinning for tamper detection
+  - Disk-cached last-known-good fallback when downloads fail
+  - Retry with backoff, no-change detection via content hash
+- [x] Top 5 pre-populated threat feeds:
+  1. abuse.ch SSLBL (JA3 malware C2 fingerprints) — 1h TTL
+  2. abuse.ch Feodo Tracker (Emotet/Dridex C2 IPs) — 30m TTL
+  3. Proofpoint ET compromised IPs — 4h TTL
+  4. Blocklist.de (brute-force attackers) — 2h TTL
+  5. CINS Army (Sentinel IPS bad actors) — 6h TTL
+- [x] Stub template for custom feed additions (`StubFeedTemplate()`)
+- [x] Merged threat index: O(1) lookup regardless of feed count
+  - All feeds merged into single hashmap, atomically swapped on update
+  - Severity-priority merge (higher severity wins on hash collision)
 
 #### Packet Capture Backend
+- [x] AF_PACKET raw socket capture (`internal/inspect/capture.go`)
+  - Zero-copy packet access via Linux AF_PACKET/SOCK_RAW
+  - Kernel-level BPF filter (tcp dst port 443) — non-TLS packets never cross user/kernel boundary
+  - Promiscuous mode for full segment visibility
+  - Per-interface goroutines with graceful shutdown
+  - Inline threat feed checking on every ClientHello
 - [ ] PF_RING integration for zero-copy packet capture on Linux
 - [ ] AF_XDP fallback for environments without PF_RING
 - [ ] libpcap fallback for maximum compatibility
-- [ ] Auto-detect best available capture backend
+
+#### Fingerprint Service Plugin
+- [x] `FingerprintService` implementing `Service` interface (`internal/service/fingerprint.go`)
+- [x] SQLite-backed fingerprint store (`internal/inspect/store.go`)
+- [x] Enable via `gk service enable fingerprint`
+- [x] Configurable interfaces, capture method, BPF filter, threat feeds
 
 **Libraries:** `github.com/dreadl0ck/ja3`, FoxIO JA4 spec, PF_RING Go bindings
 
@@ -594,7 +665,6 @@ Per rebuttal, these were deferred from v1 but have been implemented ahead of sch
 - Resource quotas per tenant (max zones, max rules, max bandwidth)
 - Cross-tenant traffic policies (explicit allow required, default deny)
 
-<<<<<<< HEAD
 ### Mini-SIEM (Optional, SQLite FTS5)
 
 **Goal:** Ship a lightweight, zero-dependency security event and incident management engine embedded in the Gatekeeper binary. No Elasticsearch cluster, no Java heap tuning, no external DB — just SQLite FTS5 full-text search over structured security events. Think Security Onion's visibility, but sized for a single-site / home-lab / SMB deployment that runs on the same LXC as the firewall.
@@ -1080,7 +1150,15 @@ For users running multiple self-hosted services behind Gatekeeper:
 ---
 
 ### Remaining Items
-- [ ] Cloud-init support for headless provisioning
+- [x] Cloud-init support for headless provisioning (`scripts/cloud-init.yaml`, `scripts/first-boot.sh`)
 - [ ] Formal external security audit
-- [ ] Proxmox container template (pre-built image)
-- [ ] Table output format for CLI (`GK_OUTPUT=table`)
+- [x] Proxmox container template (`scripts/build-lxc.sh` with cloud-init, OpenRC + systemd)
+- [x] Table output format for CLI (`GK_OUTPUT=table`)
+- [x] GitHub Actions release workflow (build + publish artifacts on push to main)
+- [x] Per-zone flowtable offload (`flowtable_zones` config)
+- [x] Per-zone conntrack bypass (`conntrack_notrack_zones` config, nftables notrack rules)
+- [x] Conntrack tuning CLI (`gk perf conntrack`)
+- [x] NIC optimization CLI (`gk perf nic`)
+- [x] Performance status dashboard (`gk perf status`)
+- [x] Bandwidth/QoS service migrated from exec.Command("tc") to netlink API
+- [x] Cross-platform package manager abstraction (`gk deps check|install`) — supports Alpine, Debian/Ubuntu, Fedora/RHEL, Arch, Gentoo, openSUSE, Void, FreeBSD
