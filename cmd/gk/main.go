@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"net"
 	"os"
 	"strconv"
 	"strings"
@@ -17,6 +18,7 @@ import (
 	"github.com/gatekeeper-firewall/gatekeeper/internal/driver"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/model"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/ops"
+	"github.com/gatekeeper-firewall/gatekeeper/internal/service"
 )
 
 var version = "dev"
@@ -80,6 +82,8 @@ func main() {
 		err = cmdService(os.Args[2:])
 	case "ping":
 		err = cmdPing(os.Args[2:])
+	case "perf":
+		err = cmdPerf(os.Args[2:], outputFmt)
 	case "deps":
 		err = cmdDeps(os.Args[2:])
 	case "help", "--help", "-h":
@@ -809,6 +813,143 @@ func cmdDeps(args []string) error {
 	}
 }
 
+func cmdPerf(args []string, outputFmt string) error {
+	subcmd := "status"
+	if len(args) > 0 {
+		subcmd = args[0]
+	}
+
+	switch subcmd {
+	case "status":
+		tuner := service.NewPerformanceTuner()
+		status := tuner.GetPerfStatus()
+		if outputFmt == "table" {
+			fmt.Println("=== Conntrack ===")
+			fmt.Printf("  Max entries:   %d\n", status.Conntrack.Max)
+			fmt.Printf("  Buckets:       %d\n", status.Conntrack.Buckets)
+			fmt.Printf("  Active:        %d\n", status.Conntrack.Count)
+			fmt.Printf("  System RAM:    %d MB\n", status.Conntrack.RAMMB)
+			fmt.Println()
+			fmt.Println("=== TCP ===")
+			fmt.Printf("  Congestion:    %s\n", status.TCPCongestion)
+			fmt.Printf("  Fast Open:     %s\n", status.TCPFastOpen)
+			fmt.Println()
+			fmt.Println("=== Flowtables ===")
+			fmt.Printf("  Enabled:       %v\n", status.Flowtables)
+			if len(status.FlowtableZones) > 0 {
+				fmt.Printf("  Zone filter:   %s\n", strings.Join(status.FlowtableZones, ", "))
+			}
+			if len(status.NotrackZones) > 0 {
+				fmt.Printf("  Notrack zones: %s\n", strings.Join(status.NotrackZones, ", "))
+			}
+			if len(status.NICs) > 0 {
+				fmt.Println()
+				fmt.Println("=== NICs ===")
+				tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+				fmt.Fprintln(tw, "NAME\tDRIVER\tSPEED\tRX_Q\tTX_Q\tIRQS\tTSO\tGRO\tGSO")
+				for _, n := range status.NICs {
+					speed := fmt.Sprintf("%d Mbps", n.SpeedMbps)
+					if n.SpeedMbps < 0 {
+						speed = "unknown"
+					}
+					fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%d\t%d\t%v\t%v\t%v\n",
+						n.Name, n.Driver, speed, n.RxQueues, n.TxQueues, n.IRQs,
+						n.Offloads["tso"], n.Offloads["gro"], n.Offloads["gso"])
+				}
+				tw.Flush()
+			}
+			return nil
+		}
+		return printJSON(status)
+
+	case "conntrack":
+		if len(args) > 1 && args[1] == "--max" && len(args) > 2 {
+			// gk perf conntrack --max 262144
+			// Configure conntrack_max via the service config API.
+			client := cli.NewClient("", os.Getenv("GK_API_KEY"))
+			cfg := map[string]string{"conntrack_max": args[2], "conntrack_auto": "false"}
+			data, err := client.Put("/api/v1/services/performance-tuner/config", cfg)
+			if err != nil {
+				return err
+			}
+			return printJSONRaw(data)
+		}
+		// Show conntrack status.
+		st := service.GetConntrackStatus()
+		if outputFmt == "table" {
+			fmt.Printf("Max entries:   %d\n", st.Max)
+			fmt.Printf("Buckets:       %d\n", st.Buckets)
+			fmt.Printf("Active:        %d\n", st.Count)
+			fmt.Printf("Usage:         %.1f%%\n", float64(st.Count)/float64(max(st.Max, 1))*100)
+			fmt.Printf("System RAM:    %d MB\n", st.RAMMB)
+			return nil
+		}
+		return printJSON(st)
+
+	case "nic":
+		ifaces := detectCLIInterfaces()
+		if len(args) > 1 {
+			ifaces = args[1:]
+		}
+		nm := backend.NewLinuxNetworkManager()
+		var nics []service.NICPerfInfo
+		for _, iface := range ifaces {
+			info, err := nm.NICInfo(iface)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "warning: %s: %v\n", iface, err)
+				continue
+			}
+			nics = append(nics, service.NICPerfInfo{
+				Name:      info.Name,
+				Driver:    info.Driver,
+				SpeedMbps: info.SpeedMbps,
+				RxQueues:  info.RxQueues,
+				TxQueues:  info.TxQueues,
+				IRQs:      len(info.IRQs),
+				Offloads:  info.Offloads,
+			})
+		}
+		if outputFmt == "table" {
+			tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+			fmt.Fprintln(tw, "NAME\tDRIVER\tSPEED\tRX_Q\tTX_Q\tIRQS\tTSO\tGRO\tGSO\tRX_CSUM\tTX_CSUM")
+			for _, n := range nics {
+				speed := fmt.Sprintf("%d Mbps", n.SpeedMbps)
+				if n.SpeedMbps < 0 {
+					speed = "unknown"
+				}
+				fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%d\t%d\t%v\t%v\t%v\t%v\t%v\n",
+					n.Name, n.Driver, speed, n.RxQueues, n.TxQueues, n.IRQs,
+					n.Offloads["tso"], n.Offloads["gro"], n.Offloads["gso"],
+					n.Offloads["rx_checksum"], n.Offloads["tx_checksum"])
+			}
+			return tw.Flush()
+		}
+		return printJSON(nics)
+
+	default:
+		return fmt.Errorf("usage: gk perf <status|conntrack|nic> [options]")
+	}
+}
+
+// detectCLIInterfaces returns non-loopback, up interfaces for CLI use.
+func detectCLIInterfaces() []string {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return nil
+	}
+	var result []string
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		if iface.Flags&net.FlagUp == 0 {
+			continue
+		}
+		result = append(result, iface.Name)
+	}
+	return result
+}
+
 func printJSON(v any) error {
 	out, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
@@ -849,6 +990,7 @@ Commands:
   explain     Show all matching rules for a src→dst pair
   audit       Show audit log of mutations
   service     Manage services (list, show, enable, disable, config)
+  perf        Performance tuning (status, conntrack, nic)
   ping        Ping a target host
   deps        Manage system dependencies (check, install)
   version     Show version

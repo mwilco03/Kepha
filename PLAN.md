@@ -269,7 +269,8 @@ Per rebuttal: start with **2 zones** (wan, lan), not 8.
   - First-boot setup script (generate API key, TLS cert, seed config)
 - [x] ~~Proxmox-compatible container template~~ Install script approach (simpler, more flexible)
 - [x] Install script (`scripts/install-alpine.sh`) — builds from source, configures everything
-- [ ] Cloud-init support for headless provisioning
+- [x] Cloud-init support for headless provisioning (`scripts/cloud-init.yaml` + enhanced `scripts/first-boot.sh`)
+- [x] Proxmox LXC template builder (`scripts/build-lxc.sh`) with cloud-init, systemd + OpenRC init, sysctl tuning
 - [ ] ~~Image size target: < 100 MB~~ Binary is 19MB, container is ~50MB total
 - [x] CalVer versioning (in Makefile)
 
@@ -432,13 +433,13 @@ Per rebuttal, these were deferred from v1 but have been implemented ahead of sch
 - [x] Auto-enable flowtables on all inter-zone forward paths (`PerformanceTuner` service)
 - [x] Hardware offload flag support (`flowtable_hw_offload` config option)
 - [x] Auto-detect non-loopback interfaces for flowtable device list
-- [ ] Configurable per-zone: some zones may need full inspection on every packet
+- [x] Configurable per-zone: `flowtable_zones` config restricts offload to specific zone interfaces
 
 #### Conntrack Tuning ✅
 - [x] Auto-scale `nf_conntrack_max` based on available RAM (256 entries/MB)
 - [x] Auto-set `nf_conntrack_buckets` (hashsize) to max/4
-- [ ] Per-zone conntrack bypass option (bulk-forward zones)
-- [ ] Expose tuning via API/CLI: `gk perf conntrack --max 262144`
+- [x] Per-zone conntrack bypass (notrack) via `conntrack_notrack_zones` config — skips connection tracking on trusted zones
+- [x] Expose tuning via CLI: `gk perf conntrack` (status), `gk perf conntrack --max 262144` (set via API)
 
 #### Sysctl Tuning ✅
 - [x] `net.core.netdev_max_backlog` (configurable, default 4096)
@@ -447,11 +448,11 @@ Per rebuttal, these were deferred from v1 but have been implemented ahead of sch
 - [x] `net.ipv4.tcp_congestion_control` = bbr
 - [x] IP forwarding and rp_filter tuning
 
-#### IRQ Affinity & NIC Optimization (Deferred)
-- [ ] Auto-detect NIC queue count, configure RSS (Receive Side Scaling)
-- [ ] IRQ affinity pinning to avoid cross-core bouncing
-- [ ] Verify and enable offloads: TSO, GRO, GSO, checksum offload
-- [ ] Expose via API: `gk perf nic --show` / `gk perf nic --optimize`
+#### IRQ Affinity & NIC Optimization ✅
+- [x] Auto-detect NIC queue count via sysfs, distribute IRQs across CPUs round-robin
+- [x] IRQ affinity pinning via `/proc/irq/{irq}/smp_affinity_list`
+- [x] Verify and enable offloads: TSO, GRO, GSO, RX/TX checksum via ethtool ioctl
+- [x] Expose via CLI: `gk perf nic` (show all NICs), `gk perf status` (full performance overview)
 
 #### XDP/eBPF Fast Path (Deferred)
 - [ ] XDP program for known-bad IP blocklists (drops before kernel stack)
@@ -594,7 +595,6 @@ Per rebuttal, these were deferred from v1 but have been implemented ahead of sch
 - Resource quotas per tenant (max zones, max rules, max bandwidth)
 - Cross-tenant traffic policies (explicit allow required, default deny)
 
-<<<<<<< HEAD
 ### Mini-SIEM (Optional, SQLite FTS5)
 
 **Goal:** Ship a lightweight, zero-dependency security event and incident management engine embedded in the Gatekeeper binary. No Elasticsearch cluster, no Java heap tuning, no external DB — just SQLite FTS5 full-text search over structured security events. Think Security Onion's visibility, but sized for a single-site / home-lab / SMB deployment that runs on the same LXC as the firewall.
@@ -1080,10 +1080,15 @@ For users running multiple self-hosted services behind Gatekeeper:
 ---
 
 ### Remaining Items
-- [ ] Cloud-init support for headless provisioning
+- [x] Cloud-init support for headless provisioning (`scripts/cloud-init.yaml`, `scripts/first-boot.sh`)
 - [ ] Formal external security audit
-- [ ] Proxmox container template (pre-built image)
+- [x] Proxmox container template (`scripts/build-lxc.sh` with cloud-init, OpenRC + systemd)
 - [x] Table output format for CLI (`GK_OUTPUT=table`)
 - [x] GitHub Actions release workflow (build + publish artifacts on push to main)
+- [x] Per-zone flowtable offload (`flowtable_zones` config)
+- [x] Per-zone conntrack bypass (`conntrack_notrack_zones` config, nftables notrack rules)
+- [x] Conntrack tuning CLI (`gk perf conntrack`)
+- [x] NIC optimization CLI (`gk perf nic`)
+- [x] Performance status dashboard (`gk perf status`)
 - [x] Bandwidth/QoS service migrated from exec.Command("tc") to netlink API
 - [x] Cross-platform package manager abstraction (`gk deps check|install`) — supports Alpine, Debian/Ubuntu, Fedora/RHEL, Arch, Gentoo, openSUSE, Void, FreeBSD

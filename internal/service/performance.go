@@ -19,11 +19,12 @@ import (
 //
 // Features:
 //   - nftables flowtables: bypass full rule evaluation for established flows
+//   - Per-zone flowtable control: choose which zones get flow offload
+//   - Per-zone conntrack bypass (notrack): skip connection tracking on trusted zones
 //   - Conntrack auto-tuning: scale nf_conntrack_max/buckets to available RAM
 //   - Sysctl tuning: BBR congestion control, TCP fast open, backlog sizing
-//
-// These are the easy wins that get 80% of the throughput benefit with minimal
-// complexity. More advanced optimizations (XDP, IRQ affinity) are Phase 13b.
+//   - IRQ affinity distribution: pin NIC IRQs to different CPUs round-robin
+//   - NIC offload optimization: TSO, GRO, GSO, checksum offloads
 type PerformanceTuner struct {
 	mu    sync.Mutex
 	state State
@@ -48,8 +49,10 @@ func (p *PerformanceTuner) DefaultConfig() map[string]string {
 		"flowtables":           "true",
 		"flowtable_interfaces": "",      // empty = auto-detect non-loopback
 		"flowtable_hw_offload": "false", // NIC hardware offload (requires driver support)
+		"flowtable_zones":      "",      // empty = all zones; comma-separated zone interfaces to offload
 		"conntrack_auto":       "true",
-		"conntrack_max":        "0",  // 0 = auto (RAM-based: 256 entries per MB)
+		"conntrack_max":        "0",     // 0 = auto (RAM-based: 256 entries per MB)
+		"conntrack_notrack_zones": "",   // comma-separated zone interfaces to skip conntrack (trusted zones)
 		"sysctl_tuning":        "true",
 		"tcp_bbr":              "true",
 		"tcp_fastopen":         "true",
@@ -62,18 +65,20 @@ func (p *PerformanceTuner) DefaultConfig() map[string]string {
 
 func (p *PerformanceTuner) ConfigSchema() map[string]ConfigField {
 	return map[string]ConfigField{
-		"flowtables":           {Description: "Enable nftables flowtables for established flow bypass", Default: "true", Type: "bool"},
-		"flowtable_interfaces": {Description: "Interfaces for flowtable (comma-separated, empty = auto-detect)", Type: "string"},
-		"flowtable_hw_offload": {Description: "Enable hardware flow offload (requires NIC support)", Default: "false", Type: "bool"},
-		"conntrack_auto":       {Description: "Auto-scale conntrack table based on RAM", Default: "true", Type: "bool"},
-		"conntrack_max":        {Description: "Manual conntrack_max (0 = auto)", Default: "0", Type: "int"},
-		"sysctl_tuning":        {Description: "Apply optimized sysctl settings", Default: "true", Type: "bool"},
-		"tcp_bbr":              {Description: "Enable BBR congestion control", Default: "true", Type: "bool"},
-		"tcp_fastopen":         {Description: "Enable TCP Fast Open (client + server)", Default: "true", Type: "bool"},
-		"netdev_backlog":       {Description: "net.core.netdev_max_backlog value", Default: "4096", Type: "int"},
-		"somaxconn":            {Description: "net.core.somaxconn value", Default: "16384", Type: "int"},
-		"irq_affinity":         {Description: "Distribute NIC IRQs across CPUs", Default: "true", Type: "bool"},
-		"nic_offloads":         {Description: "Enable TSO/GRO/GSO/checksum offloads", Default: "true", Type: "bool"},
+		"flowtables":             {Description: "Enable nftables flowtables for established flow bypass", Default: "true", Type: "bool"},
+		"flowtable_interfaces":   {Description: "Interfaces for flowtable (comma-separated, empty = auto-detect)", Type: "string"},
+		"flowtable_hw_offload":   {Description: "Enable hardware flow offload (requires NIC support)", Default: "false", Type: "bool"},
+		"flowtable_zones":        {Description: "Zone interfaces to offload (comma-separated, empty = all)", Type: "string"},
+		"conntrack_auto":         {Description: "Auto-scale conntrack table based on RAM", Default: "true", Type: "bool"},
+		"conntrack_max":          {Description: "Manual conntrack_max (0 = auto)", Default: "0", Type: "int"},
+		"conntrack_notrack_zones": {Description: "Zone interfaces to skip conntrack (comma-separated, trusted zones only)", Type: "string"},
+		"sysctl_tuning":          {Description: "Apply optimized sysctl settings", Default: "true", Type: "bool"},
+		"tcp_bbr":                {Description: "Enable BBR congestion control", Default: "true", Type: "bool"},
+		"tcp_fastopen":           {Description: "Enable TCP Fast Open (client + server)", Default: "true", Type: "bool"},
+		"netdev_backlog":         {Description: "net.core.netdev_max_backlog value", Default: "4096", Type: "int"},
+		"somaxconn":              {Description: "net.core.somaxconn value", Default: "16384", Type: "int"},
+		"irq_affinity":           {Description: "Distribute NIC IRQs across CPUs", Default: "true", Type: "bool"},
+		"nic_offloads":           {Description: "Enable TSO/GRO/GSO/checksum offloads", Default: "true", Type: "bool"},
 	}
 }
 
@@ -98,6 +103,10 @@ func (p *PerformanceTuner) Start(cfg map[string]string) error {
 		p.enableFlowtables(cfg)
 	}
 
+	if notrackZones := cfg["conntrack_notrack_zones"]; notrackZones != "" {
+		p.applyConntrackBypass(notrackZones)
+	}
+
 	if cfg["irq_affinity"] == "true" || cfg["nic_offloads"] == "true" {
 		p.tuneNICs(cfg)
 	}
@@ -113,6 +122,8 @@ func (p *PerformanceTuner) Stop() error {
 
 	// Remove flowtable nft table.
 	nftDeleteTable(nft.TableFamilyINet, "gk_perf")
+	// Remove conntrack bypass nft table.
+	nftDeleteTable(nft.TableFamilyINet, "gk_notrack")
 
 	p.state = StateStopped
 	slog.Info("performance tuner stopped")
@@ -258,14 +269,26 @@ func (p *PerformanceTuner) enableFlowtables(cfg map[string]string) {
 		return
 	}
 
-	if err := p.applyFlowtableRules(devices, cfg["flowtable_hw_offload"] == "true"); err != nil {
+	// Zone-aware flowtable: if flowtable_zones is set, only offload traffic
+	// entering from those zone interfaces. Otherwise offload all forward traffic.
+	var zoneIfaces []string
+	if zones := cfg["flowtable_zones"]; zones != "" {
+		for _, z := range strings.Split(zones, ",") {
+			z = strings.TrimSpace(z)
+			if z != "" {
+				zoneIfaces = append(zoneIfaces, z)
+			}
+		}
+	}
+
+	if err := p.applyFlowtableRules(devices, cfg["flowtable_hw_offload"] == "true", zoneIfaces); err != nil {
 		slog.Warn("failed to apply flowtable rules", "error", err)
 	} else {
-		slog.Info("flowtables enabled", "devices", devices, "hw_offload", cfg["flowtable_hw_offload"])
+		slog.Info("flowtables enabled", "devices", devices, "hw_offload", cfg["flowtable_hw_offload"], "zone_filter", zoneIfaces)
 	}
 }
 
-func (p *PerformanceTuner) applyFlowtableRules(devices []string, hwOffload bool) error {
+func (p *PerformanceTuner) applyFlowtableRules(devices []string, hwOffload bool, zoneIfaces []string) error {
 	conn, err := nft.New()
 	if err != nil {
 		return fmt.Errorf("nftables connection: %w", err)
@@ -306,30 +329,111 @@ func (p *PerformanceTuner) applyFlowtableRules(devices []string, hwOffload bool)
 		Policy:   &policy,
 	})
 
-	// Rule: ct state established,related flow offload @ft
-	conn.AddRule(&nft.Rule{
-		Table: table,
-		Chain: chain,
-		Exprs: []expr.Any{
-			// Match ct state established,related
-			&expr.Ct{Key: expr.CtKeySTATE, Register: 1},
-			&expr.Bitwise{
-				SourceRegister: 1,
-				DestRegister:   1,
-				Len:            4,
-				Mask:           []byte{0x06, 0x00, 0x00, 0x00}, // established(2) | related(4)
-				Xor:            []byte{0x00, 0x00, 0x00, 0x00},
+	if len(zoneIfaces) > 0 {
+		// Per-zone flowtable: only offload traffic entering from specified zone interfaces.
+		// This lets you keep full inspection on untrusted zones while offloading trusted ones.
+		for _, iface := range zoneIfaces {
+			ruleExprs := []expr.Any{
+				// Match input interface = zone interface
+				&expr.Meta{Key: expr.MetaKeyIIFNAME, Register: 1},
+				&expr.Cmp{Op: expr.CmpOpEq, Register: 1, Data: nftPadIfname(iface)},
+				// Match ct state established,related
+				&expr.Ct{Key: expr.CtKeySTATE, Register: 1},
+				&expr.Bitwise{
+					SourceRegister: 1,
+					DestRegister:   1,
+					Len:            4,
+					Mask:           []byte{0x06, 0x00, 0x00, 0x00},
+					Xor:            []byte{0x00, 0x00, 0x00, 0x00},
+				},
+				&expr.Cmp{Op: expr.CmpOpNeq, Register: 1, Data: []byte{0x00, 0x00, 0x00, 0x00}},
+				// flow offload @ft
+				&expr.FlowOffload{Name: "ft"},
+			}
+			conn.AddRule(&nft.Rule{Table: table, Chain: chain, Exprs: ruleExprs})
+		}
+	} else {
+		// Global flowtable: offload all established/related forward traffic.
+		conn.AddRule(&nft.Rule{
+			Table: table,
+			Chain: chain,
+			Exprs: []expr.Any{
+				&expr.Ct{Key: expr.CtKeySTATE, Register: 1},
+				&expr.Bitwise{
+					SourceRegister: 1,
+					DestRegister:   1,
+					Len:            4,
+					Mask:           []byte{0x06, 0x00, 0x00, 0x00},
+					Xor:            []byte{0x00, 0x00, 0x00, 0x00},
+				},
+				&expr.Cmp{Op: expr.CmpOpNeq, Register: 1, Data: []byte{0x00, 0x00, 0x00, 0x00}},
+				&expr.FlowOffload{Name: "ft"},
 			},
-			&expr.Cmp{Op: expr.CmpOpNeq, Register: 1, Data: []byte{0x00, 0x00, 0x00, 0x00}},
-			// flow offload @ft
-			&expr.FlowOffload{Name: "ft"},
-		},
-	})
+		})
+	}
 
 	if err := conn.Flush(); err != nil {
 		return fmt.Errorf("nftables flush: %w", err)
 	}
 	return nil
+}
+
+// --- conntrack bypass (notrack) for trusted zones ---
+
+// applyConntrackBypass adds nftables raw/prerouting rules that skip connection
+// tracking for traffic on specified zone interfaces. This eliminates the per-packet
+// conntrack overhead on trusted/high-throughput zones while preserving full stateful
+// inspection on untrusted zones.
+func (p *PerformanceTuner) applyConntrackBypass(notrackZones string) {
+	var ifaces []string
+	for _, z := range strings.Split(notrackZones, ",") {
+		z = strings.TrimSpace(z)
+		if z != "" {
+			ifaces = append(ifaces, z)
+		}
+	}
+	if len(ifaces) == 0 {
+		return
+	}
+
+	conn, err := nft.New()
+	if err != nil {
+		slog.Warn("conntrack bypass: nftables connection failed", "error", err)
+		return
+	}
+
+	// Use inet family so it covers both IPv4 and IPv6.
+	table := conn.AddTable(&nft.Table{Family: nft.TableFamilyINet, Name: "gk_notrack"})
+
+	// Raw prerouting chain — runs before conntrack.
+	prio := nft.ChainPriorityRaw
+	chain := conn.AddChain(&nft.Chain{
+		Table:    table,
+		Name:     "prerouting",
+		Type:     nft.ChainTypeFilter,
+		Hooknum:  nft.ChainHookPrerouting,
+		Priority: &prio,
+	})
+
+	// For each trusted zone interface, add a notrack rule.
+	for _, iface := range ifaces {
+		conn.AddRule(&nft.Rule{
+			Table: table,
+			Chain: chain,
+			Exprs: []expr.Any{
+				&expr.Meta{Key: expr.MetaKeyIIFNAME, Register: 1},
+				&expr.Cmp{Op: expr.CmpOpEq, Register: 1, Data: nftPadIfname(iface)},
+				&expr.Notrack{},
+			},
+		})
+		slog.Info("conntrack bypass (notrack) added", "iface", iface)
+	}
+
+	if err := conn.Flush(); err != nil {
+		slog.Warn("conntrack bypass: nftables flush failed", "error", err)
+	} else {
+		slog.Info("conntrack bypass applied", "zones", ifaces)
+	}
 }
 
 // detectForwardInterfaces returns all non-loopback network interfaces.
@@ -401,4 +505,114 @@ func (p *PerformanceTuner) enableOffloads(iface string) {
 		}
 	}
 	slog.Info("NIC offloads applied", "iface", iface)
+}
+
+// --- Status / diagnostics ---
+
+// ConntrackStatus returns current conntrack table sizing.
+type ConntrackStatus struct {
+	Max     int `json:"max"`
+	Buckets int `json:"buckets"`
+	Count   int `json:"count"`
+	RAMMB   int `json:"ram_mb"`
+}
+
+// GetConntrackStatus reads current conntrack parameters from the kernel.
+func GetConntrackStatus() ConntrackStatus {
+	st := ConntrackStatus{RAMMB: totalRAMMB()}
+
+	if v, err := Net.SysctlGet("net.netfilter.nf_conntrack_max"); err == nil {
+		st.Max, _ = strconv.Atoi(v)
+	}
+	if data, err := os.ReadFile("/sys/module/nf_conntrack/parameters/hashsize"); err == nil {
+		st.Buckets, _ = strconv.Atoi(strings.TrimSpace(string(data)))
+	}
+	if v, err := Net.SysctlGet("net.netfilter.nf_conntrack_count"); err == nil {
+		st.Count, _ = strconv.Atoi(v)
+	}
+	return st
+}
+
+// PerfStatus returns a summary of all performance tuning state.
+type PerfStatus struct {
+	Conntrack      ConntrackStatus   `json:"conntrack"`
+	Flowtables     bool              `json:"flowtables"`
+	FlowtableZones []string          `json:"flowtable_zones,omitempty"`
+	NotrackZones   []string          `json:"notrack_zones,omitempty"`
+	TCPCongestion  string            `json:"tcp_congestion"`
+	TCPFastOpen    string            `json:"tcp_fastopen"`
+	IRQAffinity    bool              `json:"irq_affinity"`
+	NICOffloads    bool              `json:"nic_offloads"`
+	NICs           []NICPerfInfo     `json:"nics,omitempty"`
+}
+
+// NICPerfInfo is a summary of NIC performance state for the CLI.
+type NICPerfInfo struct {
+	Name      string          `json:"name"`
+	Driver    string          `json:"driver"`
+	SpeedMbps int             `json:"speed_mbps"`
+	RxQueues  int             `json:"rx_queues"`
+	TxQueues  int             `json:"tx_queues"`
+	IRQs      int             `json:"irqs"`
+	Offloads  map[string]bool `json:"offloads"`
+}
+
+// GetPerfStatus builds a complete performance status snapshot.
+func (p *PerformanceTuner) GetPerfStatus() PerfStatus {
+	p.mu.Lock()
+	cfg := p.cfg
+	p.mu.Unlock()
+
+	st := PerfStatus{
+		Conntrack: GetConntrackStatus(),
+	}
+
+	if cfg != nil {
+		st.Flowtables = cfg["flowtables"] == "true"
+		st.IRQAffinity = cfg["irq_affinity"] == "true"
+		st.NICOffloads = cfg["nic_offloads"] == "true"
+
+		if zones := cfg["flowtable_zones"]; zones != "" {
+			for _, z := range strings.Split(zones, ",") {
+				z = strings.TrimSpace(z)
+				if z != "" {
+					st.FlowtableZones = append(st.FlowtableZones, z)
+				}
+			}
+		}
+		if zones := cfg["conntrack_notrack_zones"]; zones != "" {
+			for _, z := range strings.Split(zones, ",") {
+				z = strings.TrimSpace(z)
+				if z != "" {
+					st.NotrackZones = append(st.NotrackZones, z)
+				}
+			}
+		}
+	}
+
+	if v, err := Net.SysctlGet("net.ipv4.tcp_congestion_control"); err == nil {
+		st.TCPCongestion = v
+	}
+	if v, err := Net.SysctlGet("net.ipv4.tcp_fastopen"); err == nil {
+		st.TCPFastOpen = v
+	}
+
+	// Collect NIC info for all forward interfaces.
+	for _, iface := range detectForwardInterfaces() {
+		info, err := Net.NICInfo(iface)
+		if err != nil {
+			continue
+		}
+		st.NICs = append(st.NICs, NICPerfInfo{
+			Name:      info.Name,
+			Driver:    info.Driver,
+			SpeedMbps: info.SpeedMbps,
+			RxQueues:  info.RxQueues,
+			TxQueues:  info.TxQueues,
+			IRQs:      len(info.IRQs),
+			Offloads:  info.Offloads,
+		})
+	}
+
+	return st
 }
