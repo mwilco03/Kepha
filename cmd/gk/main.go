@@ -16,6 +16,7 @@ import (
 	"github.com/gatekeeper-firewall/gatekeeper/internal/compiler"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/config"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/driver"
+	"github.com/gatekeeper-firewall/gatekeeper/internal/inspect"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/model"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/ops"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/service"
@@ -84,6 +85,8 @@ func main() {
 		err = cmdPing(os.Args[2:])
 	case "perf":
 		err = cmdPerf(os.Args[2:], outputFmt)
+	case "fingerprint", "fp":
+		err = cmdFingerprint(os.Args[2:], outputFmt)
 	case "deps":
 		err = cmdDeps(os.Args[2:])
 	case "help", "--help", "-h":
@@ -950,6 +953,154 @@ func detectCLIInterfaces() []string {
 	return result
 }
 
+func cmdFingerprint(args []string, outputFmt string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("usage: gk fingerprint <list|identify|assign> [options]")
+	}
+
+	dbPath := os.Getenv("GK_DB")
+	if dbPath == "" {
+		dbPath = "/var/lib/gatekeeper/gatekeeper.db"
+	}
+
+	switch args[0] {
+	case "list":
+		fs := flag.NewFlagSet("fingerprint list", flag.ExitOnError)
+		fpType := fs.String("type", "", "Filter by type (ja4, ja4s, ja4t, ja4h)")
+		limit := fs.Int("limit", 100, "Maximum entries to return")
+		_ = fs.Parse(args[1:])
+
+		store, err := openFingerprintStore(dbPath)
+		if err != nil {
+			return err
+		}
+
+		fps, err := store.ListFingerprints(*fpType, *limit)
+		if err != nil {
+			return err
+		}
+
+		if outputFmt == "table" {
+			tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+			fmt.Fprintln(tw, "TYPE\tHASH\tSRC_IP\tSNI\tCOUNT\tLAST_SEEN\tPROFILE")
+			for _, fp := range fps {
+				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%d\t%s\t%s\n",
+					fp.Type, fp.Hash, fp.SrcIP, fp.SNI, fp.Count,
+					fp.LastSeen.Format("2006-01-02 15:04:05"), fp.AssignedProfile)
+			}
+			return tw.Flush()
+		}
+		return printJSON(fps)
+
+	case "identify":
+		if len(args) < 2 {
+			return fmt.Errorf("usage: gk fingerprint identify <hash>")
+		}
+		hash := args[1]
+
+		engine := inspect.NewEngine(nil)
+		identity, confidence, err := engine.IdentifyDevice(hash)
+		if err != nil {
+			return err
+		}
+
+		result := map[string]any{
+			"hash":       hash,
+			"identity":   identity,
+			"confidence": confidence,
+		}
+
+		threat, err := engine.CheckThreat(hash)
+		if err == nil {
+			result["threat"] = threat
+		}
+
+		if outputFmt == "table" {
+			if identity != nil {
+				fmt.Printf("Hash:       %s\n", hash)
+				fmt.Printf("Device:     %s\n", identity.Name)
+				fmt.Printf("Category:   %s\n", identity.Category)
+				fmt.Printf("OS:         %s\n", identity.OS)
+				fmt.Printf("Confidence: %.0f%%\n", confidence*100)
+			} else {
+				fmt.Printf("Hash:       %s\n", hash)
+				fmt.Printf("Device:     Unknown\n")
+			}
+			if threat != nil && threat.Matched {
+				fmt.Printf("THREAT:     %s (%s) — %s [%s]\n",
+					threat.ThreatName, threat.ThreatType, threat.Severity, threat.FeedName)
+			}
+			return nil
+		}
+		return printJSON(result)
+
+	case "assign":
+		if len(args) < 3 {
+			return fmt.Errorf("usage: gk fingerprint assign <hash> <profile>")
+		}
+		hash := args[1]
+		profile := args[2]
+
+		store, err := openFingerprintStore(dbPath)
+		if err != nil {
+			return err
+		}
+
+		if err := store.AssignProfile(hash, profile); err != nil {
+			return err
+		}
+		fmt.Printf("Assigned fingerprint %s to profile %q\n", hash, profile)
+		return nil
+
+	case "show":
+		if len(args) < 2 {
+			return fmt.Errorf("usage: gk fingerprint show <hash>")
+		}
+		hash := args[1]
+
+		store, err := openFingerprintStore(dbPath)
+		if err != nil {
+			return err
+		}
+
+		fp, err := store.GetFingerprint(hash)
+		if err != nil {
+			return err
+		}
+		if fp == nil {
+			return fmt.Errorf("fingerprint %q not found", hash)
+		}
+
+		if outputFmt == "table" {
+			fmt.Printf("Type:     %s\n", fp.Type)
+			fmt.Printf("Hash:     %s\n", fp.Hash)
+			fmt.Printf("Source:   %s\n", fp.SrcIP)
+			fmt.Printf("Dest:     %s\n", fp.DstIP)
+			fmt.Printf("SNI:      %s\n", fp.SNI)
+			fmt.Printf("Profile:  %s\n", fp.AssignedProfile)
+			fmt.Printf("Count:    %d\n", fp.Count)
+			fmt.Printf("First:    %s\n", fp.FirstSeen.Format("2006-01-02 15:04:05"))
+			fmt.Printf("Last:     %s\n", fp.LastSeen.Format("2006-01-02 15:04:05"))
+			if fp.ThreatMatch {
+				fmt.Printf("Threat:   YES\n")
+			}
+			return nil
+		}
+		return printJSON(fp)
+
+	default:
+		return fmt.Errorf("unknown fingerprint subcommand: %s\nusage: gk fingerprint <list|show|identify|assign>", args[0])
+	}
+}
+
+func openFingerprintStore(dbPath string) (*inspect.SQLiteStore, error) {
+	store, err := config.NewStore(dbPath)
+	if err != nil {
+		return nil, fmt.Errorf("cannot open database: %w", err)
+	}
+	return inspect.NewSQLiteStore(store.DB())
+}
+
 func printJSON(v any) error {
 	out, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
@@ -990,6 +1141,7 @@ Commands:
   explain     Show all matching rules for a src→dst pair
   audit       Show audit log of mutations
   service     Manage services (list, show, enable, disable, config)
+  fingerprint Manage TLS fingerprints (list, show, identify, assign)
   perf        Performance tuning (status, conntrack, nic)
   ping        Ping a target host
   deps        Manage system dependencies (check, install)

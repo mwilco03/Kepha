@@ -467,34 +467,50 @@ Per rebuttal, these were deferred from v1 but have been implemented ahead of sch
 **IMPORTANT: This entire feature is opt-in.** Packet inspection adds overhead. Users who want maximum forwarding throughput (flowtables + zero inspection) can leave this disabled entirely. Enable per-zone or globally via `gk service enable fingerprint` / `gk service disable fingerprint`. When disabled, zero CPU overhead — no capture, no parsing, no matching. The performance stack (Phase 13) and the inspection stack (Phase 14) are independent; neither requires the other.
 
 #### JA4 Fingerprint Engine
-- [ ] Define `PacketInspector` interface:
-  - `FingerprintTLS(conn) (*JA4Fingerprint, error)`
+- [x] Define `PacketInspector` interface:
+  - `FingerprintTLS(hello) (*JA4Fingerprint, error)`
+  - `FingerprintServer(hello) (*JA4SFingerprint, error)`
+  - `FingerprintTCP(syn) (*JA4TFingerprint, error)`
+  - `FingerprintHTTP(headers) (*JA4HFingerprint, error)`
   - `IdentifyDevice(fp) (*DeviceIdentity, float64, error)`
   - `CheckThreat(fp) (*ThreatMatch, error)`
-- [ ] JA4 extraction from TLS ClientHello (cipher suites, extensions, ALPN, SNI)
-- [ ] JA4S extraction from TLS ServerHello
-- [ ] JA4T extraction from TCP SYN (window size, options, TTL — OS detection)
-- [ ] JA4H extraction from HTTP headers (header ordering, values)
+- [x] JA4 extraction from TLS ClientHello (cipher suites, extensions, ALPN, SNI, GREASE filtering)
+- [x] JA4S extraction from TLS ServerHello
+- [x] JA4T extraction from TCP SYN (window size, options, TTL — OS detection)
+- [x] JA4H extraction from HTTP headers (header ordering, values)
+- [x] TLS ClientHello / ServerHello binary parser (`internal/inspect/parser.go`)
+- [x] TCP SYN packet parser with option extraction
 
 #### Passive Device Profiling
-- [ ] Known device fingerprint database (IoT devices, browsers, OS families)
-- [ ] Auto-suggest profile assignment based on JA4 match
+- [x] Known device fingerprint database (IoT devices, browsers, OS families)
+- [x] Auto-suggest profile assignment based on JA4 match
 - [ ] Anomaly detection: device fingerprint changed = potential compromise
-- [ ] API: `GET /api/v1/fingerprints` — list observed fingerprints
-- [ ] API: `POST /api/v1/fingerprints/{hash}/assign` — map fingerprint to profile
-- [ ] CLI: `gk fingerprint list` / `gk fingerprint identify <hash>`
+- [x] API: `GET /api/v1/fingerprints` — list observed fingerprints
+- [x] API: `GET /api/v1/fingerprints/{hash}` — get specific fingerprint
+- [x] API: `GET /api/v1/fingerprints/{hash}/identify` — identify device
+- [x] API: `POST /api/v1/fingerprints/{hash}/assign` — map fingerprint to profile
+- [x] API: `GET /api/v1/fingerprints/{hash}/threat` — check threat feeds
+- [x] CLI: `gk fingerprint list` / `gk fingerprint show <hash>`
+- [x] CLI: `gk fingerprint identify <hash>` / `gk fingerprint assign <hash> <profile>`
 
 #### Threat Intelligence Integration
-- [ ] Known malware JA3/JA4 hash feeds (Abuse.ch, Proofpoint ET)
-- [ ] Auto-block connections matching known C2 fingerprints
-- [ ] Alert on JA4 match against threat feed
+- [x] Threat feed data model and matching engine (`ThreatFeed`, `ThreatEntry`)
+- [x] Auto-block config flag for connections matching known C2 fingerprints
+- [x] Alert on JA4 match against threat feed via API
 - [ ] Feed update scheduler with TTL, hash pinning, last-known-good caching
+- [ ] Known malware JA3/JA4 hash feeds auto-download (Abuse.ch, Proofpoint ET)
 
 #### Packet Capture Backend
 - [ ] PF_RING integration for zero-copy packet capture on Linux
 - [ ] AF_XDP fallback for environments without PF_RING
 - [ ] libpcap fallback for maximum compatibility
 - [ ] Auto-detect best available capture backend
+
+#### Fingerprint Service Plugin
+- [x] `FingerprintService` implementing `Service` interface (`internal/service/fingerprint.go`)
+- [x] SQLite-backed fingerprint store (`internal/inspect/store.go`)
+- [x] Enable via `gk service enable fingerprint`
+- [x] Configurable interfaces, capture method, BPF filter, threat feeds
 
 **Libraries:** `github.com/dreadl0ck/ja3`, FoxIO JA4 spec, PF_RING Go bindings
 

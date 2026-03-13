@@ -31,6 +31,9 @@ type RouterConfig struct {
 	// When nil, falls back to the legacy single API key auth.
 	RBACEnforcer *rbac.Enforcer
 
+	// FingerprintSvc is the TLS fingerprint service (optional).
+	FingerprintSvc *service.FingerprintService
+
 	// RateLimit controls API rate limiting (requests/sec). 0 = default (100/s).
 	RateLimit int
 	// DiagRateLimit controls diagnostic endpoint rate limiting. 0 = default (5/s).
@@ -149,6 +152,16 @@ func NewRouterWithConfig(cfg *RouterConfig) http.Handler {
 		mux.HandleFunc("POST /api/v1/services/{name}/enable", sh.enableService)
 		mux.HandleFunc("POST /api/v1/services/{name}/disable", sh.disableService)
 		mux.HandleFunc("PUT /api/v1/services/{name}/config", sh.configureService)
+	}
+
+	// Fingerprint endpoints (requires fingerprint service).
+	if cfg.FingerprintSvc != nil {
+		fph := &fingerprintHandlers{svc: cfg.FingerprintSvc}
+		mux.HandleFunc("GET /api/v1/fingerprints", fph.listFingerprints)
+		mux.HandleFunc("GET /api/v1/fingerprints/{hash}", fph.getFingerprint)
+		mux.HandleFunc("GET /api/v1/fingerprints/{hash}/identify", fph.identifyFingerprint)
+		mux.HandleFunc("POST /api/v1/fingerprints/{hash}/assign", fph.assignProfile)
+		mux.HandleFunc("GET /api/v1/fingerprints/{hash}/threat", fph.checkThreat)
 	}
 
 	// RBAC key management (requires RBAC to be enabled).
