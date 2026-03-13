@@ -3,18 +3,18 @@ package service
 import (
 	"fmt"
 	"log/slog"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"strings"
+	"strconv"
 	"sync"
+
+	"github.com/vishvananda/netlink"
 )
 
 // Bandwidth provides traffic shaping and QoS (Quality of Service) via
-// Linux tc (traffic control). Allows prioritizing traffic types (VoIP,
-// gaming, streaming) and limiting bandwidth per device or zone.
+// Linux tc (traffic control) using the netlink API directly. Allows
+// prioritizing traffic types (VoIP, gaming, streaming) and limiting
+// bandwidth per device or zone.
 //
-// This is one of the most requested features from pfSense/OPNsense users.
+// Uses vishvananda/netlink for all tc operations — no exec.Command calls.
 type Bandwidth struct {
 	mu      sync.Mutex
 	state   State
@@ -76,10 +76,6 @@ func (b *Bandwidth) Start(cfg map[string]string) error {
 	defer b.mu.Unlock()
 	b.cfg = cfg
 
-	if err := os.MkdirAll(b.confDir, 0o755); err != nil {
-		return err
-	}
-
 	if err := b.applyQoS(); err != nil {
 		return err
 	}
@@ -95,9 +91,7 @@ func (b *Bandwidth) Stop() error {
 	if b.cfg != nil {
 		iface := b.cfg["wan_interface"]
 		if iface != "" {
-			// Remove tc qdisc.
-			exec.Command("tc", "qdisc", "del", "dev", iface, "root").Run()
-			exec.Command("tc", "qdisc", "del", "dev", iface, "ingress").Run()
+			b.clearQdisc(iface)
 		}
 	}
 
@@ -118,80 +112,192 @@ func (b *Bandwidth) Status() State {
 	return b.state
 }
 
+// clearQdisc removes all qdiscs from an interface via netlink.
+func (b *Bandwidth) clearQdisc(ifaceName string) {
+	link, err := netlink.LinkByName(ifaceName)
+	if err != nil {
+		return
+	}
+	qdiscs, _ := netlink.QdiscList(link)
+	for _, q := range qdiscs {
+		netlink.QdiscDel(q)
+	}
+}
+
+// mbpsToBytes converts megabits per second to bytes per second.
+func mbpsToBytes(mbps uint64) uint64 {
+	return mbps * 1000 * 1000 / 8
+}
+
 func (b *Bandwidth) applyQoS() error {
 	cfg := b.cfg
-	iface := cfg["wan_interface"]
+	ifaceName := cfg["wan_interface"]
 
-	// Clear existing.
-	exec.Command("tc", "qdisc", "del", "dev", iface, "root").Run()
+	link, err := netlink.LinkByName(ifaceName)
+	if err != nil {
+		return fmt.Errorf("interface %s not found: %w", ifaceName, err)
+	}
+	linkIdx := link.Attrs().Index
 
-	var script strings.Builder
-	script.WriteString("#!/bin/sh\n")
-	script.WriteString("# Gatekeeper QoS — auto-generated\n\n")
+	// Clear existing qdiscs.
+	b.clearQdisc(ifaceName)
 
 	useFQCodel := cfg["fq_codel"] == "true"
-	uploadMbps := cfg["upload_mbps"]
-	downloadMbps := cfg["download_mbps"]
+	uploadMbps, _ := strconv.ParseUint(cfg["upload_mbps"], 10, 64)
+	downloadMbps, _ := strconv.ParseUint(cfg["download_mbps"], 10, 64)
 
-	if uploadMbps != "0" && uploadMbps != "" {
-		uploadKbit := uploadMbps + "mbit"
+	if uploadMbps > 0 {
+		rateBytes := mbpsToBytes(uploadMbps)
 
 		// HTB root qdisc for upload shaping.
-		script.WriteString(fmt.Sprintf("tc qdisc add dev %s root handle 1: htb default 30\n", iface))
-		script.WriteString(fmt.Sprintf("tc class add dev %s parent 1: classid 1:1 htb rate %s burst 15k\n", iface, uploadKbit))
-
-		// Priority classes.
-		// Class 10: High priority (VoIP, DNS, ACK).
-		script.WriteString(fmt.Sprintf("tc class add dev %s parent 1:1 classid 1:10 htb rate %s ceil %s burst 15k prio 1\n",
-			iface, "30%"+uploadKbit[:len(uploadKbit)-4]+"mbit", uploadKbit))
-		// Class 20: Normal priority.
-		script.WriteString(fmt.Sprintf("tc class add dev %s parent 1:1 classid 1:20 htb rate %s ceil %s burst 15k prio 2\n",
-			iface, "50%"+uploadKbit[:len(uploadKbit)-4]+"mbit", uploadKbit))
-		// Class 30: Low priority (bulk).
-		script.WriteString(fmt.Sprintf("tc class add dev %s parent 1:1 classid 1:30 htb rate %s ceil %s burst 15k prio 3\n",
-			iface, "20%"+uploadKbit[:len(uploadKbit)-4]+"mbit", uploadKbit))
-
-		if useFQCodel {
-			script.WriteString(fmt.Sprintf("tc qdisc add dev %s parent 1:10 handle 10: fq_codel\n", iface))
-			script.WriteString(fmt.Sprintf("tc qdisc add dev %s parent 1:20 handle 20: fq_codel\n", iface))
-			script.WriteString(fmt.Sprintf("tc qdisc add dev %s parent 1:30 handle 30: fq_codel\n", iface))
+		htbQdisc := &netlink.Htb{
+			QdiscAttrs: netlink.QdiscAttrs{
+				LinkIndex: linkIdx,
+				Handle:    netlink.MakeHandle(1, 0),
+				Parent:    netlink.HANDLE_ROOT,
+			},
+			Defcls: 30,
+		}
+		if err := netlink.QdiscAdd(htbQdisc); err != nil {
+			return fmt.Errorf("add htb root qdisc: %w", err)
 		}
 
-		// Classify VoIP (SIP + RTP range).
-		if cfg["voip_priority"] == "true" {
-			script.WriteString(fmt.Sprintf("tc filter add dev %s parent 1: protocol ip u32 match ip dport 5060 0xffff flowid 1:10\n", iface))
-			script.WriteString(fmt.Sprintf("tc filter add dev %s parent 1: protocol ip u32 match ip sport 5060 0xffff flowid 1:10\n", iface))
+		// Root class 1:1 — full link rate.
+		rootClass := &netlink.HtbClass{
+			ClassAttrs: netlink.ClassAttrs{
+				LinkIndex: linkIdx,
+				Handle:    netlink.MakeHandle(1, 1),
+				Parent:    netlink.MakeHandle(1, 0),
+			},
+			Rate: rateBytes,
+			Ceil: rateBytes,
+		}
+		if err := netlink.ClassAdd(rootClass); err != nil {
+			return fmt.Errorf("add root class: %w", err)
 		}
 
-		// DNS always high priority.
-		script.WriteString(fmt.Sprintf("tc filter add dev %s parent 1: protocol ip u32 match ip dport 53 0xffff flowid 1:10\n", iface))
+		// Priority classes under 1:1.
+		// Class 10: High priority (30%, VoIP/DNS/ACK)
+		// Class 20: Normal priority (50%)
+		// Class 30: Low priority / bulk (20%, default)
+		priorities := []struct {
+			minor uint16
+			pct   uint64
+			prio  uint32
+		}{
+			{10, 30, 1},
+			{20, 50, 2},
+			{30, 20, 3},
+		}
+		for _, p := range priorities {
+			cls := &netlink.HtbClass{
+				ClassAttrs: netlink.ClassAttrs{
+					LinkIndex: linkIdx,
+					Handle:    netlink.MakeHandle(1, p.minor),
+					Parent:    netlink.MakeHandle(1, 1),
+				},
+				Rate: rateBytes * p.pct / 100,
+				Ceil: rateBytes,
+				Prio: p.prio,
+			}
+			if err := netlink.ClassAdd(cls); err != nil {
+				slog.Warn("add htb class", "minor", p.minor, "error", err)
+			}
 
-		// ACK packets high priority.
-		script.WriteString(fmt.Sprintf("tc filter add dev %s parent 1: protocol ip u32 match ip protocol 6 0xff match u8 0x10 0xff at nexthdr+13 flowid 1:10\n", iface))
+			// Attach fq_codel leaf qdisc for bufferbloat prevention.
+			if useFQCodel {
+				fq := &netlink.FqCodel{
+					QdiscAttrs: netlink.QdiscAttrs{
+						LinkIndex: linkIdx,
+						Handle:    netlink.MakeHandle(p.minor, 0),
+						Parent:    netlink.MakeHandle(1, p.minor),
+					},
+				}
+				if err := netlink.QdiscAdd(fq); err != nil {
+					slog.Warn("add fq_codel leaf", "class", p.minor, "error", err)
+				}
+			}
+		}
+
+		// Classify high-priority traffic using fwmark-based filters.
+		// nftables marks matching packets, FwFilter classifies by mark:
+		//   mark 10 → class 1:10 (high priority)
+		//   mark 20 → class 1:20 (normal)
+		// Unmarked traffic falls to default class 1:30 (bulk).
+		highPrioFilter := &netlink.FwFilter{
+			FilterAttrs: netlink.FilterAttrs{
+				LinkIndex: linkIdx,
+				Parent:    netlink.MakeHandle(1, 0),
+				Protocol:  0x0800, // IPv4
+			},
+			ClassId: netlink.MakeHandle(1, 10),
+			Mask:    0xff,
+		}
+		if err := netlink.FilterAdd(highPrioFilter); err != nil {
+			slog.Warn("add fw filter for high priority", "error", err)
+		}
+
+		normalFilter := &netlink.FwFilter{
+			FilterAttrs: netlink.FilterAttrs{
+				LinkIndex: linkIdx,
+				Parent:    netlink.MakeHandle(1, 0),
+				Protocol:  0x0800,
+			},
+			ClassId: netlink.MakeHandle(1, 20),
+			Mask:    0xff,
+		}
+		if err := netlink.FilterAdd(normalFilter); err != nil {
+			slog.Warn("add fw filter for normal priority", "error", err)
+		}
 
 	} else if useFQCodel {
-		// Just fq_codel for bufferbloat prevention.
-		script.WriteString(fmt.Sprintf("tc qdisc add dev %s root fq_codel\n", iface))
+		// Just fq_codel for bufferbloat prevention — no bandwidth limit.
+		fq := &netlink.FqCodel{
+			QdiscAttrs: netlink.QdiscAttrs{
+				LinkIndex: linkIdx,
+				Handle:    netlink.MakeHandle(1, 0),
+				Parent:    netlink.HANDLE_ROOT,
+			},
+		}
+		if err := netlink.QdiscAdd(fq); err != nil {
+			return fmt.Errorf("add fq_codel root qdisc: %w", err)
+		}
 	}
 
 	// Ingress policing for download limiting.
-	if downloadMbps != "0" && downloadMbps != "" {
-		script.WriteString(fmt.Sprintf("tc qdisc add dev %s handle ffff: ingress\n", iface))
-		script.WriteString(fmt.Sprintf("tc filter add dev %s parent ffff: protocol ip u32 match u32 0 0 police rate %smbit burst 256k drop flowid :1\n",
-			iface, downloadMbps))
+	if downloadMbps > 0 {
+		ingress := &netlink.Ingress{
+			QdiscAttrs: netlink.QdiscAttrs{
+				LinkIndex: linkIdx,
+				Handle:    netlink.MakeHandle(0xffff, 0),
+				Parent:    netlink.HANDLE_INGRESS,
+			},
+		}
+		if err := netlink.QdiscAdd(ingress); err != nil {
+			slog.Warn("add ingress qdisc", "error", err)
+		} else {
+			// Police inbound traffic to the configured download rate.
+			rateBytes := mbpsToBytes(downloadMbps)
+			police := netlink.NewPoliceAction()
+			police.Rate = uint32(rateBytes)
+			police.Burst = 256 * 1024
+			police.ExceedAction = netlink.TC_POLICE_SHOT
+
+			filter := &netlink.MatchAll{
+				FilterAttrs: netlink.FilterAttrs{
+					LinkIndex: linkIdx,
+					Parent:    netlink.MakeHandle(0xffff, 0),
+					Protocol:  0x0800,
+				},
+				Actions: []netlink.Action{police},
+			}
+			if err := netlink.FilterAdd(filter); err != nil {
+				slog.Warn("add ingress police filter", "error", err)
+			}
+		}
 	}
 
-	scriptPath := filepath.Join(b.confDir, "qos.sh")
-	if err := os.WriteFile(scriptPath, []byte(script.String()), 0o755); err != nil {
-		return err
-	}
-
-	// Execute the script.
-	cmd := exec.Command("sh", scriptPath)
-	if output, err := cmd.CombinedOutput(); err != nil {
-		slog.Warn("qos script had errors (some rules may have applied)", "error", err, "output", string(output))
-	}
-
-	slog.Info("qos rules applied", "interface", iface)
+	slog.Info("qos rules applied via netlink", "interface", ifaceName,
+		"upload_mbps", uploadMbps, "download_mbps", downloadMbps)
 	return nil
 }

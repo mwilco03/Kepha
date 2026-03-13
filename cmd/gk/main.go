@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"text/tabwriter"
 
+	"github.com/gatekeeper-firewall/gatekeeper/internal/backend"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/cli"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/compiler"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/config"
@@ -42,15 +43,15 @@ func main() {
 		fmt.Printf("gk %s\n", version)
 		return
 	case "status":
-		err = cmdStatus(backend)
+		err = cmdStatus(backend, outputFmt)
 	case "zone":
-		err = cmdZone(backend, os.Args[2:])
+		err = cmdZone(backend, os.Args[2:], outputFmt)
 	case "alias":
-		err = cmdAlias(backend, os.Args[2:])
+		err = cmdAlias(backend, os.Args[2:], outputFmt)
 	case "profile":
-		err = cmdProfile(backend, os.Args[2:])
+		err = cmdProfile(backend, os.Args[2:], outputFmt)
 	case "policy":
-		err = cmdPolicy(backend, os.Args[2:])
+		err = cmdPolicy(backend, os.Args[2:], outputFmt)
 	case "assign":
 		err = cmdAssign(backend, os.Args[2:])
 	case "unassign":
@@ -66,9 +67,9 @@ func main() {
 	case "import":
 		err = cmdImport(backend, os.Args[2:])
 	case "wg":
-		err = cmdWG(backend, os.Args[2:])
+		err = cmdWG(backend, os.Args[2:], outputFmt)
 	case "leases":
-		err = cmdLeases(backend)
+		err = cmdLeases(backend, outputFmt)
 	case "test":
 		err = cmdTest(backend, os.Args[2:])
 	case "explain":
@@ -79,6 +80,8 @@ func main() {
 		err = cmdService(os.Args[2:])
 	case "ping":
 		err = cmdPing(os.Args[2:])
+	case "deps":
+		err = cmdDeps(os.Args[2:])
 	case "help", "--help", "-h":
 		printUsage()
 		return
@@ -143,16 +146,20 @@ func signalDaemon() error {
 	return nil
 }
 
-func cmdStatus(b cli.Backend) error {
+func cmdStatus(b cli.Backend, outputFmt string) error {
 	// Status is a simple health check — list zones as a proxy.
 	zones, err := b.ListZones()
 	if err != nil {
 		return err
 	}
+	if outputFmt == "table" {
+		fmt.Printf("Status: ok\nZones:  %d\n", len(zones))
+		return nil
+	}
 	return printJSON(map[string]any{"status": "ok", "zones": len(zones)})
 }
 
-func cmdZone(b cli.Backend, args []string) error {
+func cmdZone(b cli.Backend, args []string, outputFmt string) error {
 	if len(args) == 0 {
 		return fmt.Errorf("usage: gk zone <list|show|create|delete> [options]")
 	}
@@ -162,6 +169,14 @@ func cmdZone(b cli.Backend, args []string) error {
 		if err != nil {
 			return err
 		}
+		if outputFmt == "table" {
+			tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+			fmt.Fprintln(tw, "ID\tNAME\tINTERFACE\tCIDR\tTRUST\tDESCRIPTION")
+			for _, z := range zones {
+				fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\t%s\n", z.ID, z.Name, z.Interface, z.NetworkCIDR, z.TrustLevel, z.Description)
+			}
+			return tw.Flush()
+		}
 		return printJSON(zones)
 	case "show":
 		if len(args) < 2 {
@@ -170,6 +185,12 @@ func cmdZone(b cli.Backend, args []string) error {
 		zone, err := b.GetZone(args[1])
 		if err != nil {
 			return err
+		}
+		if outputFmt == "table" {
+			tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+			fmt.Fprintln(tw, "ID\tNAME\tINTERFACE\tCIDR\tTRUST\tDESCRIPTION")
+			fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\t%s\n", zone.ID, zone.Name, zone.Interface, zone.NetworkCIDR, zone.TrustLevel, zone.Description)
+			return tw.Flush()
 		}
 		return printJSON(zone)
 	case "create":
@@ -194,7 +215,7 @@ func cmdZone(b cli.Backend, args []string) error {
 	}
 }
 
-func cmdAlias(b cli.Backend, args []string) error {
+func cmdAlias(b cli.Backend, args []string, outputFmt string) error {
 	if len(args) == 0 {
 		return fmt.Errorf("usage: gk alias <list|show|create|delete|add-member>")
 	}
@@ -204,6 +225,14 @@ func cmdAlias(b cli.Backend, args []string) error {
 		if err != nil {
 			return err
 		}
+		if outputFmt == "table" {
+			tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+			fmt.Fprintln(tw, "ID\tNAME\tTYPE\tMEMBERS\tDESCRIPTION")
+			for _, a := range aliases {
+				fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\n", a.ID, a.Name, a.Type, strings.Join(a.Members, ", "), a.Description)
+			}
+			return tw.Flush()
+		}
 		return printJSON(aliases)
 	case "show":
 		if len(args) < 2 {
@@ -212,6 +241,12 @@ func cmdAlias(b cli.Backend, args []string) error {
 		alias, err := b.GetAlias(args[1])
 		if err != nil {
 			return err
+		}
+		if outputFmt == "table" {
+			tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+			fmt.Fprintln(tw, "ID\tNAME\tTYPE\tMEMBERS\tDESCRIPTION")
+			fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\n", alias.ID, alias.Name, alias.Type, strings.Join(alias.Members, ", "), alias.Description)
+			return tw.Flush()
 		}
 		return printJSON(alias)
 	case "create":
@@ -244,7 +279,7 @@ func cmdAlias(b cli.Backend, args []string) error {
 	}
 }
 
-func cmdProfile(b cli.Backend, args []string) error {
+func cmdProfile(b cli.Backend, args []string, outputFmt string) error {
 	if len(args) == 0 {
 		return fmt.Errorf("usage: gk profile <list|show|create>")
 	}
@@ -254,6 +289,14 @@ func cmdProfile(b cli.Backend, args []string) error {
 		if err != nil {
 			return err
 		}
+		if outputFmt == "table" {
+			tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+			fmt.Fprintln(tw, "ID\tNAME\tZONE_ID\tPOLICY\tDESCRIPTION")
+			for _, p := range profiles {
+				fmt.Fprintf(tw, "%d\t%s\t%d\t%s\t%s\n", p.ID, p.Name, p.ZoneID, p.PolicyName, p.Description)
+			}
+			return tw.Flush()
+		}
 		return printJSON(profiles)
 	case "show":
 		if len(args) < 2 {
@@ -262,6 +305,12 @@ func cmdProfile(b cli.Backend, args []string) error {
 		profile, err := b.GetProfile(args[1])
 		if err != nil {
 			return err
+		}
+		if outputFmt == "table" {
+			tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+			fmt.Fprintln(tw, "ID\tNAME\tZONE_ID\tPOLICY\tDESCRIPTION")
+			fmt.Fprintf(tw, "%d\t%s\t%d\t%s\t%s\n", profile.ID, profile.Name, profile.ZoneID, profile.PolicyName, profile.Description)
+			return tw.Flush()
 		}
 		return printJSON(profile)
 	case "create":
@@ -280,7 +329,7 @@ func cmdProfile(b cli.Backend, args []string) error {
 	}
 }
 
-func cmdPolicy(b cli.Backend, args []string) error {
+func cmdPolicy(b cli.Backend, args []string, outputFmt string) error {
 	if len(args) == 0 {
 		return fmt.Errorf("usage: gk policy <list|show>")
 	}
@@ -290,6 +339,14 @@ func cmdPolicy(b cli.Backend, args []string) error {
 		if err != nil {
 			return err
 		}
+		if outputFmt == "table" {
+			tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+			fmt.Fprintln(tw, "ID\tNAME\tDEFAULT_ACTION\tRULES\tDESCRIPTION")
+			for _, p := range policies {
+				fmt.Fprintf(tw, "%d\t%s\t%s\t%d\t%s\n", p.ID, p.Name, p.DefaultAction, len(p.Rules), p.Description)
+			}
+			return tw.Flush()
+		}
 		return printJSON(policies)
 	case "show":
 		if len(args) < 2 {
@@ -298,6 +355,24 @@ func cmdPolicy(b cli.Backend, args []string) error {
 		policy, err := b.GetPolicy(args[1])
 		if err != nil {
 			return err
+		}
+		if outputFmt == "table" {
+			fmt.Printf("Policy: %s (default: %s)\n", policy.Name, policy.DefaultAction)
+			if policy.Description != "" {
+				fmt.Printf("Description: %s\n", policy.Description)
+			}
+			fmt.Println()
+			tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+			fmt.Fprintln(tw, "ORDER\tSRC\tDST\tPROTO\tPORTS\tACTION\tLOG\tDESCRIPTION")
+			for _, r := range policy.Rules {
+				logStr := ""
+				if r.Log {
+					logStr = "yes"
+				}
+				fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+					r.Order, r.SrcAlias, r.DstAlias, r.Protocol, r.Ports, r.Action, logStr, r.Description)
+			}
+			return tw.Flush()
 		}
 		return printJSON(policy)
 	default:
@@ -417,7 +492,7 @@ func cmdImport(b cli.Backend, args []string) error {
 	return b.Import(&snap)
 }
 
-func cmdWG(b cli.Backend, args []string) error {
+func cmdWG(b cli.Backend, args []string, outputFmt string) error {
 	if len(args) == 0 {
 		return fmt.Errorf("usage: gk wg <peers|add-peer|remove-peer|prune>")
 	}
@@ -426,6 +501,14 @@ func cmdWG(b cli.Backend, args []string) error {
 		peers, err := b.ListWGPeers()
 		if err != nil {
 			return err
+		}
+		if outputFmt == "table" {
+			tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+			fmt.Fprintln(tw, "NAME\tPUBLIC_KEY\tALLOWED_IPS\tENDPOINT")
+			for _, p := range peers {
+				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", p.Name, p.PublicKey, p.AllowedIPs, p.Endpoint)
+			}
+			return tw.Flush()
 		}
 		return printJSON(peers)
 	case "add-peer":
@@ -465,7 +548,7 @@ func cmdWG(b cli.Backend, args []string) error {
 	}
 }
 
-func cmdLeases(b cli.Backend) error {
+func cmdLeases(b cli.Backend, outputFmt string) error {
 	// Leases are read from a local file — in direct mode, read directly.
 	// In API mode, call the API endpoint.
 	if os.Getenv("GK_MODE") == "api" {
@@ -501,6 +584,14 @@ func cmdLeases(b cli.Backend) error {
 		if len(fields) >= 4 {
 			leases = append(leases, lease{Expiry: fields[0], MAC: fields[1], IP: fields[2], Hostname: fields[3]})
 		}
+	}
+	if outputFmt == "table" {
+		tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+		fmt.Fprintln(tw, "EXPIRY\tMAC\tIP\tHOSTNAME")
+		for _, l := range leases {
+			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", l.Expiry, l.MAC, l.IP, l.Hostname)
+		}
+		return tw.Flush()
 	}
 	return printJSON(leases)
 }
@@ -683,6 +774,41 @@ func cmdService(args []string) error {
 	}
 }
 
+func cmdDeps(args []string) error {
+	pm, err := backend.DetectPackageManager()
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Detected package manager: %s\n", pm.Name())
+
+	subcmd := "check"
+	if len(args) > 0 {
+		subcmd = args[0]
+	}
+
+	switch subcmd {
+	case "check":
+		fmt.Println("Checking Gatekeeper dependencies...")
+		installed, err := pm.EnsureDeps()
+		if err != nil {
+			return err
+		}
+		if len(installed) == 0 {
+			fmt.Println("All dependencies are already installed.")
+		} else {
+			fmt.Printf("Installed %d package(s): %s\n", len(installed), strings.Join(installed, ", "))
+		}
+		return nil
+	case "install":
+		if len(args) < 2 {
+			return fmt.Errorf("usage: gk deps install <package> [package...]")
+		}
+		return pm.Install(args[1:]...)
+	default:
+		return fmt.Errorf("usage: gk deps <check|install> [packages...]")
+	}
+}
+
 func printJSON(v any) error {
 	out, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
@@ -724,6 +850,7 @@ Commands:
   audit       Show audit log of mutations
   service     Manage services (list, show, enable, disable, config)
   ping        Ping a target host
+  deps        Manage system dependencies (check, install)
   version     Show version
 
 Environment:

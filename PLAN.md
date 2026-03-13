@@ -1083,4 +1083,7 @@ For users running multiple self-hosted services behind Gatekeeper:
 - [ ] Cloud-init support for headless provisioning
 - [ ] Formal external security audit
 - [ ] Proxmox container template (pre-built image)
-- [ ] Table output format for CLI (`GK_OUTPUT=table`)
+- [x] Table output format for CLI (`GK_OUTPUT=table`)
+- [x] GitHub Actions release workflow (build + publish artifacts on push to main)
+- [x] Bandwidth/QoS service migrated from exec.Command("tc") to netlink API
+- [x] Cross-platform package manager abstraction (`gk deps check|install`) — supports Alpine, Debian/Ubuntu, Fedora/RHEL, Arch, Gentoo, openSUSE, Void, FreeBSD
