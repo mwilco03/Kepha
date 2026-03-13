@@ -169,7 +169,7 @@ type ThreatMatch struct {
 // ObservedFingerprint is a stored observation record.
 type ObservedFingerprint struct {
 	ID          int64     `json:"id"`
-	Type        string    `json:"type"`         // "ja4", "ja4s", "ja4t", "ja4h"
+	Type        string    `json:"type"`         // "ja4", "ja4s", "ja4t", "ja4h", "ja4x", "hassh", "hassh_server", "quic"
 	Hash        string    `json:"hash"`
 	SrcIP       string    `json:"src_ip"`
 	DstIP       string    `json:"dst_ip,omitempty"`

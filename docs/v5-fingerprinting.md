@@ -20,6 +20,10 @@ enforcement. This tracks expanding into the remaining fingerprinting technique f
 | IOC store + enforcement | Done | `inspect/iocstore.go` — IP/CIDR/ASN/domain/fingerprint IOCs → countermeasures |
 | ASN resolution | Done | `inspect/asn.go` + `mmdb_updater.go` — DB-IP/MaxMind, auto-update |
 | Device identification | Done | `inspect/ja4.go` — pattern matching with confidence scoring |
+| SSH fingerprinting (HASSH) | Done | `inspect/hassh.go` — KEX/enc/MAC/comp algorithm hashing |
+| X.509 cert fingerprinting (JA4X) | Done | `inspect/ja4x.go` — issuer/subject/extension chain hashing |
+| QUIC fingerprinting | Done | `inspect/quic.go` — QUIC Initial decrypt, inner ClientHello JA4 with "q" prefix |
+| Multi-protocol BPF capture | Done | `inspect/capture.go` — TCP 443 (TLS) + TCP 22 (SSH) + UDP 443 (QUIC) |
 
 ## What's missing
 
@@ -33,8 +37,9 @@ enforcement. This tracks expanding into the remaining fingerprinting technique f
 - [ ] **HTTP/2 SETTINGS frame fingerprinting** — `SETTINGS_HEADER_TABLE_SIZE`,
   `MAX_CONCURRENT_STREAMS`, `INITIAL_WINDOW_SIZE`, `MAX_FRAME_SIZE` ordering.
   Highly discriminating for browser/bot detection.
-- [ ] **TLS certificate chain analysis** — Parse server certs from captured handshakes:
+- [x] **TLS certificate chain analysis** — Parse server certs from captured handshakes:
   issuer, validity, SAN list, key type/size. Flag self-signed, expired, or known-bad issuers.
+  Implemented as JA4X in `inspect/ja4x.go`.
 - [ ] **TCP FIN/RST behavior** — How connections are torn down reveals OS and
   application stack. Track RST vs FIN, timing, and sequencing.
 

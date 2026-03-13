@@ -20,6 +20,10 @@ const (
 	IOCTypeJA4S            IOCType = "ja4s"
 	IOCTypeJA4T            IOCType = "ja4t"
 	IOCTypeJA4H            IOCType = "ja4h"
+	IOCTypeJA4X            IOCType = "ja4x"  // X.509 certificate chain fingerprint
+	IOCTypeHASSH           IOCType = "hassh" // SSH client fingerprint
+	IOCTypeHASSHServer     IOCType = "hassh_server" // SSH server fingerprint
+	IOCTypeQUIC            IOCType = "quic"  // QUIC Initial packet fingerprint
 	IOCTypeDomain          IOCType = "domain"
 	IOCTypeASN             IOCType = "asn" // Autonomous system number (e.g. "AS14618")
 )
@@ -579,10 +583,11 @@ func (s *IOCStore) MatchResponse(ioc *IOC) *ResponseTemplate {
 			if t.IOCType == IOCTypeIP && (ioc.Type == IOCTypeCIDR || ioc.Type == IOCTypeASN) {
 				broad = true
 			}
-			// Fingerprint templates cover all ja4* subtypes.
+			// Fingerprint templates cover all ja4*/hassh/quic subtypes.
 			if t.IOCType == IOCTypeFingerprintHash {
 				switch ioc.Type {
-				case IOCTypeJA4, IOCTypeJA4S, IOCTypeJA4T, IOCTypeJA4H:
+				case IOCTypeJA4, IOCTypeJA4S, IOCTypeJA4T, IOCTypeJA4H,
+					IOCTypeJA4X, IOCTypeHASSH, IOCTypeHASSHServer, IOCTypeQUIC:
 					broad = true
 				}
 			}
@@ -710,7 +715,9 @@ func (s *IOCStore) index(ioc *IOC) {
 		s.byDomain[ioc.Value] = ioc
 	case IOCTypeASN:
 		s.byASN[ioc.Value] = ioc
-	case IOCTypeJA4, IOCTypeJA4S, IOCTypeJA4T, IOCTypeJA4H, IOCTypeFingerprintHash:
+	case IOCTypeJA4, IOCTypeJA4S, IOCTypeJA4T, IOCTypeJA4H,
+		IOCTypeJA4X, IOCTypeHASSH, IOCTypeHASSHServer, IOCTypeQUIC,
+		IOCTypeFingerprintHash:
 		s.byFingerprint[ioc.Value] = ioc
 	}
 }
