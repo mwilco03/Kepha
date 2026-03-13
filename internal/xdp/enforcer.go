@@ -317,8 +317,13 @@ func (e *Enforcer) bandwidthRules(saddr []expr.Any, tech TechniqueConfig, global
 	if v, ok := tech.Params["limit_bps"]; ok {
 		fmt.Sscanf(v, "%d", &limitBps)
 	}
-	// Convert bytes/sec to packets/sec (assume 1500 byte MTU).
-	pps := uint64(limitBps / 1500)
+	// Convert bytes/sec to packets/sec using configured or detected MTU.
+	// Supports jumbo frames (9000) and VXLAN-reduced MTUs (1450).
+	avgPktSize := global.AvgPacketSize
+	if avgPktSize <= 0 {
+		avgPktSize = DefaultAvgPacketSize
+	}
+	pps := uint64(limitBps / avgPktSize)
 	if pps < 1 {
 		pps = 1
 	}

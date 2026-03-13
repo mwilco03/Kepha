@@ -20,7 +20,8 @@ type Input struct {
 	Policies     []model.Policy
 	Profiles     []model.Profile
 	Devices      []model.DeviceAssignment
-	WGListenPort int // WireGuard listen port (0 = disabled).
+	WGListenPort int  // WireGuard listen port (0 = disabled).
+	MSSClampPMTU bool // Enable TCP MSS clamping to path MTU in forward chain.
 }
 
 // Compile transforms the config model into an nftables ruleset.
@@ -176,6 +177,13 @@ func writeForwardChain(b *strings.Builder, input *Input, policyMap map[string]*m
 			}
 			b.WriteString("\n")
 		}
+	}
+
+	// TCP MSS clamping: prevent MTU blackholes when forwarding between zones
+	// with different MTUs (e.g., jumbo frame LAN → 1500 WAN, or VXLAN overlay).
+	if input.MSSClampPMTU {
+		b.WriteString("\t\t# TCP MSS clamping — prevents packet blackholes between zones with different MTUs.\n")
+		b.WriteString("\t\ttcp flags syn / syn,rst tcp option maxseg size set rt mtu\n\n")
 	}
 
 	b.WriteString("\t\t# Default deny (policy).\n")

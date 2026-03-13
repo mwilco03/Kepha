@@ -10,6 +10,7 @@ type Zone struct {
 	NetworkCIDR string `json:"network_cidr"`
 	TrustLevel  string `json:"trust_level"`
 	Description string `json:"description,omitempty"`
+	MTU         int    `json:"mtu,omitempty"` // 0 = inherit from interface (no override)
 }
 
 // AliasType defines the kind of alias.

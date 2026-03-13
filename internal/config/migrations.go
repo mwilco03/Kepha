@@ -101,6 +101,10 @@ CREATE TABLE IF NOT EXISTS audit_log (
 );
 `,
 	},
+	{
+		name: "003_zone_mtu",
+		sql:  `ALTER TABLE zones ADD COLUMN mtu INTEGER NOT NULL DEFAULT 0;`,
+	},
 }
 
 // Migrate runs all pending schema migrations.

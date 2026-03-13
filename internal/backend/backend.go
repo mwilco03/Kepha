@@ -259,6 +259,12 @@ type NetworkManager interface {
 	// LinkDel deletes a network interface.
 	LinkDel(name string) error
 
+	// LinkSetMTU sets the MTU on a network interface via netlink.
+	LinkSetMTU(name string, mtu int) error
+
+	// LinkGetMTU reads the current MTU of a network interface via netlink.
+	LinkGetMTU(name string) (int, error)
+
 	// LinkSetUp brings an interface up.
 	LinkSetUp(name string) error
 
