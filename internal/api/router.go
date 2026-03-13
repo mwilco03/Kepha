@@ -7,6 +7,7 @@ import (
 	"github.com/gatekeeper-firewall/gatekeeper/internal/backend"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/config"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/driver"
+	"github.com/gatekeeper-firewall/gatekeeper/internal/inspect"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/ops"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/rbac"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/service"
@@ -33,6 +34,11 @@ type RouterConfig struct {
 
 	// FingerprintSvc is the TLS fingerprint service (optional).
 	FingerprintSvc *service.FingerprintService
+
+	// IOCStore is the indicator of compromise store (optional).
+	IOCStore *inspect.IOCStore
+	// MMDBUpdater is the ASN mmdb auto-updater (optional).
+	MMDBUpdater *inspect.MMDBUpdater
 
 	// XDPSvc is the XDP fast path service (optional).
 	XDPSvc *service.XDPService
@@ -165,6 +171,23 @@ func NewRouterWithConfig(cfg *RouterConfig) http.Handler {
 		mux.HandleFunc("GET /api/v1/fingerprints/{hash}/identify", fph.identifyFingerprint)
 		mux.HandleFunc("POST /api/v1/fingerprints/{hash}/assign", fph.assignProfile)
 		mux.HandleFunc("GET /api/v1/fingerprints/{hash}/threat", fph.checkThreat)
+	}
+
+	// IOC management endpoints (requires IOC store).
+	if cfg.IOCStore != nil {
+		ih := &iocHandlers{store: cfg.IOCStore, updater: cfg.MMDBUpdater}
+		mux.HandleFunc("GET /api/v1/iocs", ih.listIOCs)
+		mux.HandleFunc("POST /api/v1/iocs", ih.addIOC)
+		mux.HandleFunc("POST /api/v1/iocs/bulk", ih.bulkAddIOCs)
+		mux.HandleFunc("DELETE /api/v1/iocs/{type}/{value}", ih.removeIOC)
+		mux.HandleFunc("GET /api/v1/iocs/match", ih.matchIOC)
+		mux.HandleFunc("GET /api/v1/iocs/stats", ih.iocStats)
+		mux.HandleFunc("GET /api/v1/iocs/templates", ih.listTemplates)
+		mux.HandleFunc("POST /api/v1/iocs/templates", ih.addTemplate)
+		mux.HandleFunc("DELETE /api/v1/iocs/templates/{name}", ih.removeTemplate)
+		mux.HandleFunc("GET /api/v1/iocs/mmdb", ih.mmdbStatus)
+		mux.HandleFunc("POST /api/v1/iocs/mmdb/refresh", ih.mmdbRefresh)
+		mux.HandleFunc("POST /api/v1/iocs/mmdb/config", ih.mmdbConfig)
 	}
 
 	// XDP fast path endpoints (requires XDP service).
