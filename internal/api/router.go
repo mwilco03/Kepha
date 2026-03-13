@@ -37,6 +37,8 @@ type RouterConfig struct {
 
 	// IOCStore is the indicator of compromise store (optional).
 	IOCStore *inspect.IOCStore
+	// MMDBUpdater is the ASN mmdb auto-updater (optional).
+	MMDBUpdater *inspect.MMDBUpdater
 
 	// XDPSvc is the XDP fast path service (optional).
 	XDPSvc *service.XDPService
@@ -173,7 +175,7 @@ func NewRouterWithConfig(cfg *RouterConfig) http.Handler {
 
 	// IOC management endpoints (requires IOC store).
 	if cfg.IOCStore != nil {
-		ih := &iocHandlers{store: cfg.IOCStore}
+		ih := &iocHandlers{store: cfg.IOCStore, updater: cfg.MMDBUpdater}
 		mux.HandleFunc("GET /api/v1/iocs", ih.listIOCs)
 		mux.HandleFunc("POST /api/v1/iocs", ih.addIOC)
 		mux.HandleFunc("POST /api/v1/iocs/bulk", ih.bulkAddIOCs)
@@ -183,6 +185,9 @@ func NewRouterWithConfig(cfg *RouterConfig) http.Handler {
 		mux.HandleFunc("GET /api/v1/iocs/templates", ih.listTemplates)
 		mux.HandleFunc("POST /api/v1/iocs/templates", ih.addTemplate)
 		mux.HandleFunc("DELETE /api/v1/iocs/templates/{name}", ih.removeTemplate)
+		mux.HandleFunc("GET /api/v1/iocs/mmdb", ih.mmdbStatus)
+		mux.HandleFunc("POST /api/v1/iocs/mmdb/refresh", ih.mmdbRefresh)
+		mux.HandleFunc("POST /api/v1/iocs/mmdb/config", ih.mmdbConfig)
 	}
 
 	// XDP fast path endpoints (requires XDP service).

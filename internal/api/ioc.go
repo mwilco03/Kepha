@@ -10,7 +10,8 @@ import (
 
 // iocHandlers implements the IOC management API.
 type iocHandlers struct {
-	store *inspect.IOCStore
+	store   *inspect.IOCStore
+	updater *inspect.MMDBUpdater // Optional — nil if mmdb updater not configured.
 }
 
 // listIOCs returns IOCs matching optional filters.
@@ -218,4 +219,70 @@ func (ih *iocHandlers) removeTemplate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "removed"})
+}
+
+// --- MMDB management ---
+
+// mmdbStatus returns the current state of the ASN mmdb database.
+// GET /api/v1/iocs/mmdb
+func (ih *iocHandlers) mmdbStatus(w http.ResponseWriter, r *http.Request) {
+	if ih.updater == nil {
+		writeJSON(w, http.StatusOK, map[string]string{
+			"source": "none", "status": "mmdb updater not configured",
+		})
+		return
+	}
+	writeJSON(w, http.StatusOK, ih.updater.Status())
+}
+
+// mmdbRefresh triggers an immediate mmdb download.
+// POST /api/v1/iocs/mmdb/refresh
+func (ih *iocHandlers) mmdbRefresh(w http.ResponseWriter, r *http.Request) {
+	if ih.updater == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{
+			"error": "mmdb updater not configured",
+		})
+		return
+	}
+	if err := ih.updater.ForceRefresh(); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, ih.updater.Status())
+}
+
+// mmdbConfig updates mmdb configuration (license key, source switch).
+// POST /api/v1/iocs/mmdb/config
+//
+//	{ "license_key": "your_maxmind_key" }
+func (ih *iocHandlers) mmdbConfig(w http.ResponseWriter, r *http.Request) {
+	if ih.updater == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{
+			"error": "mmdb updater not configured",
+		})
+		return
+	}
+
+	var body struct {
+		LicenseKey string `json:"license_key"`
+		Path       string `json:"path"` // Manual mmdb file path.
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
+		return
+	}
+
+	if body.Path != "" {
+		if err := ih.updater.LoadFromPath(body.Path); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, ih.updater.Status())
+		return
+	}
+
+	if body.LicenseKey != "" {
+		ih.updater.SetLicenseKey(body.LicenseKey)
+	}
+	writeJSON(w, http.StatusOK, ih.updater.Status())
 }
