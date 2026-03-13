@@ -18,6 +18,7 @@ import (
 	"github.com/gatekeeper-firewall/gatekeeper/internal/driver"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/inspect"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/model"
+	"github.com/gatekeeper-firewall/gatekeeper/internal/xdp"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/ops"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/service"
 )
@@ -87,6 +88,8 @@ func main() {
 		err = cmdPerf(os.Args[2:], outputFmt)
 	case "fingerprint", "fp":
 		err = cmdFingerprint(os.Args[2:], outputFmt)
+	case "xdp":
+		err = cmdXDP(os.Args[2:], outputFmt)
 	case "deps":
 		err = cmdDeps(os.Args[2:])
 	case "help", "--help", "-h":
@@ -1093,6 +1096,143 @@ func cmdFingerprint(args []string, outputFmt string) error {
 	}
 }
 
+func cmdXDP(args []string, outputFmt string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("usage: gk xdp <status|capabilities|blocklist|stats> [options]")
+	}
+
+	mgr := xdp.NewManager()
+
+	switch args[0] {
+	case "status":
+		caps := mgr.Probe()
+		status := mgr.Status()
+		status.Capabilities = *caps
+
+		if outputFmt == "table" {
+			fmt.Printf("XDP Fast Path Status\n")
+			fmt.Printf("====================\n")
+			fmt.Printf("Running:     %v\n", status.Running)
+			fmt.Printf("Mode:        %s\n", status.Mode)
+			fmt.Printf("Interfaces:  %d\n", status.InterfaceCount)
+			fmt.Printf("Blocklist:   %d entries\n", status.BlocklistSize)
+			fmt.Printf("ACL Rules:   %d\n", status.ACLRuleCount)
+			fmt.Printf("\nCapabilities:\n")
+			fmt.Printf("  Kernel:        %s\n", caps.KernelVersion)
+			fmt.Printf("  Min kernel:    %v (>= 5.10)\n", caps.MinKernelMet)
+			fmt.Printf("  BPF FS:        %v\n", caps.BPFSupported)
+			fmt.Printf("  BTF:           %v\n", caps.BTFAvailable)
+			fmt.Printf("  XDP:           %v\n", caps.XDPSupported)
+			fmt.Printf("  CAP_BPF:       %v\n", caps.HasCAPBPF)
+			fmt.Printf("  CAP_NET_ADMIN: %v\n", caps.HasCAPNetAdmin)
+			fmt.Printf("  Tail calls:    %v\n", caps.TailCallSupported)
+			fmt.Printf("  Ring buffer:   %v\n", caps.RingBufSupported)
+			fmt.Printf("  Ready:         %v\n", caps.Ready)
+			if !caps.Ready {
+				fmt.Printf("  Reason:        %s\n", caps.Reason)
+			}
+			return nil
+		}
+		return printJSON(status)
+
+	case "capabilities", "caps":
+		caps := mgr.Probe()
+		if outputFmt == "table" {
+			fmt.Printf("Kernel:        %s (%d.%d.%d)\n", caps.KernelVersion,
+				caps.KernelMajor, caps.KernelMinor, caps.KernelPatch)
+			fmt.Printf("Min kernel:    %v (>= 5.10)\n", caps.MinKernelMet)
+			fmt.Printf("BPF FS:        %v\n", caps.BPFSupported)
+			fmt.Printf("BTF:           %v\n", caps.BTFAvailable)
+			fmt.Printf("XDP:           %v\n", caps.XDPSupported)
+			fmt.Printf("CAP_BPF:       %v\n", caps.HasCAPBPF)
+			fmt.Printf("CAP_NET_ADMIN: %v\n", caps.HasCAPNetAdmin)
+			fmt.Printf("Tail calls:    %v\n", caps.TailCallSupported)
+			fmt.Printf("Ring buffer:   %v\n", caps.RingBufSupported)
+			fmt.Printf("Ready:         %v\n", caps.Ready)
+			if !caps.Ready {
+				fmt.Printf("Reason:        %s\n", caps.Reason)
+			}
+			return nil
+		}
+		return printJSON(caps)
+
+	case "blocklist":
+		if len(args) >= 2 {
+			switch args[1] {
+			case "add":
+				if len(args) < 3 {
+					return fmt.Errorf("usage: gk xdp blocklist add <ip> [reason]")
+				}
+				reason := "manual"
+				if len(args) >= 4 {
+					reason = args[3]
+				}
+				err := mgr.AddToBlocklist(xdp.BlocklistEntry{
+					IP:     args[2],
+					Reason: reason,
+					Source: "admin",
+				})
+				if err != nil {
+					return err
+				}
+				fmt.Printf("Added %s to XDP blocklist\n", args[2])
+				return nil
+			case "remove":
+				if len(args) < 3 {
+					return fmt.Errorf("usage: gk xdp blocklist remove <ip>")
+				}
+				if err := mgr.RemoveFromBlocklist(args[2]); err != nil {
+					return err
+				}
+				fmt.Printf("Removed %s from XDP blocklist\n", args[2])
+				return nil
+			case "list":
+				// Fall through to default list behavior.
+			default:
+				return fmt.Errorf("unknown blocklist subcommand: %s", args[1])
+			}
+		}
+
+		entries := mgr.BlocklistEntries()
+		if outputFmt == "table" {
+			if len(entries) == 0 {
+				fmt.Println("Blocklist is empty")
+				return nil
+			}
+			tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+			fmt.Fprintln(tw, "IP\tREASON\tSOURCE\tHITS\tADDED")
+			for _, e := range entries {
+				fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%s\n",
+					e.IP, e.Reason, e.Source, e.HitCount,
+					e.AddedAt.Format("2006-01-02 15:04:05"))
+			}
+			return tw.Flush()
+		}
+		return printJSON(entries)
+
+	case "stats":
+		stats := mgr.AllStats()
+		if outputFmt == "table" {
+			if len(stats) == 0 {
+				fmt.Println("No interfaces attached")
+				return nil
+			}
+			tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+			fmt.Fprintln(tw, "INTERFACE\tMODE\tPKT_TOTAL\tPKT_DROP\tPKT_PASS\tBYTES")
+			for _, s := range stats {
+				fmt.Fprintf(tw, "%s\t%s\t%d\t%d\t%d\t%d\n",
+					s.Interface, s.AttachMode, s.PacketsTotal,
+					s.PacketsDropped, s.PacketsPassed, s.BytesTotal)
+			}
+			return tw.Flush()
+		}
+		return printJSON(stats)
+
+	default:
+		return fmt.Errorf("unknown xdp subcommand: %s\nusage: gk xdp <status|capabilities|blocklist|stats>", args[0])
+	}
+}
+
 func openFingerprintStore(dbPath string) (*inspect.SQLiteStore, error) {
 	store, err := config.NewStore(dbPath)
 	if err != nil {
@@ -1142,6 +1282,7 @@ Commands:
   audit       Show audit log of mutations
   service     Manage services (list, show, enable, disable, config)
   fingerprint Manage TLS fingerprints (list, show, identify, assign)
+  xdp         XDP/eBPF fast path (status, capabilities, blocklist, stats)
   perf        Performance tuning (status, conntrack, nic)
   ping        Ping a target host
   deps        Manage system dependencies (check, install)

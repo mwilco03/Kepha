@@ -454,11 +454,31 @@ Per rebuttal, these were deferred from v1 but have been implemented ahead of sch
 - [x] Verify and enable offloads: TSO, GRO, GSO, RX/TX checksum via ethtool ioctl
 - [x] Expose via CLI: `gk perf nic` (show all NICs), `gk perf status` (full performance overview)
 
-#### XDP/eBPF Fast Path (Deferred)
-- [ ] XDP program for known-bad IP blocklists (drops before kernel stack)
-- [ ] XDP program for simple ACLs on high-throughput zones
+#### XDP/eBPF Fast Path
+- [x] XDP manager with capability probing (`internal/xdp/xdp.go`)
+  - Kernel version parsing, BPF FS detection, BTF check, CAP_BPF/CAP_NET_ADMIN
+  - Minimum kernel 5.10 requirement enforcement
+- [x] Manager lifecycle: attach/detach interfaces, mode selection (native/generic/offload)
+- [x] IPv4/IPv6 blocklist with add/remove/list operations (`internal/xdp/manager.go`)
+- [x] Simple ACL rule engine for XDP fast path (src/dst IP, protocol, port)
+- [x] Per-interface statistics tracking (packets/bytes total/dropped/passed)
+- [x] BPF C program with tail-call architecture (`internal/xdp/bpf/gatekeeper_xdp.c`)
+  - Entry program: Ethernet/IP/TCP/UDP header parsing with VLAN support
+  - Blocklist program: LPM trie lookup for IPv4/IPv6 source IPs
+  - ACL program: linear scan with src/dst IP mask, protocol, port matching
+  - Accounting program: per-CPU statistics counters
+  - Fail-open design: XDP_PASS on any error (never silently drop)
+- [x] Shared header (`internal/xdp/bpf/gatekeeper.h`) — single source of truth for map layouts
+- [x] XDPService plugin implementing Service interface (`internal/service/xdp.go`)
+- [x] REST API endpoints:
+  - GET /api/v1/xdp/status, /capabilities, /stats
+  - GET/POST /api/v1/xdp/blocklist, DELETE /api/v1/xdp/blocklist/{ip}
+  - GET/POST /api/v1/xdp/acls
+- [x] CLI: `gk xdp status`, `gk xdp capabilities`, `gk xdp blocklist`, `gk xdp stats`
 - [ ] Integration with flowtables for multi-layer fast path
 - [ ] eBPF-based traffic accounting (replace tc-based bandwidth monitor)
+- [ ] cilium/ebpf BPFLoader implementation for runtime program loading
+- [ ] Dual-map atomic blocklist swap for live updates
 
 ### Phase 14: JA4+ TLS Fingerprinting & Device Profiling
 
