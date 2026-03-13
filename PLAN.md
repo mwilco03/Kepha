@@ -475,10 +475,23 @@ Per rebuttal, these were deferred from v1 but have been implemented ahead of sch
   - GET/POST /api/v1/xdp/blocklist, DELETE /api/v1/xdp/blocklist/{ip}
   - GET/POST /api/v1/xdp/acls
 - [x] CLI: `gk xdp status`, `gk xdp capabilities`, `gk xdp blocklist`, `gk xdp stats`
+- [x] cilium/ebpf BPFLoader implementation (`internal/xdp/loader.go`)
+  - Dual-map atomic blocklist swap for zero-downtime updates
+  - Failover: native → generic → no-XDP with auto-failback retry
+  - Exponential backoff on failback attempts (30s → 5min cap)
+  - Instant rollback via SwapNow() — old map data preserved
+  - Per-map version tracking and diagnostics
+- [x] Active countermeasures engine (`internal/xdp/countermeasures.go`)
+  - Tarpit: minimum TCP window (1 byte), drain attacker connection slots
+  - Latency injection: 100ms-5s random delay for suspicious sources
+  - Bandwidth throttle: nftables hashlimit to 1 KB/s
+  - RST chaos: probabilistic connection resets for known-bad IPs
+  - SYN cookie enforcement: force SYN cookies per-source
+  - TTL randomization: confuse network mapping tools (nmap, p0f)
+  - Auto-expiring policies (24h threat, 1h anomaly)
+  - nftables rule generation for all active policies
 - [ ] Integration with flowtables for multi-layer fast path
 - [ ] eBPF-based traffic accounting (replace tc-based bandwidth monitor)
-- [ ] cilium/ebpf BPFLoader implementation for runtime program loading
-- [ ] Dual-map atomic blocklist swap for live updates
 
 ### Phase 14: JA4+ TLS Fingerprinting & Device Profiling
 
@@ -504,7 +517,11 @@ Per rebuttal, these were deferred from v1 but have been implemented ahead of sch
 #### Passive Device Profiling
 - [x] Known device fingerprint database (IoT devices, browsers, OS families)
 - [x] Auto-suggest profile assignment based on JA4 match
-- [ ] Anomaly detection: device fingerprint changed = potential compromise
+- [x] Anomaly detection: device fingerprint changed = potential compromise
+  - Per-IP fingerprint history tracking with change count and severity escalation
+  - Exclusion lists: per-IP, per-hash, per-transition pair, per-CIDR, time-bounded
+  - SQLite persistence for alerts and exclusion rules
+  - Auto-severity: warning → high → critical based on change frequency
 - [x] API: `GET /api/v1/fingerprints` — list observed fingerprints
 - [x] API: `GET /api/v1/fingerprints/{hash}` — get specific fingerprint
 - [x] API: `GET /api/v1/fingerprints/{hash}/identify` — identify device
@@ -517,14 +534,31 @@ Per rebuttal, these were deferred from v1 but have been implemented ahead of sch
 - [x] Threat feed data model and matching engine (`ThreatFeed`, `ThreatEntry`)
 - [x] Auto-block config flag for connections matching known C2 fingerprints
 - [x] Alert on JA4 match against threat feed via API
-- [ ] Feed update scheduler with TTL, hash pinning, last-known-good caching
-- [ ] Known malware JA3/JA4 hash feeds auto-download (Abuse.ch, Proofpoint ET)
+- [x] Feed update scheduler with TTL, hash pinning, last-known-good caching
+  - Configurable TTL per feed, SHA256 hash pinning for tamper detection
+  - Disk-cached last-known-good fallback when downloads fail
+  - Retry with backoff, no-change detection via content hash
+- [x] Top 5 pre-populated threat feeds:
+  1. abuse.ch SSLBL (JA3 malware C2 fingerprints) — 1h TTL
+  2. abuse.ch Feodo Tracker (Emotet/Dridex C2 IPs) — 30m TTL
+  3. Proofpoint ET compromised IPs — 4h TTL
+  4. Blocklist.de (brute-force attackers) — 2h TTL
+  5. CINS Army (Sentinel IPS bad actors) — 6h TTL
+- [x] Stub template for custom feed additions (`StubFeedTemplate()`)
+- [x] Merged threat index: O(1) lookup regardless of feed count
+  - All feeds merged into single hashmap, atomically swapped on update
+  - Severity-priority merge (higher severity wins on hash collision)
 
 #### Packet Capture Backend
+- [x] AF_PACKET raw socket capture (`internal/inspect/capture.go`)
+  - Zero-copy packet access via Linux AF_PACKET/SOCK_RAW
+  - Kernel-level BPF filter (tcp dst port 443) — non-TLS packets never cross user/kernel boundary
+  - Promiscuous mode for full segment visibility
+  - Per-interface goroutines with graceful shutdown
+  - Inline threat feed checking on every ClientHello
 - [ ] PF_RING integration for zero-copy packet capture on Linux
 - [ ] AF_XDP fallback for environments without PF_RING
 - [ ] libpcap fallback for maximum compatibility
-- [ ] Auto-detect best available capture backend
 
 #### Fingerprint Service Plugin
 - [x] `FingerprintService` implementing `Service` interface (`internal/service/fingerprint.go`)
