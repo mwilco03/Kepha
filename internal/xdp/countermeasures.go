@@ -56,6 +56,12 @@ type Countermeasures struct {
 	policies map[string]*CountermeasurePolicy // IP or CIDR -> policy
 	global   CountermeasureConfig
 	stats    CountermeasureStats
+	enforcer *Enforcer
+	// enabled controls whether countermeasures are enforced in the kernel.
+	// Disabled by default — requires a deliberate call to Enable().
+	// Policies can be added while disabled; they will not be applied
+	// until Enable() is called.
+	enabled bool
 }
 
 // CountermeasurePolicy defines what active defenses to apply to a target.
@@ -123,6 +129,11 @@ type CountermeasureStats struct {
 }
 
 // NewCountermeasures creates a new countermeasures engine with defaults.
+//
+// The engine starts DISABLED. Policies can be added but will not be
+// enforced until Enable() is explicitly called. This is a safety
+// measure — active countermeasures (tarpit, RST chaos, etc.) should
+// never activate without a deliberate operator decision.
 func NewCountermeasures() *Countermeasures {
 	return &Countermeasures{
 		policies: make(map[string]*CountermeasurePolicy),
@@ -135,7 +146,62 @@ func NewCountermeasures() *Countermeasures {
 			RSTChaosProbability: 0.3,   // 30% chance per connection
 			RSTChaosIntervalSec: 10,    // No more than 1 RST per 10 seconds per IP
 		},
+		enforcer: NewEnforcer(),
+		enabled:  false, // Disabled by default. Requires deliberate Enable() call.
 	}
+}
+
+// Enable activates enforcement of countermeasure policies. When enabled,
+// nftables rules are applied via netlink for all active policies.
+//
+// This is a deliberate action — countermeasures are never auto-enabled.
+func (c *Countermeasures) Enable() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.enabled = true
+	slog.Info("countermeasures enabled — active defense is now enforcing")
+	return c.syncEnforcer()
+}
+
+// Disable deactivates enforcement and tears down all countermeasure rules.
+// Policies are retained but no longer enforced.
+func (c *Countermeasures) Disable() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.enabled = false
+	slog.Info("countermeasures disabled — tearing down enforcement rules")
+	return c.enforcer.Teardown()
+}
+
+// Enabled reports whether countermeasure enforcement is active.
+func (c *Countermeasures) Enabled() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.enabled
+}
+
+// syncEnforcer pushes all active policies to the kernel via netlink.
+// Must be called with c.mu held.
+func (c *Countermeasures) syncEnforcer() error {
+	if !c.enabled {
+		return nil
+	}
+	policies := c.activePoliciesLocked()
+	return c.enforcer.Sync(policies, c.global)
+}
+
+// activePoliciesLocked returns non-expired active policies. Must hold c.mu.
+func (c *Countermeasures) activePoliciesLocked() []CountermeasurePolicy {
+	now := time.Now()
+	result := make([]CountermeasurePolicy, 0, len(c.policies))
+	for _, p := range c.policies {
+		if p.Active && (p.ExpiresAt.IsZero() || now.Before(p.ExpiresAt)) {
+			result = append(result, *p)
+		}
+	}
+	return result
 }
 
 // AddPolicy creates a countermeasure policy for a target IP or CIDR.
@@ -162,7 +228,12 @@ func (c *Countermeasures) AddPolicy(policy CountermeasurePolicy) error {
 		"techniques", len(policy.Techniques),
 		"reason", policy.Reason,
 		"source", policy.Source,
+		"enforcing", c.enabled,
 	)
+
+	if err := c.syncEnforcer(); err != nil {
+		slog.Warn("failed to sync enforcer after add", "error", err)
+	}
 	return nil
 }
 
@@ -175,6 +246,10 @@ func (c *Countermeasures) RemovePolicy(target string) error {
 		return fmt.Errorf("no policy for %q", target)
 	}
 	delete(c.policies, target)
+
+	if err := c.syncEnforcer(); err != nil {
+		slog.Warn("failed to sync enforcer after remove", "error", err)
+	}
 	return nil
 }
 
