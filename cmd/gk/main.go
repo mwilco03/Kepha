@@ -18,9 +18,9 @@ import (
 	"github.com/gatekeeper-firewall/gatekeeper/internal/driver"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/inspect"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/model"
-	"github.com/gatekeeper-firewall/gatekeeper/internal/xdp"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/ops"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/service"
+	"github.com/gatekeeper-firewall/gatekeeper/internal/xdp"
 )
 
 var version = "dev"

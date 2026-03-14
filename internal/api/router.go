@@ -86,8 +86,8 @@ func NewRouterWithConfig(cfg *RouterConfig) http.Handler {
 
 	// Health checks (unauthenticated per OpenAPI spec).
 	mux.HandleFunc("GET /api/v1/status", handleStatus)
-	mux.HandleFunc("GET /api/v1/healthz", handleStatus)           // Liveness: process is running.
-	mux.HandleFunc("GET /api/v1/readyz", h.handleReady)           // Readiness: DB is accessible.
+	mux.HandleFunc("GET /api/v1/healthz", handleStatus) // Liveness: process is running.
+	mux.HandleFunc("GET /api/v1/readyz", h.handleReady) // Readiness: DB is accessible.
 
 	// Metrics (unauthenticated).
 	mux.HandleFunc("GET /api/v1/metrics", metrics.Handler())

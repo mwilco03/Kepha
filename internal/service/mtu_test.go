@@ -353,10 +353,10 @@ func TestMTUManagerPMTUDSysctls(t *testing.T) {
 	calls := mock.getSysctlCalls()
 
 	expected := map[string]string{
-		"net.ipv4.ip_no_pmtu_disc":  "0",
-		"net.ipv4.tcp_mtu_probing":  "1",
-		"net.ipv4.tcp_base_mss":     "1024",
-		"net.ipv4.tcp_min_snd_mss":  "536",
+		"net.ipv4.ip_no_pmtu_disc": "0",
+		"net.ipv4.tcp_mtu_probing": "1",
+		"net.ipv4.tcp_base_mss":    "1024",
+		"net.ipv4.tcp_min_snd_mss": "536",
 	}
 
 	for key, wantVal := range expected {

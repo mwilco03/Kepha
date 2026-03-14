@@ -25,17 +25,17 @@ import (
 //	1280  - IPv6 minimum MTU
 //	8950  - VXLAN overlay on 9000 physical
 const (
-	MTUStandard     = 1500
-	MTUJumbo        = 9000
-	MTUBabyJumbo    = 9216
-	MTUVXLAN1500    = 1450 // 1500 - 50 (VXLAN overhead)
-	MTUGENEVE1500   = 1400 // 1500 - 54 (GENEVE + options) - conservative
-	MTUWireGuard    = 1420 // 1500 - 80 (WireGuard overhead)
-	MTUIPv6Min      = 1280
-	MTUVXLAN9000    = 8950 // 9000 - 50 (VXLAN on jumbo)
-	OverheadVXLAN   = 50   // 8 VXLAN + 8 UDP + 20 IP + 14 Ethernet
-	OverheadGENEVE  = 54   // 8 GENEVE base + 12 options + 8 UDP + 20 IP + 14 Ethernet (conservative)
-	OverheadWG      = 80   // WireGuard overhead
+	MTUStandard    = 1500
+	MTUJumbo       = 9000
+	MTUBabyJumbo   = 9216
+	MTUVXLAN1500   = 1450 // 1500 - 50 (VXLAN overhead)
+	MTUGENEVE1500  = 1400 // 1500 - 54 (GENEVE + options) - conservative
+	MTUWireGuard   = 1420 // 1500 - 80 (WireGuard overhead)
+	MTUIPv6Min     = 1280
+	MTUVXLAN9000   = 8950 // 9000 - 50 (VXLAN on jumbo)
+	OverheadVXLAN  = 50   // 8 VXLAN + 8 UDP + 20 IP + 14 Ethernet
+	OverheadGENEVE = 54   // 8 GENEVE base + 12 options + 8 UDP + 20 IP + 14 Ethernet (conservative)
+	OverheadWG     = 80   // WireGuard overhead
 )
 
 // MTUManager handles MTU configuration, TCP MSS clamping, Path MTU Discovery
@@ -66,9 +66,9 @@ func NewMTUManager() *MTUManager {
 	return &MTUManager{state: StateStopped}
 }
 
-func (m *MTUManager) Name() string        { return "mtu-manager" }
-func (m *MTUManager) DisplayName() string { return "MTU Manager" }
-func (m *MTUManager) Category() string    { return "network" }
+func (m *MTUManager) Name() string           { return "mtu-manager" }
+func (m *MTUManager) DisplayName() string    { return "MTU Manager" }
+func (m *MTUManager) Category() string       { return "network" }
 func (m *MTUManager) Dependencies() []string { return nil }
 
 func (m *MTUManager) Description() string {
@@ -79,13 +79,13 @@ func (m *MTUManager) Description() string {
 
 func (m *MTUManager) DefaultConfig() map[string]string {
 	return map[string]string{
-		"mss_clamping":       "true",         // Clamp TCP MSS on forwarded traffic
-		"mss_clamp_to_pmtu":  "true",         // Use PMTU-based MSS (recommended)
-		"mss_clamp_value":    "0",            // Manual MSS value (0 = auto from PMTU)
-		"pmtud":              "true",         // Enable Path MTU Discovery sysctls
-		"zone_mtu_enforce":   "true",         // Apply per-zone MTU to interfaces via netlink
-		"overlay_adjustment": "",             // "vxlan", "geneve", "wireguard", or empty
-		"mtu_mismatch_log":  "true",          // Log warnings when zone MTUs don't match
+		"mss_clamping":       "true", // Clamp TCP MSS on forwarded traffic
+		"mss_clamp_to_pmtu":  "true", // Use PMTU-based MSS (recommended)
+		"mss_clamp_value":    "0",    // Manual MSS value (0 = auto from PMTU)
+		"pmtud":              "true", // Enable Path MTU Discovery sysctls
+		"zone_mtu_enforce":   "true", // Apply per-zone MTU to interfaces via netlink
+		"overlay_adjustment": "",     // "vxlan", "geneve", "wireguard", or empty
+		"mtu_mismatch_log":   "true", // Log warnings when zone MTUs don't match
 	}
 }
 
@@ -97,7 +97,7 @@ func (m *MTUManager) ConfigSchema() map[string]ConfigField {
 		"pmtud":              {Description: "Tune PMTUD sysctls for reliable path MTU discovery", Default: "true", Type: "bool"},
 		"zone_mtu_enforce":   {Description: "Apply configured zone MTU to interfaces via netlink", Default: "true", Type: "bool"},
 		"overlay_adjustment": {Description: "Auto-adjust inner MTU for overlay type: vxlan, geneve, wireguard, or empty", Type: "string"},
-		"mtu_mismatch_log":  {Description: "Log warnings when forwarding between zones with different MTUs", Default: "true", Type: "bool"},
+		"mtu_mismatch_log":   {Description: "Log warnings when forwarding between zones with different MTUs", Default: "true", Type: "bool"},
 	}
 }
 
@@ -467,20 +467,20 @@ type MTUDiagnostic struct {
 
 // MTUStatus returns the current MTU state for all zones.
 type MTUStatus struct {
-	Zones       []ZoneMTUInfo  `json:"zones"`
-	MSSClamping bool           `json:"mss_clamping"`
-	PMTUD       bool           `json:"pmtud"`
-	Overlay     string         `json:"overlay,omitempty"`
+	Zones       []ZoneMTUInfo   `json:"zones"`
+	MSSClamping bool            `json:"mss_clamping"`
+	PMTUD       bool            `json:"pmtud"`
+	Overlay     string          `json:"overlay,omitempty"`
 	Diagnostics []MTUDiagnostic `json:"diagnostics,omitempty"`
 }
 
 // ZoneMTUInfo reports the MTU state of a single zone.
 type ZoneMTUInfo struct {
-	Zone         string `json:"zone"`
-	Interface    string `json:"interface"`
-	ConfiguredMTU int   `json:"configured_mtu"` // From zone config (0 = not set)
-	ActualMTU    int    `json:"actual_mtu"`     // From interface
-	EffectiveMTU int    `json:"effective_mtu"`  // After overlay adjustment
+	Zone          string `json:"zone"`
+	Interface     string `json:"interface"`
+	ConfiguredMTU int    `json:"configured_mtu"` // From zone config (0 = not set)
+	ActualMTU     int    `json:"actual_mtu"`     // From interface
+	EffectiveMTU  int    `json:"effective_mtu"`  // After overlay adjustment
 }
 
 // GetMTUStatus builds a status snapshot for all zones.
