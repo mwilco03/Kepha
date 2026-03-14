@@ -191,24 +191,37 @@ func (c *Capturer) processPacket(pkt []byte, ifName string) {
 	dstIP := fmt.Sprintf("%d.%d.%d.%d", payload[16], payload[17], payload[18], payload[19])
 
 	switch protocol {
+	case 1: // ICMP
+		c.processICMPPacket(payload, srcIP, dstIP)
 	case 6: // TCP
-		c.processTCPPacket(payload[ihl:], srcIP, dstIP)
+		c.processTCPPacket(payload, payload[ihl:], srcIP, dstIP)
 	case 17: // UDP
 		c.processUDPPacket(payload[ihl:], srcIP, dstIP)
 	}
 }
 
-// processTCPPacket handles TCP segments containing TLS or SSH data.
-func (c *Capturer) processTCPPacket(tcpPayload []byte, srcIP, dstIP string) {
+// processTCPPacket handles TCP segments for all supported protocols.
+// ipPayload is the full IP packet (for teardown parsing), tcpPayload starts at TCP header.
+func (c *Capturer) processTCPPacket(ipPayload, tcpPayload []byte, srcIP, dstIP string) {
 	if len(tcpPayload) < 20 {
 		return
 	}
 
 	dstPort := binary.BigEndian.Uint16(tcpPayload[0:2])
+	flags := tcpPayload[13]
 	dataOff := int(tcpPayload[12]>>4) * 4
 	if dataOff < 20 || dataOff > len(tcpPayload) {
 		return
 	}
+
+	// Track TCP FIN/RST for teardown fingerprinting.
+	if flags&0x01 != 0 || flags&0x04 != 0 { // FIN or RST
+		td, err := ParseTCPFlags(ipPayload)
+		if err == nil {
+			_, _ = c.engine.FingerprintTCPTeardown(td)
+		}
+	}
+
 	appData := tcpPayload[dataOff:]
 	if len(appData) == 0 {
 		return
@@ -216,9 +229,38 @@ func (c *Capturer) processTCPPacket(tcpPayload []byte, srcIP, dstIP string) {
 
 	switch dstPort {
 	case 443:
+		// Check for HTTP/2 preface first (cleartext h2c on port 443 is rare
+		// but HTTP/2 SETTINGS follow TLS in the same stream after ALPN negotiation).
+		if DetectHTTP2Preface(appData) {
+			if len(appData) > 24 {
+				settings, err := ParseHTTP2Settings(appData[24:])
+				if err == nil {
+					settings.SrcIP = srcIP
+					settings.DstIP = dstIP
+					_, _ = c.engine.FingerprintHTTP2(settings)
+				}
+			}
+			return
+		}
 		c.processTLSData(appData, srcIP, dstIP)
 	case 22:
 		c.processSSHData(appData, srcIP, dstIP)
+	case 25, 587: // SMTP
+		banner := ParseSMTPBanner(appData)
+		if banner != nil {
+			banner.SrcIP = srcIP
+			banner.DstIP = dstIP
+			banner.Port = dstPort
+			_, _ = c.engine.FingerprintBanner(banner)
+		}
+	case 80, 8080: // HTTP
+		banner := ParseHTTPServerBanner(appData)
+		if banner != nil {
+			banner.SrcIP = srcIP
+			banner.DstIP = dstIP
+			banner.Port = dstPort
+			_, _ = c.engine.FingerprintBanner(banner)
+		}
 	}
 }
 
@@ -373,7 +415,7 @@ func (c *Capturer) processSSHData(data []byte, srcIP, dstIP string) {
 	}
 }
 
-// processUDPPacket handles UDP datagrams (QUIC Initial packets).
+// processUDPPacket handles UDP datagrams (QUIC, DNS).
 func (c *Capturer) processUDPPacket(udpPayload []byte, srcIP, dstIP string) {
 	// UDP header: src_port(2) + dst_port(2) + length(2) + checksum(2) = 8 bytes.
 	if len(udpPayload) < 8 {
@@ -381,11 +423,18 @@ func (c *Capturer) processUDPPacket(udpPayload []byte, srcIP, dstIP string) {
 	}
 
 	dstPort := binary.BigEndian.Uint16(udpPayload[2:4])
-	if dstPort != 443 {
-		return
-	}
+	appData := udpPayload[8:]
 
-	quicData := udpPayload[8:]
+	switch dstPort {
+	case 443:
+		c.processQUICData(appData, udpPayload, srcIP, dstIP)
+	case 53:
+		c.processDNSData(appData, srcIP, dstIP)
+	}
+}
+
+// processQUICData handles QUIC Initial packets from UDP port 443.
+func (c *Capturer) processQUICData(quicData, udpPayload []byte, srcIP, dstIP string) {
 	if len(quicData) < 5 {
 		return
 	}
@@ -397,14 +446,13 @@ func (c *Capturer) processUDPPacket(udpPayload []byte, srcIP, dstIP string) {
 
 	qi, err := ParseQUICInitial(quicData)
 	if err != nil {
-		// QUIC decryption failures are expected for non-Initial packets.
 		return
 	}
 
 	qi.SrcIP = srcIP
 	qi.DstIP = dstIP
 	qi.SrcPort = binary.BigEndian.Uint16(udpPayload[0:2])
-	qi.DstPort = dstPort
+	qi.DstPort = 443
 	qi.Timestamp = time.Now()
 
 	if qi.ClientHello != nil {
@@ -435,6 +483,62 @@ func (c *Capturer) processUDPPacket(udpPayload []byte, srcIP, dstIP string) {
 			"threat", threat.ThreatName,
 			"severity", threat.Severity,
 			"feed", threat.FeedName,
+		)
+	}
+}
+
+// processDNSData handles DNS queries from UDP port 53.
+func (c *Capturer) processDNSData(data []byte, srcIP, dstIP string) {
+	query, err := ParseDNSQuery(data)
+	if err != nil {
+		return
+	}
+
+	query.SrcIP = srcIP
+	query.DstIP = dstIP
+	query.Timestamp = time.Now()
+
+	c.mu.Lock()
+	c.stats.PacketsParsed++
+	c.mu.Unlock()
+
+	fp, err := c.engine.FingerprintDNS(query)
+	if err != nil {
+		return
+	}
+
+	if len(fp.Alerts) > 0 {
+		slog.Warn("DNS fingerprint alerts",
+			"hash", fp.Hash,
+			"src_ip", srcIP,
+			"alerts", fp.Alerts,
+		)
+	}
+}
+
+// processICMPPacket handles ICMP messages.
+// ipPayload starts at the IP header.
+func (c *Capturer) processICMPPacket(ipPayload []byte, srcIP, dstIP string) {
+	msg, err := ParseICMP(ipPayload)
+	if err != nil {
+		return
+	}
+
+	c.mu.Lock()
+	c.stats.PacketsParsed++
+	c.mu.Unlock()
+
+	fp, err := c.engine.FingerprintICMP(msg)
+	if err != nil {
+		return
+	}
+
+	if len(fp.Alerts) > 0 {
+		slog.Warn("ICMP fingerprint alerts",
+			"hash", fp.Hash,
+			"src_ip", srcIP,
+			"type", msg.Type,
+			"alerts", fp.Alerts,
 		)
 	}
 }
@@ -493,33 +597,21 @@ type packetMreq struct {
 	addr    [8]byte
 }
 
-// attachTCPPort443Filter attaches a classic BPF program that filters
-// for TLS (TCP port 443), SSH (TCP port 22), and QUIC (UDP port 443).
-// This runs in the kernel so non-matching packets never cross the
-// kernel/user boundary.
+// attachBPFFilter attaches a classic BPF program that captures all IP traffic
+// relevant to fingerprinting: TCP (TLS, SSH, HTTP, SMTP), UDP (QUIC, DNS), and ICMP.
+// This runs in the kernel so non-matching packets never cross the kernel/user boundary.
 func attachTCPPort443Filter(fd int) error {
-	// BPF bytecode for: (tcp dst port 443) or (tcp dst port 22) or (udp dst port 443)
-	// This captures TLS, SSH, and QUIC traffic.
+	// BPF filter: IPv4 AND (TCP OR UDP OR ICMP)
+	// We accept all TCP/UDP/ICMP packets and filter by port in userspace.
+	// This is simpler than encoding every port combination in BPF and still
+	// filters out ARP, IPv6, and other non-IPv4 traffic at kernel level.
 	filter := []bpfInsn{
 		{0x28, 0, 0, 12},          // ldh [12]              ; load ethertype
-		{0x15, 0, 12, 0x0800},     // jeq #0x0800, +0, +12  ; IPv4?
+		{0x15, 0, 5, 0x0800},      // jeq #0x0800, +0, +5   ; IPv4?
 		{0x30, 0, 0, 23},          // ldb [23]              ; load protocol
 		{0x15, 2, 0, 6},           // jeq #6 (TCP), +2, +0  ; TCP?
-		{0x15, 0, 8, 17},          // jeq #17 (UDP), +0, +8 ; UDP?
-		// UDP path: check dst port 443 for QUIC.
-		{0x28, 0, 0, 20},          // ldh [20]              ; load frag offset
-		{0x45, 6, 0, 0x1fff},      // jset #0x1fff, +6, +0  ; fragment?
-		{0xb1, 0, 0, 14},          // ldxb 4*([14]&0xf)     ; IP header len
-		{0x48, 0, 0, 16},          // ldh [x+16]            ; load dst port
-		{0x15, 0, 3, 443},         // jeq #443, +0, +3      ; port 443?
-		{0x06, 0, 0, 65535},       // ret #65535            ; accept
-		// TCP path: check dst port 443 (TLS) or 22 (SSH).
-		{0x28, 0, 0, 20},          // ldh [20]              ; load frag offset
-		{0x45, 3, 0, 0x1fff},      // jset #0x1fff, +3, +0  ; fragment?
-		{0xb1, 0, 0, 14},          // ldxb 4*([14]&0xf)     ; IP header len
-		{0x48, 0, 0, 16},          // ldh [x+16]            ; load dst port
-		{0x15, 1, 0, 443},         // jeq #443, +1, +0      ; port 443?
-		{0x15, 0, 1, 22},          // jeq #22, +0, +1       ; port 22?
+		{0x15, 1, 0, 17},          // jeq #17 (UDP), +1, +0 ; UDP?
+		{0x15, 0, 1, 1},           // jeq #1 (ICMP), +0, +1 ; ICMP?
 		{0x06, 0, 0, 65535},       // ret #65535            ; accept
 		{0x06, 0, 0, 0},           // ret #0                ; reject
 	}

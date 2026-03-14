@@ -23,7 +23,12 @@ const (
 	IOCTypeJA4X            IOCType = "ja4x"  // X.509 certificate chain fingerprint
 	IOCTypeHASSH           IOCType = "hassh" // SSH client fingerprint
 	IOCTypeHASSHServer     IOCType = "hassh_server" // SSH server fingerprint
-	IOCTypeQUIC            IOCType = "quic"  // QUIC Initial packet fingerprint
+	IOCTypeQUIC            IOCType = "quic"         // QUIC Initial packet fingerprint
+	IOCTypeBanner          IOCType = "banner"       // Server banner fingerprint
+	IOCTypeDNS             IOCType = "dns"          // DNS query pattern fingerprint
+	IOCTypeHTTP2           IOCType = "http2"        // HTTP/2 SETTINGS fingerprint
+	IOCTypeTCPTeardown     IOCType = "tcp_teardown" // TCP FIN/RST behavior
+	IOCTypeICMP            IOCType = "icmp"         // ICMP behavior fingerprint
 	IOCTypeDomain          IOCType = "domain"
 	IOCTypeASN             IOCType = "asn" // Autonomous system number (e.g. "AS14618")
 )
@@ -583,11 +588,12 @@ func (s *IOCStore) MatchResponse(ioc *IOC) *ResponseTemplate {
 			if t.IOCType == IOCTypeIP && (ioc.Type == IOCTypeCIDR || ioc.Type == IOCTypeASN) {
 				broad = true
 			}
-			// Fingerprint templates cover all ja4*/hassh/quic subtypes.
+			// Fingerprint templates cover all fingerprint subtypes.
 			if t.IOCType == IOCTypeFingerprintHash {
 				switch ioc.Type {
 				case IOCTypeJA4, IOCTypeJA4S, IOCTypeJA4T, IOCTypeJA4H,
-					IOCTypeJA4X, IOCTypeHASSH, IOCTypeHASSHServer, IOCTypeQUIC:
+					IOCTypeJA4X, IOCTypeHASSH, IOCTypeHASSHServer, IOCTypeQUIC,
+					IOCTypeBanner, IOCTypeDNS, IOCTypeHTTP2, IOCTypeTCPTeardown, IOCTypeICMP:
 					broad = true
 				}
 			}
@@ -717,6 +723,7 @@ func (s *IOCStore) index(ioc *IOC) {
 		s.byASN[ioc.Value] = ioc
 	case IOCTypeJA4, IOCTypeJA4S, IOCTypeJA4T, IOCTypeJA4H,
 		IOCTypeJA4X, IOCTypeHASSH, IOCTypeHASSHServer, IOCTypeQUIC,
+		IOCTypeBanner, IOCTypeDNS, IOCTypeHTTP2, IOCTypeTCPTeardown, IOCTypeICMP,
 		IOCTypeFingerprintHash:
 		s.byFingerprint[ioc.Value] = ioc
 	}

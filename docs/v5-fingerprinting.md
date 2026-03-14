@@ -29,29 +29,33 @@ enforcement. This tracks expanding into the remaining fingerprinting technique f
 
 ### Tier 1 — Passive, high value, no new dependencies
 
-- [ ] **Banner grabbing** — Extract server banners from HTTP (`Server:` header),
+- [x] **Banner grabbing** — Extract server banners from HTTP (`Server:` header),
   SSH (protocol version string), SMTP (`220` greeting). Passive: read from existing
-  traffic, don't probe. Store as a new fingerprint type.
-- [ ] **DNS query pattern fingerprinting** — Track query types, EDNS options, DNSSEC
+  traffic, don't probe. Implemented in `inspect/banner.go`.
+- [x] **DNS query pattern fingerprinting** — Track query types, EDNS options, DNSSEC
   behavior per source IP. Identifies DNS tunneling, exfil, and resolver fingerprinting.
-- [ ] **HTTP/2 SETTINGS frame fingerprinting** — `SETTINGS_HEADER_TABLE_SIZE`,
+  Implemented in `inspect/dns.go`.
+- [x] **HTTP/2 SETTINGS frame fingerprinting** — `SETTINGS_HEADER_TABLE_SIZE`,
   `MAX_CONCURRENT_STREAMS`, `INITIAL_WINDOW_SIZE`, `MAX_FRAME_SIZE` ordering.
-  Highly discriminating for browser/bot detection.
+  Highly discriminating for browser/bot detection. Implemented in `inspect/http2.go`.
 - [x] **TLS certificate chain analysis** — Parse server certs from captured handshakes:
   issuer, validity, SAN list, key type/size. Flag self-signed, expired, or known-bad issuers.
   Implemented as JA4X in `inspect/ja4x.go`.
-- [ ] **TCP FIN/RST behavior** — How connections are torn down reveals OS and
+- [x] **TCP FIN/RST behavior** — How connections are torn down reveals OS and
   application stack. Track RST vs FIN, timing, and sequencing.
+  Implemented in `inspect/teardown.go`.
 
 ### Tier 2 — Passive, requires new capture paths
 
-- [ ] **ICMP fingerprinting** — ICMP echo reply TTL, payload patterns, rate limiting
-  behavior. Requires extending BPF filter beyond TCP 443.
-- [ ] **Timing analysis** — Measure inter-packet arrival times, SYN-ACK latency,
-  TLS handshake duration. Statistical profiling per source IP. Useful for detecting
-  proxies, VPNs, and Tor exits.
-- [ ] **Packet size distribution** — Track MTU, typical payload sizes, fragmentation
+- [x] **ICMP fingerprinting** — ICMP echo reply TTL, payload patterns, rate limiting
+  behavior. BPF filter expanded to accept all IPv4 TCP/UDP/ICMP.
+  Implemented in `inspect/icmp.go`.
+- [x] **Timing analysis** — Measure inter-packet arrival times, SYN-ACK latency,
+  TLS handshake duration. Statistical profiling per source IP. Classifies traffic
+  as human/automated/proxy/scanner. Implemented in `inspect/timing.go`.
+- [x] **Packet size distribution** — Track MTU, typical payload sizes, fragmentation
   behavior. Different OS/app stacks have distinct patterns.
+  Implemented in `inspect/pktsize.go`.
 
 ### Tier 3 — External tool integration (passive ingestion)
 
