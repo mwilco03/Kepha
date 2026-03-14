@@ -172,6 +172,10 @@ func main() {
 	// Performance tuner: flowtables, conntrack auto-scaling, sysctl tuning.
 	svcMgr.Register(service.NewPerformanceTuner())
 
+	// MTU manager: jumbo frame support, MSS clamping, PMTUD, overlay MTU adjustment.
+	mtuMgr := service.NewMTUManager()
+	svcMgr.Register(mtuMgr)
+
 	// HA service (wrapped for Service interface compatibility).
 	svcMgr.Register(service.NewHAWrapper())
 
@@ -186,6 +190,20 @@ func main() {
 
 	// Start all previously-enabled services.
 	svcMgr.StartEnabled()
+
+	// Enable MSS clamping in the firewall compiler if the MTU manager is running.
+	if mtuMgr.Status() == service.StateRunning {
+		fw.MSSClampPMTU = true
+	}
+
+	// Boot-time: apply per-zone MTU settings and detect mismatches.
+	if zones, err := store.ListZones(); err == nil {
+		if diags := mtuMgr.ApplyZoneMTUs(zones); len(diags) > 0 {
+			for _, d := range diags {
+				slog.Warn("MTU diagnostic", "zone", d.Zone, "severity", d.Severity, "msg", d.Message)
+			}
+		}
+	}
 
 	// Handle SIGHUP: the CLI sends this after writing a commit/rollback
 	// to the DB, signaling the daemon to re-apply the config.
@@ -203,6 +221,10 @@ func main() {
 				slog.Error("SIGHUP dnsmasq apply failed", "error", err)
 			} else {
 				slog.Info("dnsmasq config applied via SIGHUP")
+			}
+			// Re-apply zone MTU settings after config reload.
+			if zones, zErr := store.ListZones(); zErr == nil {
+				mtuMgr.ApplyZoneMTUs(zones)
 			}
 		}
 	}()
@@ -231,6 +253,7 @@ func main() {
 		ServiceMgr:   svcMgr,
 		RBACEnforcer: enforcer,
 		Net:          netMgr,
+		MTUMgr:       mtuMgr,
 	})
 	webHandler := web.HandlerWithDeps(store, &web.WebDeps{
 		ServiceMgr: svcMgr,

@@ -124,10 +124,10 @@ type JSONRPCRequest struct {
 
 // JSONRPCResponse is a JSON-RPC 2.0 response.
 type JSONRPCResponse struct {
-	JSONRPC string       `json:"jsonrpc"`
-	ID      any          `json:"id"`
-	Result  any          `json:"result,omitempty"`
-	Error   *JSONRPCErr  `json:"error,omitempty"`
+	JSONRPC string      `json:"jsonrpc"`
+	ID      any         `json:"id"`
+	Result  any         `json:"result,omitempty"`
+	Error   *JSONRPCErr `json:"error,omitempty"`
 }
 
 // JSONRPCErr is a JSON-RPC 2.0 error object.
@@ -146,11 +146,11 @@ const (
 	codeInternalError  = -32603
 
 	// Application-defined error codes.
-	codePermissionDenied  = -32000
-	codeRateLimited       = -32001
-	codeScopeViolation    = -32002
-	codeSimulationFailed  = -32003
-	codeApprovalRejected  = -32004
+	codePermissionDenied = -32000
+	codeRateLimited      = -32001
+	codeScopeViolation   = -32002
+	codeSimulationFailed = -32003
+	codeApprovalRejected = -32004
 )
 
 // ToolCallParams holds the parameters for a tools/call JSON-RPC request.
@@ -768,7 +768,9 @@ func (s *Server) registerTools() {
 			[]string{"name"},
 		),
 		handler: func(ctx context.Context, principal string, params json.RawMessage) (any, error) {
-			var p struct{ Name string `json:"name"` }
+			var p struct {
+				Name string `json:"name"`
+			}
 			if err := json.Unmarshal(params, &p); err != nil {
 				return nil, err
 			}
@@ -798,7 +800,9 @@ func (s *Server) registerTools() {
 			[]string{"name"},
 		),
 		handler: func(ctx context.Context, principal string, params json.RawMessage) (any, error) {
-			var p struct{ Name string `json:"name"` }
+			var p struct {
+				Name string `json:"name"`
+			}
 			if err := json.Unmarshal(params, &p); err != nil {
 				return nil, err
 			}
@@ -835,7 +839,9 @@ func (s *Server) registerTools() {
 			[]string{"name"},
 		),
 		handler: func(ctx context.Context, principal string, params json.RawMessage) (any, error) {
-			var p struct{ Name string `json:"name"` }
+			var p struct {
+				Name string `json:"name"`
+			}
 			if err := json.Unmarshal(params, &p); err != nil {
 				return nil, err
 			}
@@ -865,7 +871,9 @@ func (s *Server) registerTools() {
 			[]string{"name"},
 		),
 		handler: func(ctx context.Context, principal string, params json.RawMessage) (any, error) {
-			var p struct{ Name string `json:"name"` }
+			var p struct {
+				Name string `json:"name"`
+			}
 			if err := json.Unmarshal(params, &p); err != nil {
 				return nil, err
 			}
@@ -902,7 +910,9 @@ func (s *Server) registerTools() {
 			nil,
 		),
 		handler: func(ctx context.Context, principal string, params json.RawMessage) (any, error) {
-			var p struct{ Limit int `json:"limit"` }
+			var p struct {
+				Limit int `json:"limit"`
+			}
 			_ = json.Unmarshal(params, &p)
 			if p.Limit <= 0 || p.Limit > 1000 {
 				p.Limit = 50
@@ -1221,7 +1231,9 @@ func (s *Server) registerTools() {
 			nil,
 		),
 		handler: func(ctx context.Context, principal string, params json.RawMessage) (any, error) {
-			var p struct{ Message string `json:"message"` }
+			var p struct {
+				Message string `json:"message"`
+			}
 			_ = json.Unmarshal(params, &p)
 			rev, err := s.cfg.Ops.Commit(mcpActorFor(principal), p.Message)
 			if err != nil {
@@ -1247,7 +1259,9 @@ func (s *Server) registerTools() {
 			[]string{"revision"},
 		),
 		handler: func(ctx context.Context, principal string, params json.RawMessage) (any, error) {
-			var p struct{ Revision int `json:"revision"` }
+			var p struct {
+				Revision int `json:"revision"`
+			}
 			if err := json.Unmarshal(params, &p); err != nil {
 				return nil, err
 			}
@@ -1274,7 +1288,9 @@ func (s *Server) registerTools() {
 			[]string{"name"},
 		),
 		handler: func(ctx context.Context, principal string, params json.RawMessage) (any, error) {
-			var p struct{ Name string `json:"name"` }
+			var p struct {
+				Name string `json:"name"`
+			}
 			if err := json.Unmarshal(params, &p); err != nil {
 				return nil, err
 			}
@@ -1297,7 +1313,9 @@ func (s *Server) registerTools() {
 			[]string{"name"},
 		),
 		handler: func(ctx context.Context, principal string, params json.RawMessage) (any, error) {
-			var p struct{ Name string `json:"name"` }
+			var p struct {
+				Name string `json:"name"`
+			}
 			if err := json.Unmarshal(params, &p); err != nil {
 				return nil, err
 			}
@@ -1317,7 +1335,9 @@ func (s *Server) registerTools() {
 			[]string{"name"},
 		),
 		handler: func(ctx context.Context, principal string, params json.RawMessage) (any, error) {
-			var p struct{ Name string `json:"name"` }
+			var p struct {
+				Name string `json:"name"`
+			}
 			if err := json.Unmarshal(params, &p); err != nil {
 				return nil, err
 			}
@@ -1340,7 +1360,9 @@ func (s *Server) registerTools() {
 			[]string{"id"},
 		),
 		handler: func(ctx context.Context, principal string, params json.RawMessage) (any, error) {
-			var p struct{ ID int64 `json:"id"` }
+			var p struct {
+				ID int64 `json:"id"`
+			}
 			if err := json.Unmarshal(params, &p); err != nil {
 				return nil, err
 			}
@@ -1408,7 +1430,9 @@ func (s *Server) registerTools() {
 			if s.cfg.WireGuardOps == nil {
 				return nil, fmt.Errorf("wireguard not configured")
 			}
-			var p struct{ PublicKey string `json:"public_key"` }
+			var p struct {
+				PublicKey string `json:"public_key"`
+			}
 			if err := json.Unmarshal(params, &p); err != nil {
 				return nil, err
 			}
@@ -1447,7 +1471,9 @@ func (s *Server) registerTools() {
 			if s.cfg.ServiceMgr == nil {
 				return nil, fmt.Errorf("service manager not configured")
 			}
-			var p struct{ Name string `json:"name"` }
+			var p struct {
+				Name string `json:"name"`
+			}
 			if err := json.Unmarshal(params, &p); err != nil {
 				return nil, err
 			}
@@ -1471,7 +1497,9 @@ func (s *Server) registerTools() {
 			if s.cfg.ServiceMgr == nil {
 				return nil, fmt.Errorf("service manager not configured")
 			}
-			var p struct{ Name string `json:"name"` }
+			var p struct {
+				Name string `json:"name"`
+			}
 			if err := json.Unmarshal(params, &p); err != nil {
 				return nil, err
 			}
@@ -1510,6 +1538,29 @@ func (s *Server) registerTools() {
 			}
 			_ = s.cfg.Ops.Store().LogAudit("mcp", "configure_service", "service", principal, p.Config)
 			return map[string]string{"configured": p.Name}, nil
+		},
+	})
+
+	// ━━━ MTU diagnostic tools ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+	s.addTool(&Tool{
+		Name:        "mtu_status",
+		Description: "Show MTU status for all zones: configured vs actual MTU, overlay adjustments, MSS clamping state, and any MTU mismatch warnings between zones.",
+		Category:    CategoryReadOnly,
+		InputSchema: jsonSchema(nil, nil),
+		handler: func(ctx context.Context, principal string, params json.RawMessage) (any, error) {
+			zones, err := s.cfg.Ops.ListZones()
+			if err != nil {
+				return nil, err
+			}
+			// Filter by zone scope.
+			var filtered []model.Zone
+			for _, z := range zones {
+				if s.inZoneScope(principal, z.Name) {
+					filtered = append(filtered, z)
+				}
+			}
+			return service.GetMTUStatusFromZones(filtered), nil
 		},
 	})
 

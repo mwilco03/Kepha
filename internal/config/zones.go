@@ -8,7 +8,7 @@ import (
 )
 
 func (s *Store) ListZones() ([]model.Zone, error) {
-	rows, err := s.db.Query("SELECT id, name, interface, network_cidr, trust_level, description FROM zones ORDER BY id")
+	rows, err := s.db.Query("SELECT id, name, interface, network_cidr, trust_level, description, mtu FROM zones ORDER BY id")
 	if err != nil {
 		return nil, err
 	}
@@ -17,7 +17,7 @@ func (s *Store) ListZones() ([]model.Zone, error) {
 	var zones []model.Zone
 	for rows.Next() {
 		var z model.Zone
-		if err := rows.Scan(&z.ID, &z.Name, &z.Interface, &z.NetworkCIDR, &z.TrustLevel, &z.Description); err != nil {
+		if err := rows.Scan(&z.ID, &z.Name, &z.Interface, &z.NetworkCIDR, &z.TrustLevel, &z.Description, &z.MTU); err != nil {
 			return nil, err
 		}
 		zones = append(zones, z)
@@ -28,8 +28,8 @@ func (s *Store) ListZones() ([]model.Zone, error) {
 func (s *Store) GetZone(name string) (*model.Zone, error) {
 	var z model.Zone
 	err := s.db.QueryRow(
-		"SELECT id, name, interface, network_cidr, trust_level, description FROM zones WHERE name = ?", name,
-	).Scan(&z.ID, &z.Name, &z.Interface, &z.NetworkCIDR, &z.TrustLevel, &z.Description)
+		"SELECT id, name, interface, network_cidr, trust_level, description, mtu FROM zones WHERE name = ?", name,
+	).Scan(&z.ID, &z.Name, &z.Interface, &z.NetworkCIDR, &z.TrustLevel, &z.Description, &z.MTU)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -41,8 +41,8 @@ func (s *Store) GetZone(name string) (*model.Zone, error) {
 
 func (s *Store) CreateZone(z *model.Zone) error {
 	res, err := s.db.Exec(
-		"INSERT INTO zones (name, interface, network_cidr, trust_level, description) VALUES (?, ?, ?, ?, ?)",
-		z.Name, z.Interface, z.NetworkCIDR, z.TrustLevel, z.Description,
+		"INSERT INTO zones (name, interface, network_cidr, trust_level, description, mtu) VALUES (?, ?, ?, ?, ?, ?)",
+		z.Name, z.Interface, z.NetworkCIDR, z.TrustLevel, z.Description, z.MTU,
 	)
 	if err != nil {
 		return fmt.Errorf("insert zone: %w", err)
@@ -53,8 +53,8 @@ func (s *Store) CreateZone(z *model.Zone) error {
 
 func (s *Store) UpdateZone(z *model.Zone) error {
 	_, err := s.db.Exec(
-		"UPDATE zones SET interface = ?, network_cidr = ?, trust_level = ?, description = ? WHERE name = ?",
-		z.Interface, z.NetworkCIDR, z.TrustLevel, z.Description, z.Name,
+		"UPDATE zones SET interface = ?, network_cidr = ?, trust_level = ?, description = ?, mtu = ? WHERE name = ?",
+		z.Interface, z.NetworkCIDR, z.TrustLevel, z.Description, z.MTU, z.Name,
 	)
 	return err
 }
@@ -64,7 +64,7 @@ func (s *Store) ListZonesPaginated(p Pagination) ([]model.Zone, int, error) {
 	if err := s.db.QueryRow("SELECT COUNT(*) FROM zones").Scan(&total); err != nil {
 		return nil, 0, err
 	}
-	rows, err := s.db.Query("SELECT id, name, interface, network_cidr, trust_level, description FROM zones ORDER BY id LIMIT ? OFFSET ?", p.Limit, p.Offset)
+	rows, err := s.db.Query("SELECT id, name, interface, network_cidr, trust_level, description, mtu FROM zones ORDER BY id LIMIT ? OFFSET ?", p.Limit, p.Offset)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -72,7 +72,7 @@ func (s *Store) ListZonesPaginated(p Pagination) ([]model.Zone, int, error) {
 	var zones []model.Zone
 	for rows.Next() {
 		var z model.Zone
-		if err := rows.Scan(&z.ID, &z.Name, &z.Interface, &z.NetworkCIDR, &z.TrustLevel, &z.Description); err != nil {
+		if err := rows.Scan(&z.ID, &z.Name, &z.Interface, &z.NetworkCIDR, &z.TrustLevel, &z.Description, &z.MTU); err != nil {
 			return nil, 0, err
 		}
 		zones = append(zones, z)

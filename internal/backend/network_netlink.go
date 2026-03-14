@@ -27,6 +27,24 @@ func (m *LinuxNetworkManager) LinkAdd(name string, kind string) error {
 	return netlink.LinkAdd(link)
 }
 
+// LinkSetMTU sets the MTU on a network interface via netlink.
+func (m *LinuxNetworkManager) LinkSetMTU(name string, mtu int) error {
+	link, err := netlink.LinkByName(name)
+	if err != nil {
+		return fmt.Errorf("link %s: %w", name, err)
+	}
+	return netlink.LinkSetMTU(link, mtu)
+}
+
+// LinkGetMTU reads the current MTU of a network interface via netlink.
+func (m *LinuxNetworkManager) LinkGetMTU(name string) (int, error) {
+	link, err := netlink.LinkByName(name)
+	if err != nil {
+		return 0, fmt.Errorf("link %s: %w", name, err)
+	}
+	return link.Attrs().MTU, nil
+}
+
 // LinkDel deletes a network interface.
 func (m *LinuxNetworkManager) LinkDel(name string) error {
 	link, err := netlink.LinkByName(name)

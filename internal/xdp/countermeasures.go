@@ -95,6 +95,12 @@ const (
 	TechniqueTTLRandomize   TechniqueType = "ttl_randomize"
 )
 
+// DefaultAvgPacketSize is the assumed average packet size for converting
+// byte rates to packet rates. 1500 is standard Ethernet; set higher for
+// jumbo frame environments (e.g., 9000) or lower for overlay networks
+// with reduced MTU (e.g., 1450 for VXLAN on Proxmox).
+const DefaultAvgPacketSize = 1500
+
 // CountermeasureConfig holds global settings.
 type CountermeasureConfig struct {
 	// TarpitWindowSize is the TCP window size offered to tarpitted connections.
@@ -115,6 +121,11 @@ type CountermeasureConfig struct {
 	RSTChaosProbability float64 `json:"rst_chaos_probability"`
 	// RSTChaosIntervalSec is the minimum interval between RSTs for the same IP.
 	RSTChaosIntervalSec int `json:"rst_chaos_interval_sec"`
+
+	// AvgPacketSize is the assumed average packet size for byte-to-packet-rate
+	// conversions. 0 = use DefaultAvgPacketSize (1500). Set to 9000 for jumbo
+	// frame zones or 1450 for VXLAN overlay environments.
+	AvgPacketSize int `json:"avg_packet_size"`
 }
 
 // CountermeasureStats tracks countermeasure activity.
@@ -355,8 +366,13 @@ func (c *Countermeasures) GenerateNftRules() []string {
 				if v, ok := tech.Params["limit_bps"]; ok {
 					fmt.Sscanf(v, "%d", &limitBps)
 				}
-				// Convert bytes/sec to packets/sec (assume 1500 byte MTU).
-				pps := limitBps / 1500
+				// Convert bytes/sec to packets/sec using configured or detected MTU.
+				// Supports jumbo frames (9000) and VXLAN-reduced MTUs (1450).
+				avgPktSize := c.global.AvgPacketSize
+				if avgPktSize <= 0 {
+					avgPktSize = DefaultAvgPacketSize
+				}
+				pps := limitBps / avgPktSize
 				if pps < 1 {
 					pps = 1
 				}

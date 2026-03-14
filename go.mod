@@ -6,6 +6,7 @@ require (
 	github.com/google/nftables v0.3.0
 	github.com/vishvananda/netlink v1.3.1
 	golang.org/x/crypto v0.48.0
+	golang.org/x/sys v0.41.0
 	modernc.org/sqlite v1.46.1
 )
 
@@ -22,7 +23,6 @@ require (
 	golang.org/x/exp v0.0.0-20251023183803-a4bb9ffd2546 // indirect
 	golang.org/x/net v0.49.0 // indirect
 	golang.org/x/sync v0.17.0 // indirect
-	golang.org/x/sys v0.41.0 // indirect
 	modernc.org/libc v1.67.6 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect

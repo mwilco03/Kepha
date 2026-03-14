@@ -21,6 +21,8 @@ type sysctlCall struct{ Key, Val string }
 type offloadCall struct{ Iface, Feature string; Enabled bool }
 type irqAffinityCall struct{ IRQ int; CPUList string }
 
+type mtuSetCall struct{ Iface string; MTU int }
+
 type mockNetworkManager struct {
 	mu              sync.Mutex
 	SysctlCalls     []sysctlCall
@@ -28,6 +30,8 @@ type mockNetworkManager struct {
 	NICInfoResult   *backend.NICInfo // returned by NICInfo()
 	OffloadCalls    []offloadCall
 	IRQAffinityCalls []irqAffinityCall
+	MTUSetCalls     []mtuSetCall
+	MTUValues       map[string]int   // interface -> MTU for LinkGetMTU
 }
 
 func (m *mockNetworkManager) SysctlSet(key, value string) error {
@@ -52,6 +56,28 @@ func (m *mockNetworkManager) ConntrackList(proto string) ([]backend.ConntrackEnt
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.Conntrack, nil
+}
+
+func (m *mockNetworkManager) LinkSetMTU(iface string, mtu int) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.MTUSetCalls = append(m.MTUSetCalls, mtuSetCall{iface, mtu})
+	if m.MTUValues == nil {
+		m.MTUValues = map[string]int{}
+	}
+	m.MTUValues[iface] = mtu
+	return nil
+}
+
+func (m *mockNetworkManager) LinkGetMTU(iface string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.MTUValues != nil {
+		if mtu, ok := m.MTUValues[iface]; ok {
+			return mtu, nil
+		}
+	}
+	return 1500, nil // default
 }
 
 // Stubs — unused by PerformanceTuner and BandwidthMonitor.

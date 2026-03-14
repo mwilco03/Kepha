@@ -40,6 +40,9 @@ type RouterConfig struct {
 	// MMDBUpdater is the ASN mmdb auto-updater (optional).
 	MMDBUpdater *inspect.MMDBUpdater
 
+	// MTUMgr is the MTU management service (optional).
+	MTUMgr *service.MTUManager
+
 	// XDPSvc is the XDP fast path service (optional).
 	XDPSvc *service.XDPService
 
@@ -83,8 +86,8 @@ func NewRouterWithConfig(cfg *RouterConfig) http.Handler {
 
 	// Health checks (unauthenticated per OpenAPI spec).
 	mux.HandleFunc("GET /api/v1/status", handleStatus)
-	mux.HandleFunc("GET /api/v1/healthz", handleStatus)           // Liveness: process is running.
-	mux.HandleFunc("GET /api/v1/readyz", h.handleReady)           // Readiness: DB is accessible.
+	mux.HandleFunc("GET /api/v1/healthz", handleStatus) // Liveness: process is running.
+	mux.HandleFunc("GET /api/v1/readyz", h.handleReady) // Readiness: DB is accessible.
 
 	// Metrics (unauthenticated).
 	mux.HandleFunc("GET /api/v1/metrics", metrics.Handler())
@@ -188,6 +191,12 @@ func NewRouterWithConfig(cfg *RouterConfig) http.Handler {
 		mux.HandleFunc("GET /api/v1/iocs/mmdb", ih.mmdbStatus)
 		mux.HandleFunc("POST /api/v1/iocs/mmdb/refresh", ih.mmdbRefresh)
 		mux.HandleFunc("POST /api/v1/iocs/mmdb/config", ih.mmdbConfig)
+	}
+
+	// MTU management endpoints (requires MTU manager).
+	if cfg.MTUMgr != nil {
+		mh := &mtuHandlers{mgr: cfg.MTUMgr, store: cfg.Store}
+		mux.HandleFunc("GET /api/v1/mtu/status", mh.mtuStatus)
 	}
 
 	// XDP fast path endpoints (requires XDP service).

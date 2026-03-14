@@ -18,6 +18,7 @@ type FirewallController struct {
 	backend        FirewallBackend
 	store          *config.Store
 	WGListenPort   int
+	MSSClampPMTU   bool // Enable TCP MSS clamping to path MTU in forward chain.
 	confirmTimer   *time.Timer
 	pendingRev     int
 	confirmTimeout time.Duration
@@ -150,5 +151,6 @@ func (fc *FirewallController) buildInput() (*compiler.Input, error) {
 		Profiles:     profiles,
 		Devices:      devices,
 		WGListenPort: fc.WGListenPort,
+		MSSClampPMTU: fc.MSSClampPMTU,
 	}, nil
 }
