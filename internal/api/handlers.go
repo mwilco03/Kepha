@@ -18,6 +18,7 @@ import (
 	"github.com/gatekeeper-firewall/gatekeeper/internal/driver"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/model"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/ops"
+	"github.com/gatekeeper-firewall/gatekeeper/internal/service"
 )
 
 // apiActor identifies all API-originated mutations in the audit log.
@@ -928,6 +929,22 @@ func readJSON(r *http.Request, v any) error {
 		return err
 	}
 	return json.Unmarshal(body, v)
+}
+
+// --- MTU handlers ---
+
+type mtuHandlers struct {
+	mgr   *service.MTUManager
+	store *config.Store
+}
+
+func (h *mtuHandlers) mtuStatus(w http.ResponseWriter, r *http.Request) {
+	zones, err := h.store.ListZones()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, h.mgr.GetMTUStatus(zones))
 }
 
 func writeError(w http.ResponseWriter, status int, msg string) {

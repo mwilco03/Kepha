@@ -84,6 +84,8 @@ func main() {
 		err = cmdService(os.Args[2:])
 	case "ping":
 		err = cmdPing(os.Args[2:])
+	case "mtu":
+		err = cmdMTU(backend, os.Args[2:], outputFmt)
 	case "perf":
 		err = cmdPerf(os.Args[2:], outputFmt)
 	case "fingerprint", "fp":
@@ -819,6 +821,59 @@ func cmdDeps(args []string) error {
 	}
 }
 
+func cmdMTU(b cli.Backend, args []string, outputFmt string) error {
+	subcmd := "status"
+	if len(args) > 0 {
+		subcmd = args[0]
+	}
+
+	switch subcmd {
+	case "status":
+		zones, err := b.ListZones()
+		if err != nil {
+			return fmt.Errorf("list zones: %w", err)
+		}
+		st := service.GetMTUStatusFromZones(zones)
+
+		if outputFmt == "table" {
+			fmt.Println("=== Zone MTU Status ===")
+			if len(st.Zones) == 0 {
+				fmt.Println("  No zones with interfaces configured.")
+			} else {
+				tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+				fmt.Fprintln(tw, "ZONE\tINTERFACE\tCONFIGURED\tACTUAL\tEFFECTIVE")
+				for _, z := range st.Zones {
+					configured := "-"
+					if z.ConfiguredMTU > 0 {
+						configured = strconv.Itoa(z.ConfiguredMTU)
+					}
+					actual := "-"
+					if z.ActualMTU > 0 {
+						actual = strconv.Itoa(z.ActualMTU)
+					}
+					effective := strconv.Itoa(z.EffectiveMTU)
+					fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
+						z.Zone, z.Interface, configured, actual, effective)
+				}
+				tw.Flush()
+			}
+
+			if len(st.Diagnostics) > 0 {
+				fmt.Println()
+				fmt.Println("=== Diagnostics ===")
+				for _, d := range st.Diagnostics {
+					fmt.Printf("  [%s] %s\n", d.Severity, d.Message)
+				}
+			}
+			return nil
+		}
+		return printJSON(st)
+
+	default:
+		return fmt.Errorf("usage: gk mtu status")
+	}
+}
+
 func cmdPerf(args []string, outputFmt string) error {
 	subcmd := "status"
 	if len(args) > 0 {
@@ -1283,6 +1338,7 @@ Commands:
   service     Manage services (list, show, enable, disable, config)
   fingerprint Manage TLS fingerprints (list, show, identify, assign)
   xdp         XDP/eBPF fast path (status, capabilities, blocklist, stats)
+  mtu         MTU management (status, diagnostics, zone MTU info)
   perf        Performance tuning (status, conntrack, nic)
   ping        Ping a target host
   deps        Manage system dependencies (check, install)

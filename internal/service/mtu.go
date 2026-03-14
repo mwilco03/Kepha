@@ -515,3 +515,57 @@ func (m *MTUManager) GetMTUStatus(zones []model.Zone) MTUStatus {
 	st.Diagnostics = m.detectMismatches(zones)
 	return st
 }
+
+// GetMTUStatusFromZones returns a basic MTU status snapshot without requiring
+// the MTU Manager instance. Used by MCP and other callers that don't hold a
+// reference to the service.
+func GetMTUStatusFromZones(zones []model.Zone) MTUStatus {
+	st := MTUStatus{}
+	for _, z := range zones {
+		if z.Interface == "" {
+			continue
+		}
+		info := ZoneMTUInfo{
+			Zone:          z.Name,
+			Interface:     z.Interface,
+			ConfiguredMTU: z.MTU,
+		}
+		if actual, err := Net.LinkGetMTU(z.Interface); err == nil {
+			info.ActualMTU = actual
+		}
+		info.EffectiveMTU = EffectiveMTU(z, "")
+		st.Zones = append(st.Zones, info)
+	}
+
+	// Detect mismatches.
+	type zoneMTU struct {
+		name string
+		mtu  int
+	}
+	var withMTU []zoneMTU
+	for _, info := range st.Zones {
+		mtu := info.ActualMTU
+		if mtu == 0 {
+			mtu = info.ConfiguredMTU
+		}
+		if mtu == 0 {
+			mtu = MTUStandard
+		}
+		withMTU = append(withMTU, zoneMTU{name: info.Zone, mtu: mtu})
+	}
+	for i := 0; i < len(withMTU); i++ {
+		for j := i + 1; j < len(withMTU); j++ {
+			a, b := withMTU[i], withMTU[j]
+			if a.mtu != b.mtu {
+				st.Diagnostics = append(st.Diagnostics, MTUDiagnostic{
+					Zone:     a.name + "/" + b.name,
+					Severity: "warning",
+					Message: fmt.Sprintf("MTU mismatch: zone %s (%d) vs zone %s (%d) — "+
+						"enable MSS clamping to prevent packet blackholes",
+						a.name, a.mtu, b.name, b.mtu),
+				})
+			}
+		}
+	}
+	return st
+}

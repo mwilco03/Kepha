@@ -1513,6 +1513,29 @@ func (s *Server) registerTools() {
 		},
 	})
 
+	// ━━━ MTU diagnostic tools ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+	s.addTool(&Tool{
+		Name:        "mtu_status",
+		Description: "Show MTU status for all zones: configured vs actual MTU, overlay adjustments, MSS clamping state, and any MTU mismatch warnings between zones.",
+		Category:    CategoryReadOnly,
+		InputSchema: jsonSchema(nil, nil),
+		handler: func(ctx context.Context, principal string, params json.RawMessage) (any, error) {
+			zones, err := s.cfg.Ops.ListZones()
+			if err != nil {
+				return nil, err
+			}
+			// Filter by zone scope.
+			var filtered []model.Zone
+			for _, z := range zones {
+				if s.inZoneScope(principal, z.Name) {
+					filtered = append(filtered, z)
+				}
+			}
+			return service.GetMTUStatusFromZones(filtered), nil
+		},
+	})
+
 	// ━━━ Suggestion tool ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 	s.addTool(&Tool{

@@ -198,3 +198,34 @@ func TestDryRunOutput(t *testing.T) {
 		t.Error("ruleset should end with closing brace")
 	}
 }
+
+func TestMSSClampPMTU(t *testing.T) {
+	input := basicInput()
+	input.MSSClampPMTU = true
+
+	result, err := Compile(input)
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+
+	if !strings.Contains(result.Text, "tcp option maxseg size set rt mtu") {
+		t.Error("MSS clamping rule missing when MSSClampPMTU=true")
+	}
+	if !strings.Contains(result.Text, "tcp flags syn / syn,rst") {
+		t.Error("SYN flag match missing in MSS clamping rule")
+	}
+}
+
+func TestMSSClampPMTUDisabled(t *testing.T) {
+	input := basicInput()
+	input.MSSClampPMTU = false
+
+	result, err := Compile(input)
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+
+	if strings.Contains(result.Text, "tcp option maxseg size") {
+		t.Error("MSS clamping rule should NOT be present when MSSClampPMTU=false")
+	}
+}
