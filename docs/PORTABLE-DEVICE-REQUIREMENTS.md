@@ -940,7 +940,7 @@ that Firewalla cannot match without shipping GPU-capable hardware.
 - Sell as "Kepha Gateway GOV" at $699-899
 - List on GSA Schedule via Carahsoft/Immix reseller
 
-### GL.iNet White-Label — The Travel Router Path
+### GL.iNet White-Label — Same Kepha, Pocket-Sized
 
 GL.iNet explicitly offers white-label service with:
 - Small batch for market validation
@@ -948,10 +948,121 @@ GL.iNet explicitly offers white-label service with:
 - GoodCloud remote management platform (customizable with your branding)
 - Their ImageBuilder tool for custom OpenWrt firmware
 
-This is the fastest path to a branded travel router if you want WiFi 7 in a
-pocket form factor. GL.iNet handles hardware, you provide the security stack.
-The trade-off: you're building on OpenWrt, not Fedora IoT, and the ARM hardware
-limits AI capability.
+#### What's Actually Inside GL.iNet Devices
+
+| Device | Price | SoC | CPU | Arch | RAM | Storage | OpenWrt |
+|--------|-------|-----|-----|------|-----|---------|---------|
+| Opal (SFT1200) | $35 | SiFlower SF19A2890 | 2C MIPS 1.0GHz | **MIPS32** | 128 MB | 128 MB NAND | **No upstream** |
+| Beryl AX (MT3000) | $89 | MediaTek MT7981BA | 2C A53 1.3GHz | AArch64 | 512 MB | 256 MB NAND | **Yes (filogic)** |
+| Slate AX (AXT1800) | $89 | Qualcomm IPQ6000 | 4C A53 1.2GHz | AArch64 | 512 MB | 128 MB NAND | Snapshot only |
+| Brume 2 (MT2500) | $90 | MediaTek MT7981B | 2C A53 1.3GHz | AArch64 | **1 GB** | **8 GB eMMC** | Yes (filogic) |
+| Beryl 7 (MT3600BE) | $140 | MediaTek (TBD) | 4C A53 2.0GHz | AArch64 | 512 MB | 512 MB NAND | Not yet |
+| Flint 2 (MT6000) | $130 | MediaTek MT7986AV | 4C A53 2.0GHz | AArch64 | **1 GB** | **8 GB eMMC** | **Yes (filogic)** |
+
+Key findings:
+- **Everything except the $35 Opal is AArch64 ARM Cortex-A53.** The Opal is
+  MIPS32 with 128MB RAM — dead end, ignore it.
+- **U-Boot is unlocked on all models.** Serial console access via 3.3V UART header.
+  The Flint 2 also has a JTAG header.
+- **The Flint 2 and Brume 2 have 1GB RAM + 8GB eMMC.** That's enough for LXC.
+- All MediaTek models are fully supported in upstream OpenWrt (filogic target,
+  kernel 6.12.x).
+- GL.iNet's white-label program customizes **their** OpenWrt fork — you get
+  their build system, add packages, change branding. For full firmware
+  replacement you'd negotiate an ODM agreement, but the hardware supports it
+  (unlocked U-Boot, standard MediaTek DTS in mainline Linux).
+
+#### The Same Architecture — Not a Different Product
+
+```
+On Proxmox (current):                On GL.iNet (portable):
+
+┌──────────────────────┐            ┌──────────────────────┐
+│   Kepha (gatekeeperd)│            │   Kepha (gatekeeperd)│
+│   Go binary, arm64   │            │   Go binary, arm64   │
+├──────────────────────┤            ├──────────────────────┤
+│   Alpine Linux LXC   │            │   Alpine Linux LXC   │
+├──────────────────────┤            ├──────────────────────┤
+│   LXC runtime        │            │   LXC runtime        │
+├──────────────────────┤            ├──────────────────────┤
+│   Proxmox VE (Debian)│            │   OpenWrt (musl libc)│
+│   x86_64 or aarch64  │            │   aarch64 (MT7986)   │
+├──────────────────────┤            ├──────────────────────┤
+│   Proxmox host HW    │            │   GL.iNet Flint 2    │
+│   (server/PC)        │            │   ($130, pocket-size) │
+└──────────────────────┘            └──────────────────────┘
+```
+
+**It's the same stack.** Kepha runs in an Alpine LXC container. The container
+doesn't care if the host is Proxmox on a rack server or OpenWrt on a travel
+router. The Go binary cross-compiles to `GOARCH=arm64` trivially. The nftables
+netlink API is architecture-independent. The SQLite database is portable.
+
+What changes:
+- Host OS: Proxmox → OpenWrt (or bare Alpine/Armbian)
+- LXC management: Proxmox GUI → `liblxc` CLI or Incus
+- Network interfaces: veth on Proxmox bridge → veth on OpenWrt bridge
+- WiFi management: not applicable → hostapd (already on OpenWrt)
+- WAN uplink: Ethernet → WiFi STA (wpa_supplicant, already on OpenWrt)
+
+What doesn't change:
+- Kepha binary (same Go code, `GOOS=linux GOARCH=arm64`)
+- nftables rules (same netlink calls)
+- WireGuard (same kernel module)
+- dnsmasq (same config generation)
+- SQLite config store (same file)
+- REST API / Web UI / MCP server (same code)
+- XDP/eBPF (same kernel programs, if kernel supports it)
+
+#### LXC on ARM: What's Actually Needed
+
+LXC runs natively on any Linux with kernel cgroup and namespace support.
+**You do not need Proxmox.** You need:
+
+- Kernel with `CONFIG_NAMESPACES`, `CONFIG_CGROUPS`, `CONFIG_USER_NS`
+- `liblxc` userspace (available as OpenWrt package or Alpine `apk add lxc`)
+- That's it.
+
+Alpine LXC containers run in as little as **64MB RAM**. On a 1GB device
+(Flint 2, Brume 2), the memory budget is:
+
+| Component | RAM Usage |
+|-----------|-----------|
+| OpenWrt host + WiFi drivers | ~80-100 MB |
+| LXC runtime overhead | ~0 (shares host kernel) |
+| Alpine container rootfs | ~20-30 MB |
+| Kepha binary (gatekeeperd) | ~30-50 MB |
+| dnsmasq | ~10-15 MB |
+| nftables/conntrack kernel | ~20-50 MB |
+| **Total** | **~160-245 MB** |
+| **Free for conntrack/caches** | **~755-840 MB** |
+
+No Suricata (needs 500MB+). No local AI. But full Kepha firewall with zones,
+aliases, policies, WireGuard, XDP (if kernel supports it), web UI, API, MCP
+server. On a $130 device that fits in your pocket.
+
+On 512MB devices (Beryl AX, Beryl 7): tighter but workable. ~300MB free
+after Kepha. Enough for basic operation, not for heavy conntrack tables.
+
+#### The Turris Precedent
+
+The Turris Omnia already ships LXC container management in a router's web UI.
+1GB RAM, ARM, OpenWrt-derivative. Users run Home Assistant, Pi-hole, and other
+services in LXC containers on their router. This is not experimental — it's
+a shipping product since 2016.
+
+#### Lightweight LXC Management (No Proxmox)
+
+| Option | Weight | Features |
+|--------|--------|----------|
+| Raw `liblxc` + `lxc-*` CLI | Zero overhead | Manual config files, CLI management |
+| **Incus** (LXD fork) | Light Go daemon | REST API, CLI, optional web UI, image management |
+| systemd-nspawn + machinectl | Zero extra packages | Basic container management, systemd-native |
+| Kepha manages its own LXC | Zero extra packages | Kepha calls liblxc directly from Go |
+
+**The cleanest path:** Kepha manages its own container lifecycle via `liblxc`
+Go bindings. No external management tool needed. Kepha already owns the network
+config — it should own the container too.
 
 ---
 
@@ -1003,14 +1114,16 @@ the firmware work discussed in Part 1. No hardware spend.
 Publish a compatibility matrix. Tested hardware. Installation guides.
 Community support. Same model as pfSense's hardware compatibility list.
 
-| Hardware | Price | Where to Buy | Kepha Rating |
-|----------|-------|-------------|--------------|
-| Dell Wyse 5070 Ext + Intel quad-NIC | $70 | eBay | Budget pick |
-| CWWK N100 4x 2.5GbE | $117 | Amazon | Recommended |
-| CWWK N305 4x 2.5GbE | $160 | Amazon | Best value |
-| Protectli VP2430 | $299 | Protectli.com | US-supported |
-| CWWK AMD 8840U 4x 2.5GbE | $305 | Amazon/AliExpress | AI-capable |
-| Any dual-NIC x86_64 | varies | varies | Community tested |
+| Hardware | Price | Arch | Where to Buy | Kepha Rating |
+|----------|-------|------|-------------|--------------|
+| **GL.iNet Brume 2** | $90 | arm64 | Amazon | **Portable pick** (1GB, 8GB eMMC, headless) |
+| **GL.iNet Flint 2** | $130 | arm64 | Amazon | **Portable + WiFi** (1GB, 8GB eMMC, WiFi 6) |
+| GL.iNet Beryl AX | $89 | arm64 | Amazon | Portable (512MB — tight but works) |
+| Dell Wyse 5070 Ext + Intel quad-NIC | $70 | x86_64 | eBay | Budget x86 |
+| CWWK N100 4x 2.5GbE | $117 | x86_64 | Amazon | Recommended x86 |
+| CWWK N305 4x 2.5GbE | $160 | x86_64 | Amazon | Best value x86 |
+| Protectli VP2430 | $299 | x86_64 | Amazon | US-supported x86 |
+| CWWK AMD 8840U 4x 2.5GbE | $305 | x86_64 | Amazon | AI-capable x86 |
 
 People buy their own hardware. You don't touch it. No inventory, no returns,
 no RMA, no shipping, no customs, no TAA headache.
