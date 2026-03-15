@@ -2,15 +2,47 @@ package model
 
 import "time"
 
+// TrustLevel classifies the trust assigned to a network zone.
+type TrustLevel string
+
+const (
+	TrustNone   TrustLevel = "none"
+	TrustLow    TrustLevel = "low"
+	TrustMedium TrustLevel = "medium"
+	TrustHigh   TrustLevel = "high"
+	TrustFull   TrustLevel = "full"
+)
+
+// ValidTrustLevels is the canonical set of allowed trust levels.
+var ValidTrustLevels = map[TrustLevel]bool{
+	TrustNone: true, TrustLow: true, TrustMedium: true,
+	TrustHigh: true, TrustFull: true,
+}
+
+// Protocol identifies a transport-layer protocol in firewall rules.
+type Protocol string
+
+const (
+	ProtoTCP  Protocol = "tcp"
+	ProtoUDP  Protocol = "udp"
+	ProtoICMP Protocol = "icmp"
+	ProtoNone Protocol = "" // matches any protocol
+)
+
+// ValidProtocols is the canonical set of allowed protocol values.
+var ValidProtocols = map[Protocol]bool{
+	ProtoTCP: true, ProtoUDP: true, ProtoICMP: true, ProtoNone: true,
+}
+
 // Zone represents a network segment.
 type Zone struct {
-	ID          int64  `json:"id"`
-	Name        string `json:"name"`
-	Interface   string `json:"interface"`
-	NetworkCIDR string `json:"network_cidr"`
-	TrustLevel  string `json:"trust_level"`
-	Description string `json:"description,omitempty"`
-	MTU         int    `json:"mtu,omitempty"` // 0 = inherit from interface (no override)
+	ID          int64      `json:"id"`
+	Name        string     `json:"name"`
+	Interface   string     `json:"interface"`
+	NetworkCIDR string     `json:"network_cidr"`
+	TrustLevel  TrustLevel `json:"trust_level"`
+	Description string     `json:"description,omitempty"`
+	MTU         int        `json:"mtu,omitempty"` // 0 = inherit from interface (no override)
 }
 
 // AliasType defines the kind of alias.
@@ -52,6 +84,12 @@ const (
 	RuleActionReject RuleAction = "reject"
 	RuleActionLog    RuleAction = "log"
 )
+
+// ValidActions is the canonical set of allowed rule actions.
+var ValidActions = map[RuleAction]bool{
+	RuleActionAllow: true, RuleActionDeny: true,
+	RuleActionReject: true, RuleActionLog: true,
+}
 
 // Policy is a named set of rules.
 type Policy struct {

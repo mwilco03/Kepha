@@ -1706,7 +1706,7 @@ func (s *Server) suggestProfile(principal, ip, hostname, mac string, openPorts [
 			// IoT device heuristics.
 			iotKeywords := []string{"cam", "sensor", "bulb", "plug", "thermostat", "speaker", "ring", "nest", "hue", "iot"}
 			for _, kw := range iotKeywords {
-				if strings.Contains(hostnameL, kw) && hasZone && zone.TrustLevel == "untrusted" {
+				if strings.Contains(hostnameL, kw) && hasZone && zone.TrustLevel == model.TrustNone {
 					confidence = floatMax(confidence, 0.6)
 					reasons = append(reasons, fmt.Sprintf("hostname %q suggests IoT device, matches untrusted zone %q", hostname, zoneName))
 					break

@@ -104,7 +104,7 @@ func writeInputChain(b *strings.Builder, input *Input) {
 
 	// Allow API access from LAN zones.
 	for _, z := range input.Zones {
-		if z.TrustLevel == "full" && z.Interface != "" {
+		if z.TrustLevel == model.TrustFull && z.Interface != "" {
 			fmt.Fprintf(b, "\t\t# Allow API from %s.\n", z.Name)
 			fmt.Fprintf(b, "\t\tiifname %q tcp dport 8080 accept\n\n", z.Interface)
 		}
@@ -257,12 +257,11 @@ func compileRule(r model.Rule, srcIface, wanIface string, aliasMap map[string]*m
 		parts = append(parts, fmt.Sprintf("log prefix %q", "gk:"))
 	}
 
-	action := strings.ToLower(string(r.Action))
-	if validate.Action(action) != nil {
+	if !model.ValidActions[r.Action] {
 		return "" // Skip rules with invalid action.
 	}
 	// Translate model actions to nftables verdicts.
-	parts = append(parts, modelActionToNFT(action))
+	parts = append(parts, modelActionToNFT(r.Action))
 
 	return strings.Join(parts, " ")
 }
@@ -307,15 +306,15 @@ func inferSetType(aliasType model.AliasType) string {
 }
 
 // modelActionToNFT translates gatekeeper rule actions to nftables verdicts.
-func modelActionToNFT(action string) string {
+func modelActionToNFT(action model.RuleAction) string {
 	switch action {
-	case "allow":
+	case model.RuleActionAllow:
 		return "accept"
-	case "deny":
+	case model.RuleActionDeny:
 		return "drop"
-	case "reject":
+	case model.RuleActionReject:
 		return "reject"
-	case "log":
+	case model.RuleActionLog:
 		return "log"
 	default:
 		return "drop"

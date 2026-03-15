@@ -3,6 +3,7 @@ package compiler
 import (
 	"fmt"
 	"net"
+	"strconv"
 	"strings"
 
 	"github.com/gatekeeper-firewall/gatekeeper/internal/model"
@@ -145,7 +146,11 @@ func ruleMatches(rule model.Rule, req PathTestRequest, aliases []model.Alias) bo
 func portMatches(ports string, dstPort int) bool {
 	for _, p := range strings.Split(ports, ",") {
 		p = strings.TrimSpace(p)
-		if fmt.Sprintf("%d", dstPort) == p {
+		port, err := strconv.Atoi(p)
+		if err != nil {
+			continue
+		}
+		if port == dstPort {
 			return true
 		}
 	}

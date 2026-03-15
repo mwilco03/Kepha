@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/gatekeeper-firewall/gatekeeper/internal/compiler"
+	"github.com/gatekeeper-firewall/gatekeeper/internal/model"
 	nft "github.com/google/nftables"
 	"github.com/google/nftables/expr"
 )
@@ -547,20 +549,22 @@ func (b *NftablesBackend) buildForwardChain(conn *nft.Conn, table *nft.Table, in
 		},
 	})
 
-	// Build zone→profile→policy lookup.
+	// Build zone lookup by ID — O(1) instead of nested loop.
+	zoneByID := make(map[int64]*model.Zone, len(input.Zones))
+	for i := range input.Zones {
+		zoneByID[input.Zones[i].ID] = &input.Zones[i]
+	}
+
 	profileByName := make(map[string]struct{ ZoneIface, PolicyName string })
 	for _, p := range input.Profiles {
-		for _, z := range input.Zones {
-			if z.ID == p.ZoneID {
-				profileByName[p.Name] = struct{ ZoneIface, PolicyName string }{z.Interface, p.PolicyName}
-				break
-			}
+		if z, ok := zoneByID[p.ZoneID]; ok {
+			profileByName[p.Name] = struct{ ZoneIface, PolicyName string }{z.Interface, p.PolicyName}
 		}
 	}
 
-	policyByName := make(map[string]struct{ DefaultAction string })
+	policyByName := make(map[string]model.RuleAction, len(input.Policies))
 	for _, p := range input.Policies {
-		policyByName[p.Name] = struct{ DefaultAction string }{string(p.DefaultAction)}
+		policyByName[p.Name] = p.DefaultAction
 	}
 
 	// Per-profile forward rules.
@@ -569,12 +573,12 @@ func (b *NftablesBackend) buildForwardChain(conn *nft.Conn, table *nft.Table, in
 			continue
 		}
 
-		pol, ok := policyByName[entry.PolicyName]
+		defaultAction, ok := policyByName[entry.PolicyName]
 		if !ok {
 			continue
 		}
 
-		if pol.DefaultAction == "allow" {
+		if defaultAction == model.RuleActionAllow {
 			// iifname <iface> accept
 			conn.AddRule(&nft.Rule{
 				Table: table,
@@ -639,17 +643,11 @@ func binaryPort(port uint16) []byte {
 
 // parseSetElement converts a string member into an nftables set element.
 func parseSetElement(member string, keyType nft.SetDatatype) (nft.SetElement, error) {
-	// For now, support IPv4 addresses.
-	parts := strings.Split(member, ".")
-	if len(parts) == 4 {
-		var ip [4]byte
-		for i, p := range parts {
-			v, err := fmt.Sscanf(p, "%d", &ip[i])
-			if err != nil || v != 1 {
-				return nft.SetElement{}, fmt.Errorf("invalid IP: %s", member)
-			}
+	// Try IPv4 via stdlib net.ParseIP.
+	if ip := net.ParseIP(member); ip != nil {
+		if v4 := ip.To4(); v4 != nil {
+			return nft.SetElement{Key: []byte(v4)}, nil
 		}
-		return nft.SetElement{Key: ip[:]}, nil
 	}
 
 	// Generic: use raw bytes.

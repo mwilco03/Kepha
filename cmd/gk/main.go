@@ -214,7 +214,7 @@ func cmdZone(b cli.Backend, args []string, outputFmt string) error {
 		cidr := fs.String("cidr", "", "Network CIDR")
 		trust := fs.String("trust", "none", "Trust level")
 		_ = fs.Parse(args[1:])
-		z := &model.Zone{Name: *name, Interface: *iface, NetworkCIDR: *cidr, TrustLevel: *trust}
+		z := &model.Zone{Name: *name, Interface: *iface, NetworkCIDR: *cidr, TrustLevel: model.TrustLevel(*trust)}
 		if err := b.CreateZone(z); err != nil {
 			return err
 		}

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net"
 	"strings"
 	"sync"
 	"time"
@@ -310,38 +311,35 @@ func isWithinTimeWindow(now time.Time, allowFrom, allowTo string) bool {
 		return true // No restrictions.
 	}
 
-	fromH, fromM := 0, 0
-	toH, toM := 23, 59
-	fmt.Sscanf(allowFrom, "%d:%d", &fromH, &fromM)
-	fmt.Sscanf(allowTo, "%d:%d", &toH, &toM)
+	fromMin := 0
+	toMin := 23*60 + 59
+	if t, err := time.Parse("15:04", allowFrom); err == nil {
+		fromMin = t.Hour()*60 + t.Minute()
+	}
+	if t, err := time.Parse("15:04", allowTo); err == nil {
+		toMin = t.Hour()*60 + t.Minute()
+	}
 
 	nowMin := now.Hour()*60 + now.Minute()
-	fromMin := fromH*60 + fromM
-	toMin := toH*60 + toM
 
 	if fromMin <= toMin {
-		// Normal window: e.g., 08:00 - 22:00.
 		return nowMin >= fromMin && nowMin <= toMin
 	}
 	// Overnight window: e.g., 22:00 - 06:00.
 	return nowMin >= fromMin || nowMin <= toMin
 }
 
-// parseIPv4 parses an IPv4 address string to 4 bytes.
+// parseIPv4 parses an IPv4 address string to 4 bytes using net.ParseIP.
 func parseIPv4(s string) []byte {
-	parts := strings.Split(s, ".")
-	if len(parts) != 4 {
+	ip := net.ParseIP(s)
+	if ip == nil {
 		return nil
 	}
-	result := make([]byte, 4)
-	for i, p := range parts {
-		var v int
-		if _, err := fmt.Sscanf(p, "%d", &v); err != nil || v < 0 || v > 255 {
-			return nil
-		}
-		result[i] = byte(v)
+	v4 := ip.To4()
+	if v4 == nil {
+		return nil // not an IPv4 address
 	}
-	return result
+	return v4
 }
 
 // CategoryBlocklistURLs maps content categories to DNS blocklist URLs.
