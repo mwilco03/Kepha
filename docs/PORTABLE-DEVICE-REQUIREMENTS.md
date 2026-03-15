@@ -828,14 +828,35 @@ desk/rack appliance than a battery-powered travel device.
 
 | Tier | Price | Volume | Margin | Key Players |
 |------|-------|--------|--------|-------------|
-| < $100 | Consumer travel router | Highest | Razor-thin | GL.iNet dominates |
-| $100-300 | Prosumer | High | Moderate | Firewalla Purple SE, GL.iNet Beryl 7, Protectli |
-| **$300-500** | **SMB / Professional** | **Medium** | **High (65-75%)** | **Firewalla Orange/Purple/Gold SE, Protectli** |
-| $500-900 | Enterprise edge | Lower | Highest | Firewalla Gold Plus/Pro, Netgate |
+| < $40 | Impulse buy travel router | **Massive** | Razor-thin | GL.iNet Mango ($25), Shadow ($30), Opal ($35) |
+| $40-100 | Considered travel router | Very High | Thin | GL.iNet Beryl AX ($89), TP-Link WR1502X ($60) |
+| $100-200 | Prosumer / homelab | High | Moderate | CWWK N100 4-port ($117 all-in), GL.iNet Beryl 7 ($140), Firewalla Purple SE ($199) |
+| $200-500 | SMB / Professional | Medium | High (65-75%) | Firewalla Orange ($339), Gold SE ($439), Protectli VP2430 ($299) |
+| $500+ | Enterprise edge | Low | Highest | Firewalla Gold Plus/Pro, Netgate |
 
-**The $300-500 tier is the sweet spot.** Firewalla has proven customers will
-pay $339-469 for a security appliance. Their estimated gross margins are 65-75%
-on hardware that costs $60-120 in BOM.
+### Price Reality Check
+
+A GL.iNet Mango is **$25 delivered same-day from Amazon.** An Opal is $35. A
+Beryl AX is $89. These are impulse purchases — the same buying decision as a
+USB hub or a phone cable. No research. No reviews. Add to cart, done.
+
+At $100, you've crossed into a different purchase psychology. At $200, you need
+a reason. At $300+, you need a justification. At $500+, you're writing a
+business case.
+
+**The $300-500 tier is where Firewalla lives**, but Firewalla earned the right
+to charge that by starting at $49 on Kickstarter in 2017 and building brand
+trust over 9 years. They didn't enter the market at $339.
+
+**The actual competitive floor:**
+- CWWK N100 4-port 2.5GbE barebone: **$89-110 on Amazon**
+- Add 8GB DDR5 + 128GB NVMe: **$117 total, delivered same-day**
+- Dell Wyse 5070 Extended + used Intel quad-NIC: **$65-75 on eBay**
+- GL.iNet Beryl AX (WiFi 6, WireGuard, OpenWrt): **$89 on Amazon**
+
+Anyone can build a pfSense/OPNsense box for $117. The hardware is not the moat.
+The software is the moat. The UX is the moat. The "I don't need to know
+networking" is the moat.
 
 ### Firewalla: The Model to Study
 
@@ -934,79 +955,160 @@ limits AI capability.
 
 ---
 
-## 16. Revised Recommendation: The Three-Product Strategy
+## 16. Revised Strategy: Meet the Market Where It Is
 
-### Product 1: Kepha Software (free / subscription)
-- Open-source Kepha, installable on any x86_64 Linux with LXC or systemd-nspawn
-- Works on Protectli, CWWK, Topton, Dell, HPE, any dual-NIC x86 box
-- Revenue: support subscriptions ($10-30/month or $100-300/year)
-- **Investment: $0 hardware. Focus on firmware image (12 weeks).**
+### The Wrong Approach
 
-### Product 2: Kepha Gateway ($449-599)
-- White-label CWWK/Topton AMD Ryzen 8840U, 4x 2.5GbE i226-V, 16GB DDR5
-- Pre-flashed Fedora IoT + Kepha + Phi-4-mini (local AI)
-- Custom branding (logo, boot screen, packaging)
-- **The pitch: "Self-defending network. No cloud. No subscription. Talk to it."**
-- Target: prosumer, SOHO, remote worker, privacy-conscious traveler
-- **Investment: ~$10k for first batch of 50 units**
+Selling a $449 box into a market where $89 is "expensive" and $39 is "normal."
+Nobody cares about your iGPU inference benchmarks when the GL.iNet Opal does
+90% of what they need for $35.
 
-### Product 3: Kepha Gateway GOV ($699-899)
-- Axiomtek (Taiwan) or Protectli (US) hardware, TAA-compliant
-- Intel Core Ultra 155H for maximum PCIe lanes (8x 2.5GbE)
-- Fedora IoT with RHEL FIPS kernel module, `GOEXPERIMENT=boringcrypto`
-- IPsec (strongSwan) instead of WireGuard for FIPS builds
-- Listed on GSA Schedule via Carahsoft reseller
-- **Investment: ~$25-50k for first batch + GSA listing**
+### The Right Approach
 
-### Product 4 (Future): Kepha Travel ($349-449)
-- GL.iNet white-label or custom AMD-based portable (battery-powered)
-- WiFi 7 AP/STA, 2x 2.5GbE, USB-C PD, 100Wh battery bank compatible
-- Phi-4-mini on iGPU for portable AI-driven security
-- **Only pursue after Product 1-2 revenue validates demand**
+**Software is the product. Hardware is someone else's problem.**
+
+The Firewalla lesson isn't "charge $339 for hardware." The Firewalla lesson
+is "software is the moat, hardware is commodity." They just also happen to
+sell the hardware. You don't have to.
+
+### Tier 0: Free firmware image ($0 investment)
+
+Kepha as a downloadable image. Flash it to:
+- **CWWK/Topton N100 4-port ($117 all-in)** — the homelab crowd
+- **Protectli VP2430 ($299)** — the "I want US support" crowd
+- **Dell Wyse 5070 + used quad-NIC ($70)** — the budget crowd
+- **Any x86_64 box with 2+ NICs** — the "I have old hardware" crowd
+
+This is how pfSense and OPNsense built their user bases. Zero hardware cost.
+Zero inventory. Zero logistics. Pure software distribution.
+
+**What you're competing with at this tier:**
+- pfSense CE (free)
+- OPNsense (free)
+- OpenWrt (free)
+
+**What Kepha has that they don't:**
+- MCP server (AI-ready policy management)
+- Transactional config with rollback
+- Alias-first zone model (simpler than raw nftables rules)
+- XDP/eBPF fast-path
+- Active countermeasures
+- REST API with OpenAPI 3.1 spec
+
+**Investment:** 12 weeks for the firmware image (Fedora IoT + Kepha). This is
+the firmware work discussed in Part 1. No hardware spend.
+
+### Tier 1: "Kepha Certified" hardware list ($0 investment)
+
+Publish a compatibility matrix. Tested hardware. Installation guides.
+Community support. Same model as pfSense's hardware compatibility list.
+
+| Hardware | Price | Where to Buy | Kepha Rating |
+|----------|-------|-------------|--------------|
+| Dell Wyse 5070 Ext + Intel quad-NIC | $70 | eBay | Budget pick |
+| CWWK N100 4x 2.5GbE | $117 | Amazon | Recommended |
+| CWWK N305 4x 2.5GbE | $160 | Amazon | Best value |
+| Protectli VP2430 | $299 | Protectli.com | US-supported |
+| CWWK AMD 8840U 4x 2.5GbE | $305 | Amazon/AliExpress | AI-capable |
+| Any dual-NIC x86_64 | varies | varies | Community tested |
+
+People buy their own hardware. You don't touch it. No inventory, no returns,
+no RMA, no shipping, no customs, no TAA headache.
+
+### Tier 2: Support subscription ($0 hardware investment)
+
+Once the free image has users:
+- **Community tier:** Free. Forum support. Community wiki.
+- **Pro tier ($8-15/month):** Priority support, automatic updates,
+  pre-built Suricata rulesets, threat intelligence feeds, optional
+  cloud dashboard for monitoring (not required — fully local by default).
+- **Business tier ($30-50/month):** Multi-site management, SSO/LDAP,
+  SLA, phone support.
+
+This is the Netgate model (pfSense CE is free, pfSense Plus is paid) and
+the Canonical model (Ubuntu is free, Ubuntu Pro is paid).
+
+### Tier 3: Pre-configured hardware (only after Tier 0-2 prove demand)
+
+**Only if** the firmware image gets traction (1000+ downloads, 100+ active
+installs, community forming):
+- Buy 20x CWWK N100 4-port ($117 ea = $2,340)
+- Pre-flash Kepha firmware
+- Sell as "Kepha Box" at **$179-199** (not $449)
+- Margin: ~35-40% (thin, but you're selling convenience, not hardware)
+- **This competes with Firewalla Purple SE ($199), not Gold SE ($439)**
+
+The AI-capable AMD 8840U box at $449-599? That's Tier 4. Maybe. After you
+have brand trust. After people know what Kepha is. After someone has run the
+$117 version for 6 months and wants more. You earn the right to charge more.
+
+### Tier 4: The Premium Play (12-18 months out)
+
+**Only if** Tier 3 sells and users are asking for more:
+- AMD 8840U or Ryzen AI 9 with on-device LLM
+- $349-449 price point (competing with Firewalla Orange/Gold SE)
+- Local AI is the differentiator that justifies the premium
+- TAA-compliant variant for government ($699-899)
+
+### The Critical Realization
+
+pcEngines APU died in 2023. Their product was $150-200, 3-port, AMD, fanless,
+open-source friendly. **Nothing has replaced it at that price point.** The
+CWWK N100 at $117 is close but nobody has built the "pfSense appliance for
+normal people" around it. That gap is the opportunity.
+
+The gap is not "expensive AI firewall." The gap is "pfSense that doesn't
+require a networking degree, at a price that doesn't require a business case."
 
 ---
 
-## 17. Updated Cost Summary
+## 17. Honest Cost Comparison
 
-| Product | BOM | Landed | Retail | Gross Margin |
-|---------|-----|--------|--------|--------------|
-| Kepha Software | $0 | $0 | $10-30/mo subscription | 100% (minus hosting/support) |
-| Kepha Gateway (AMD 8840U) | ~$200 | ~$250 | $449-599 | 50-60% |
-| Kepha Gateway GOV (Intel 155H, TAA) | ~$350 | ~$450 | $699-899 | 45-55% |
-| Kepha Travel (future, portable) | ~$150 | ~$200 | $349-449 | 45-55% |
-| Firewalla Orange (competitor ref) | ~$60 | ~$90 | $339 | ~70% |
-| Firewalla Gold SE (competitor ref) | ~$70 | ~$100 | $439 | ~75% |
+| What You're Competing With | Price | What They Get |
+|---------------------------|-------|---------------|
+| GL.iNet Opal | $35 | Travel WiFi, WireGuard, OpenWrt. Impulse buy. |
+| GL.iNet Beryl AX | $89 | WiFi 6, 2.5G WAN, WireGuard 300Mbps. |
+| TP-Link WR1502X | $60 | WiFi 6, USB-C, VPN. |
+| CWWK N100 + pfSense (DIY) | $117 | 4x 2.5GbE, full firewall, manual setup. |
+| Firewalla Purple SE | $199 | IPS, VPN, app-driven UX. "It just works." |
+| Firewalla Orange | $339 | Portable WiFi 7 firewall + IPS. Premium. |
+| Kepha firmware (free) | $0 + hardware | Everything Kepha does. You assemble. |
+| Kepha Box (Tier 3, future) | $179-199 | Pre-configured, tested, supported. |
 
-Firewalla achieves higher margins because they design their own ARM boards with
-cheap SoCs (RK3568 at $12-15). Using a white-label x86 board at $200 BOM means
-lower margins but also zero hardware engineering cost and dramatically more
-capable hardware (local AI, full Suricata, AVX2 WireGuard).
+The playbook: **undercut Firewalla Purple SE at $179-199 with dramatically more
+capable software on slightly better hardware.** Or just give the software away
+and let the $117 CWWK box be the hardware recommendation.
 
 ---
 
-## 18. Updated Open Questions
+## 18. Revised Open Questions
 
-1. **Battery form factor:** Integrated battery (like Firewalla Orange) or
-   external USB-C PD bank? External is simpler, cheaper, user-replaceable,
-   airline-legal (under 100Wh). Integrated requires BMS design and adds weight/cost.
+1. **Is the firmware image enough?** pfSense and OPNsense prove software-only
+   distribution works. But both have terrible UX for non-experts. If Kepha's
+   web UI + MCP tools make it genuinely accessible to non-networking people,
+   that alone is the differentiator — no hardware play needed.
 
-2. **Display:** Firewalla Orange and GL.iNet Slate 7 both added small displays.
-   Market seems to want visible status without opening an app/browser.
+2. **OpenWrt port:** Should Kepha run on GL.iNet travel routers? That puts it
+   on $35-89 hardware with WiFi. The trade-off: ARM, limited RAM (128MB-512MB
+   on cheap models), OpenWrt kernel constraints. Kepha's Go binary and SQLite
+   may be too heavy for a 128MB MIPS device. The Beryl AX (512MB) might work
+   with a stripped-down Kepha (no Suricata, no XDP, basic zones only).
 
-3. **Cellular modem:** Peplink charges $500-600 for a 5G travel router. Adding
-   a Quectel RM520N 5G modem (~$50 BOM) would create a unique value prop but
-   adds FCC certification cost (~$10-25k).
+3. **"Kepha Lite" for constrained hardware:** A reduced Kepha build that runs
+   on 256-512MB ARM devices. No Suricata, no XDP, no local AI. Just nftables
+   zones + WireGuard + dnsmasq + web UI + API. This is what would run on a
+   $35 GL.iNet Opal and compete directly in the travel router space.
 
-4. **Dual-model AI:** Run Qwen 2.5 1.5B for real-time log classification (always on,
-   ~40 t/s, minimal power) AND Phi-4-mini for interactive MCP queries (on-demand,
-   ~25-35 t/s). Two-model architecture mirrors the CPU big.LITTLE pattern.
+4. **Local AI as an upgrade path:** Start with Kepha Lite on cheap hardware.
+   Users who want AI-driven management upgrade to x86_64 hardware where the
+   iGPU enables local LLM. The MCP tools work with cloud LLMs in the meantime
+   (user provides their own API key). Local AI is a feature, not the product.
 
-5. **Model fine-tuning:** Should Kepha ship with a Phi-4-mini fine-tuned on
-   network security tasks? LoRA fine-tuning on UNSW-NB15, CICIDS, and MITRE
-   ATT&CK datasets could improve tool-calling accuracy significantly. Fine-tuning
-   cost: ~$50-200 in cloud GPU time.
+5. **The $70 Dell Wyse play:** Should the "getting started" guide literally be
+   "buy a $50 Dell Wyse 5070 on eBay, add a $20 quad-NIC, flash this image"?
+   That's the kind of accessible entry point that builds a community.
 
-6. **AMD Ryzen AI 9 (Strix Point):** The 890M iGPU is 41% faster than 780M,
-   and the XDNA 2 NPU is 50 TOPS. When CWWK/Topton boards appear with this
-   chip (~$250-350 boards expected), it becomes the obvious upgrade path.
-   NPU handles prefill at ~400 t/s, iGPU handles generation at ~20 t/s.
+6. **Crowdfunding for validation:** Firewalla launched every product on
+   Kickstarter/Indiegogo first. The first Firewalla Red raised $90K. Is a
+   Kickstarter for a "Kepha Box" ($179 pre-configured N100) the right way to
+   test market demand before committing to inventory?
