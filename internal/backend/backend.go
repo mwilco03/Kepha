@@ -307,6 +307,12 @@ type NetworkManager interface {
 	// RuleAdd adds a policy routing rule.
 	RuleAdd(oif string, table int, priority int) error
 
+	// RuleAddSrc adds a source-IP-based policy routing rule.
+	RuleAddSrc(src string, table int, priority int) error
+
+	// RuleAddFwmark adds a fwmark-based policy routing rule.
+	RuleAddFwmark(mark uint32, table int, priority int) error
+
 	// RuleDel removes all policy routing rules for a table.
 	RuleDel(table int) error
 

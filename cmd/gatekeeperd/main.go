@@ -176,6 +176,13 @@ func main() {
 	mtuMgr := service.NewMTUManager()
 	svcMgr.Register(mtuMgr)
 
+	// P0 features: VPN policy routing, parental controls, drop-in gateway,
+	// firmware A/B management.
+	svcMgr.Register(service.NewVPNPolicyRouter())
+	svcMgr.Register(service.NewParentalControls())
+	svcMgr.Register(service.NewDropInGateway())
+	svcMgr.Register(service.NewFirmwareAB("/var/lib/gatekeeper/firmware"))
+
 	// HA service (wrapped for Service interface compatibility).
 	svcMgr.Register(service.NewHAWrapper())
 

@@ -218,10 +218,15 @@ func (v *VPNProvider) Start(cfg map[string]string) error {
 		return err
 	}
 
-	// Apply kill switch.
+	// Apply kill switch (IPv4 + IPv6 leak prevention).
 	if cfg["kill_switch"] == "true" {
 		if err := v.applyKillSwitch(); err != nil {
 			slog.Warn("failed to apply kill switch", "error", err)
+		}
+		// Block IPv6 traffic that would bypass the VPN tunnel.
+		// GL.iNet routers leak IPv6 when VPN is active — we don't.
+		if err := applyIPv6LeakPrevention(v.wgIface); err != nil {
+			slog.Warn("failed to apply IPv6 leak prevention", "error", err)
 		}
 	}
 
@@ -255,8 +260,9 @@ func (v *VPNProvider) Stop() error {
 
 	provider := v.cfg["provider"]
 
-	// Remove kill switch and DNS leak protection.
+	// Remove kill switch, IPv6 leak prevention, and DNS leak protection.
 	v.removeKillSwitch()
+	removeIPv6LeakPrevention()
 	v.removeDNSLeakProtection()
 
 	switch provider {

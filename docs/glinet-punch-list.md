@@ -13,7 +13,7 @@
 - [x] ~~WireGuard client / site-to-site tunnels (VPNLegs service)~~
 - [x] ~~VPN provider management (Mullvad, ProtonVPN, etc. — VPNProvider service)~~
 - [x] ~~VPN kill switch (nftables-based, drop non-tunnel traffic)~~
-- [ ] VPN policy routing — per-device or per-domain VPN selection (route some devices through VPN, others direct)
+- [x] ~~VPN policy routing — per-device or per-domain VPN selection (VPNPolicyRouter service)~~
 - [ ] VPN cascading — server-connected clients forwarded through client tunnel
 - [ ] OpenVPN client & server (GL.iNet ships both; Gatekeeper is WireGuard-only today)
 - [ ] Tor integration — route traffic through Tor network
@@ -25,7 +25,7 @@
 - [x] ~~DNS filtering / ad blocking (DNSFilter service)~~
 - [x] ~~Encrypted DNS — DNS-over-HTTPS / DNS-over-TLS (EncryptedDNS service via Unbound)~~
 - [x] ~~Custom upstream DNS configuration~~
-- [ ] DNS-based parental controls — per-device content filtering with schedule
+- [x] ~~DNS-based parental controls — per-device content filtering with schedule (ParentalControls service)~~
 - [ ] DNS allowlist/blocklist GUI management (AdGuard Home-style filter list editor)
 
 ### DHCP
@@ -46,7 +46,7 @@
 - [x] ~~Dry-run / preview compiled ruleset~~
 - [x] ~~Auto-rollback timer for risky applies~~
 - [ ] MAC allowlist vs blocklist toggle mode (GL.iNet has a simple GUI toggle)
-- [ ] Scheduled firewall rules — time-based allow/deny (e.g., kids' internet off at 10pm)
+- [x] ~~Scheduled firewall rules — time-based allow/deny (ParentalControls schedule enforcer)~~
 
 ### Wi-Fi
 
@@ -70,7 +70,7 @@
 - [x] ~~Network interface management via netlink (no shell-outs)~~
 - [x] ~~Link/address/route operations~~
 - [x] ~~NIC diagnostics (driver, speed, queues, offloads, IRQ)~~
-- [ ] Drop-in gateway mode — transparent insertion between existing router and clients without reconfiguration
+- [x] ~~Drop-in gateway mode — transparent insertion between existing router and clients (DropInGateway service)~~
 - [ ] USB tethering as WAN source (phone-as-modem)
 - [ ] Cellular/LTE modem support as WAN
 - [ ] Captive portal passthrough — handle upstream captive portals (hotels, airports) with MAC cloning
@@ -80,7 +80,7 @@
 
 - [x] ~~Dynamic routing via FRRouting (BGP/OSPF)~~
 - [x] ~~Static route management~~
-- [ ] Policy-based routing GUI (source/dest/protocol → specific WAN or VPN)
+- [x] ~~Policy-based routing (source IP/domain → specific VPN or direct, VPNPolicyRouter service)~~
 
 ### QoS / Traffic
 
@@ -101,8 +101,8 @@
 - [x] ~~Active countermeasures (tarpit, latency injection, bandwidth throttle, RST chaos, SYN cookies, TTL randomization — disabled by default)~~
 - [x] ~~RBAC with 5 roles and granular permissions~~
 - [x] ~~Captive portal / splash page for guest networks~~
-- [ ] Parental controls — per-device screen time limits + content categories
-- [ ] Scheduled access control — per-device internet access schedules
+- [x] ~~Parental controls — per-device screen time limits + content categories (ParentalControls service)~~
+- [x] ~~Scheduled access control — per-device internet access schedules (ParentalControls schedule enforcer)~~
 - [ ] WPA3 management (requires hostapd integration)
 
 ### Storage & Sharing
@@ -123,7 +123,7 @@
 - [ ] Cloud management platform (like GoodCloud — remote admin, batch firmware, multi-device)
 - [ ] Mobile app (iOS/Android)
 - [ ] Physical toggle switch integration (GPIO-based feature toggle)
-- [ ] Firmware upgrade management (staged rollout, A/B partition, auto-update)
+- [x] ~~Firmware A/B partition management with auto-rollback (FirmwareAB service)~~
 
 ### Overlay Networks
 
@@ -152,7 +152,7 @@
 - [ ] DHCPv6 server
 - [ ] NDP proxy
 - [ ] IPv6 prefix delegation
-- [ ] IPv6 + VPN without data leakage (GL.iNet explicitly warns this leaks)
+- [x] ~~IPv6 + VPN without data leakage (ipv6_leak.go — blocks IPv6 bypass when VPN active)~~
 
 ---
 
@@ -262,14 +262,14 @@ Multiple users report replacing mesh systems (Deco M5) because the Flint 2 alone
 
 Based on what people love and where GL.iNet fails, here's the suggested implementation priority:
 
-### P0 — Must Have (Core Differentiators)
-| Feature | Why |
-|---------|-----|
-| VPN policy routing (per-device/domain) | #1 loved feature, we have the foundation |
-| IPv6 + VPN leak prevention | GL.iNet's biggest security gap |
-| Drop-in gateway mode | Lowest-friction adoption path |
-| Parental controls / scheduled access | Massive consumer demand |
-| Firmware A/B with auto-rollback | GL.iNet's biggest reliability gap |
+### P0 — Must Have (Core Differentiators) — ALL DONE
+| Feature | Status |
+|---------|--------|
+| VPN policy routing (per-device/domain) | **DONE** — `vpn_policy.go` |
+| IPv6 + VPN leak prevention | **DONE** — `ipv6_leak.go` |
+| Drop-in gateway mode | **DONE** — `dropin_gateway.go` |
+| Parental controls / scheduled access | **DONE** — `parental.go` |
+| Firmware A/B with auto-rollback | **DONE** — `firmware_ab.go` |
 
 ### P1 — Should Have (Competitive Parity)
 | Feature | Why |

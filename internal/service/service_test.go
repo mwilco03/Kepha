@@ -99,6 +99,8 @@ func (m *mockNetworkManager) BridgeSetSTP(string, bool) error                 { 
 func (m *mockNetworkManager) BridgeSetForwardDelay(string, int) error         { return nil }
 func (m *mockNetworkManager) BridgeSetVlanFiltering(string, bool) error       { return nil }
 func (m *mockNetworkManager) RuleAdd(string, int, int) error                  { return nil }
+func (m *mockNetworkManager) RuleAddSrc(string, int, int) error               { return nil }
+func (m *mockNetworkManager) RuleAddFwmark(uint32, int, int) error            { return nil }
 func (m *mockNetworkManager) RuleDel(int) error                               { return nil }
 
 func (m *mockNetworkManager) Ping(string, int, int, string) (backend.PingResult, error) {

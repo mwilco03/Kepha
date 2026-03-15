@@ -228,6 +228,37 @@ func (m *LinuxNetworkManager) RuleAdd(oif string, table int, priority int) error
 	return netlink.RuleAdd(rule)
 }
 
+// RuleAddSrc adds a source-IP-based policy routing rule.
+func (m *LinuxNetworkManager) RuleAddSrc(src string, table int, priority int) error {
+	_, srcNet, err := net.ParseCIDR(src)
+	if err != nil {
+		// Try as bare IP.
+		ip := net.ParseIP(src)
+		if ip == nil {
+			return fmt.Errorf("parse src %s: invalid", src)
+		}
+		bits := 32
+		if ip.To4() == nil {
+			bits = 128
+		}
+		srcNet = &net.IPNet{IP: ip, Mask: net.CIDRMask(bits, bits)}
+	}
+	rule := netlink.NewRule()
+	rule.Src = srcNet
+	rule.Table = table
+	rule.Priority = priority
+	return netlink.RuleAdd(rule)
+}
+
+// RuleAddFwmark adds a fwmark-based policy routing rule.
+func (m *LinuxNetworkManager) RuleAddFwmark(mark uint32, table int, priority int) error {
+	rule := netlink.NewRule()
+	rule.Mark = int(mark)
+	rule.Table = table
+	rule.Priority = priority
+	return netlink.RuleAdd(rule)
+}
+
 // RuleDel removes all policy routing rules for a table.
 func (m *LinuxNetworkManager) RuleDel(table int) error {
 	rules, err := netlink.RuleList(netlink.FAMILY_ALL)
