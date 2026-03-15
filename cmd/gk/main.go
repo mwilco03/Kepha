@@ -800,58 +800,61 @@ func cmdDiscover(_ []string, outputFmt string) error {
 		return enc.Encode(topo)
 	}
 
-	fmt.Println("=== Network Topology Discovery ===")
+	fmt.Println("=== Upstream Network (auto-detected) ===")
+	fmt.Println()
+	fmt.Printf("  IP:       %s\n", valueOrMissing(topo.UpstreamIP))
+	fmt.Printf("  Gateway:  %s\n", valueOrMissing(topo.DefaultGateway))
+	fmt.Printf("  Subnet:   %s\n", valueOrMissing(topo.UpstreamSubnet))
+	fmt.Printf("  DNS:      %s\n", valueOrMissing(topo.UpstreamDNS))
 	fmt.Println()
 
+	fmt.Println("=== Interfaces ===")
+	fmt.Println()
 	if topo.WAN != nil {
-		fmt.Printf("WAN interface:  %s  (%s)\n", topo.WAN.Name, topo.WAN.State)
+		fmt.Printf("  WAN:  %s  (%s, %s)\n", topo.WAN.Name, topo.WAN.MACAddress, topo.WAN.State)
 		if len(topo.WAN.Addresses) > 0 {
-			fmt.Printf("  Addresses:    %s\n", strings.Join(topo.WAN.Addresses, ", "))
-		}
-		if topo.WAN.MACAddress != "" {
-			fmt.Printf("  MAC:          %s\n", topo.WAN.MACAddress)
+			fmt.Printf("        %s\n", strings.Join(topo.WAN.Addresses, ", "))
 		}
 	} else {
-		fmt.Println("WAN interface:  (not detected — no default route found)")
+		fmt.Println("  WAN:  (not detected — no default route)")
 	}
 
-	if topo.DefaultGateway != "" {
-		fmt.Printf("Default GW:     %s\n", topo.DefaultGateway)
-	}
-	fmt.Println()
-
-	fmt.Printf("LAN candidates: %d\n", len(topo.LAN))
 	for _, l := range topo.LAN {
 		carrier := "no-link"
 		if l.HasCarrier {
 			carrier = "link-up"
 		}
-		fmt.Printf("  %-12s  %s  %s  %s\n", l.Name, l.State, carrier, l.MACAddress)
+		fmt.Printf("  LAN:  %-12s  (%s, %s, %s)\n", l.Name, l.MACAddress, l.State, carrier)
 		if len(l.Addresses) > 0 {
-			fmt.Printf("    Addresses: %s\n", strings.Join(l.Addresses, ", "))
+			fmt.Printf("        %s\n", strings.Join(l.Addresses, ", "))
 		}
 	}
 	fmt.Println()
 
 	if topo.Suggestion != nil {
-		fmt.Println("=== Suggestion for Drop-in Gateway ===")
-		fmt.Printf("  wan_interface: %s\n", topo.Suggestion.WANInterface)
-		fmt.Printf("  lan_interface: %s\n", topo.Suggestion.LANInterface)
-		fmt.Printf("  Reason: %s\n", topo.Suggestion.Reason)
+		fmt.Println("=== Drop-in Gateway ===")
 		fmt.Println()
-		fmt.Println("To enable drop-in gateway with auto-detected settings:")
-		fmt.Println("  gk svc enable dropin-gateway")
+		fmt.Println("  Ready for drop-in mode. Enable with zero config:")
+		fmt.Println("    gk svc enable dropin-gateway")
 		fmt.Println()
-		fmt.Println("Or with explicit interfaces:")
-		fmt.Printf("  gk svc enable dropin-gateway --config wan_interface=%s,lan_interface=%s\n",
-			topo.Suggestion.WANInterface, topo.Suggestion.LANInterface)
+		fmt.Println("  Or override specific values:")
+		fmt.Printf("    gk svc enable dropin-gateway --config ip=%s,gateway=%s,subnet=%s,dns=%s\n",
+			topo.UpstreamIP, topo.DefaultGateway, topo.UpstreamSubnet, topo.UpstreamDNS)
+		fmt.Println()
+		fmt.Printf("  %s\n", topo.Suggestion.Reason)
 	} else {
-		fmt.Println("Could not auto-detect a WAN/LAN pair.")
-		fmt.Println("Manually specify interfaces when enabling:")
-		fmt.Println("  gk svc enable dropin-gateway --config wan_interface=eth0,lan_interface=eth1")
+		fmt.Println("Cannot auto-detect WAN/LAN pair.")
+		fmt.Println("Ensure two physical NICs are connected.")
 	}
 
 	return nil
+}
+
+func valueOrMissing(s string) string {
+	if s == "" {
+		return "(not detected)"
+	}
+	return s
 }
 
 func cmdDeps(args []string) error {

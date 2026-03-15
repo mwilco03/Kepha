@@ -311,22 +311,32 @@ func TestDropInGateway_Validate(t *testing.T) {
 		wantErr bool
 	}{
 		{
-			name: "valid",
-			cfg:  map[string]string{"wan_interface": "eth0", "lan_interface": "eth1"},
+			name: "all four upstream values provided",
+			cfg: map[string]string{
+				"ip":      "192.168.1.50",
+				"gateway": "192.168.1.1",
+				"subnet":  "255.255.255.0",
+				"dns":     "8.8.8.8",
+			},
 		},
 		{
-			name:    "missing wan",
-			cfg:     map[string]string{"wan_interface": "", "lan_interface": "eth1"},
+			name:    "invalid ip",
+			cfg:     map[string]string{"ip": "not-an-ip", "gateway": "192.168.1.1", "subnet": "255.255.255.0", "dns": "8.8.8.8"},
 			wantErr: true,
 		},
 		{
-			name:    "missing lan",
-			cfg:     map[string]string{"wan_interface": "eth0", "lan_interface": ""},
+			name:    "invalid gateway",
+			cfg:     map[string]string{"ip": "192.168.1.50", "gateway": "bad", "subnet": "255.255.255.0", "dns": "8.8.8.8"},
 			wantErr: true,
 		},
 		{
-			name:    "same interface",
-			cfg:     map[string]string{"wan_interface": "eth0", "lan_interface": "eth0"},
+			name:    "invalid subnet",
+			cfg:     map[string]string{"ip": "192.168.1.50", "gateway": "192.168.1.1", "subnet": "nope", "dns": "8.8.8.8"},
+			wantErr: true,
+		},
+		{
+			name:    "invalid dns",
+			cfg:     map[string]string{"ip": "192.168.1.50", "gateway": "192.168.1.1", "subnet": "255.255.255.0", "dns": ""},
 			wantErr: true,
 		},
 	}
