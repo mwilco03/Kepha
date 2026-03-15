@@ -2,6 +2,8 @@
 
 **Status:** Thought Experiment / Design Study
 **Date:** 2026-03-15
+**Revision:** 2 — Added x86_64 platform analysis, on-device AI/MCP, competitor
+landscape, white-label strategy, Intel vs AMD deep dive
 
 ---
 
@@ -24,9 +26,11 @@ what normally lives on a Proxmox host into something that fits in a bag.
 | SQLite WAL writes | Negligible | Pure Go SQLite (modernc.org/sqlite), no CGo |
 | dnsmasq DNS/DHCP | Negligible | Lightweight daemon |
 | Web UI / REST API | Light | Go HTTP server, template rendering |
+| **Local LLM (MCP co-pilot)** | **Heavy, GPU-bound** | **3-7B model for policy analysis, threat detection, MCP tool orchestration** |
 
 **Minimum:** 4x ARMv8.2-A cores @ 1.8 GHz with AES/SHA/PMULL crypto extensions
-**Recommended:** 4x Cortex-A76 (or newer) cores @ 2.2+ GHz for comfortable Suricata headroom
+**Recommended (ARM):** 4x Cortex-A76 (or newer) cores @ 2.2+ GHz for comfortable Suricata headroom
+**Recommended (x86_64):** AMD Ryzen 8840U/8845HS or Intel Core Ultra 155H — eliminates ARM downstream pain, adds iGPU for local AI inference
 
 ### Memory Requirements
 
@@ -39,9 +43,11 @@ what normally lives on a Proxmox host into something that fits in a bag.
 | Kernel + eBPF maps | ~100-200 MB | XDP programs, BPF maps, flowtables |
 | OS overhead (Alpine) | ~50-80 MB | Minimal userspace |
 
-**Minimum:** 2 GB (no Suricata, basic zones)
-**Recommended:** 4 GB (full Suricata with ET Open, 9 zones, XDP maps)
-**Ideal:** 8 GB (future headroom, large conntrack tables, DNS filter lists)
+| **Local LLM (3-7B Q4)** | 2-6 GB | iGPU shared memory (UMA). 3B model ~2GB, 7B ~4-5GB |
+
+**Minimum:** 2 GB (no Suricata, no AI, basic zones)
+**Recommended:** 16 GB DDR5 (Suricata + 3B model for MCP, iGPU allocation)
+**Ideal:** 32 GB DDR5 (full Suricata + 7B model + large conntrack tables)
 
 ### Storage Requirements
 
@@ -85,7 +91,9 @@ strongly preferred.
 - `CONFIG_VLAN_8021Q=y`
 - `CONFIG_BRIDGE=y`
 - BTF (BPF Type Format) support for CO-RE eBPF programs
-- Kernel crypto API with hardware acceleration (`CONFIG_CRYPTO_AES_ARM64_CE`)
+- Kernel crypto API with hardware acceleration (`CONFIG_CRYPTO_AES_ARM64_CE` or
+  `CONFIG_CRYPTO_AES_NI_INTEL` for x86_64)
+- For x86_64 with iGPU AI: `CONFIG_DRM_AMDGPU=m` (AMD) or `CONFIG_DRM_XE=m` (Intel)
 
 ---
 
@@ -558,3 +566,447 @@ Every critical component should have a qualified alternate:
 
 5. **Kepha portable mode:** Should `gatekeeperd` have a `--portable` flag that
    automatically configures a 3-zone model (wan/lan/vpn) with sane travel defaults?
+
+---
+
+# Part 2: x86_64 Platform Analysis — Why Not ARM
+
+**Revision 2 addition.** The ARM analysis above is preserved for reference, but
+the strong recommendation is to abandon ARM for this device category. x86_64 in
+a mobile-efficient package solves every downstream problem ARM creates, and the
+mobile gaming industry has already proven the power envelope is viable.
+
+---
+
+## 11. The Case Against ARM for a Portable Kepha Device
+
+| Problem | ARM Reality | x86_64 Reality |
+|---------|-------------|----------------|
+| Kernel | Vendor BSP, device tree maintenance, patch backporting | Fedora/RHEL stock kernel boots unmodified |
+| FIPS kernel module | Not validated for most distros on ARM | RHEL x86_64 kernel FIPS module is already validated |
+| Driver support | "Does this chip have an ARM build?" | Everything targets x86 first |
+| Suricata SIMD | ARM NEON path exists, less optimized | AVX2/SSE4.2 is the primary development target |
+| WireGuard throughput | Good (~1 Gbps on A76 w/ crypto ext) | AVX2 ChaCha20 + Poly1305 = 3-5 Gbps on Zen 4 |
+| Container images | Multi-arch? Maybe. | Every OCI image supports amd64 |
+| Tooling | Cross-compilation, QEMU, emulation headaches | Native build. `go build`. Done. |
+| Local AI/LLM | No iGPU. CPU-only inference. Slow. | iGPU (RDNA 3 or Arc) accelerates inference 2-5x |
+| LXC/systemd-nspawn | Works but BSP kernel compatibility varies | Stock kernel, everything just works |
+
+**The iGPU is the killer argument.** ARM SoCs have no meaningful GPU compute for
+LLM inference. x86 APUs from AMD and Intel include iGPUs that turn a 7B model
+from unusable (~5 t/s CPU-only) to interactive (~20 t/s iGPU-accelerated).
+
+---
+
+## 12. On-Device AI: The GPU Is Not Dead Weight
+
+Kepha already has an MCP server with 25+ tools. Today, MCP tool orchestration
+requires a cloud LLM. A portable security device phoning home to Claude/GPT for
+policy decisions defeats the purpose. The iGPU enables **fully local, fully
+private AI-driven network management.**
+
+### What Models Fit on a Portable Device
+
+| Model | Params | Quant | VRAM Needed | 780M (AMD) t/s | Arc 140V (Intel) t/s | Use Case |
+|-------|--------|-------|-------------|----------------|---------------------|----------|
+| Qwen 2.5 1.5B | 1.5B | Q4_K_M | ~1.2 GB | ~40-50 | ~35-45 | Fast log classifier, alert triage |
+| Llama 3.2 3B | 3B | Q4_K_M | ~2 GB | ~25-35 | ~30-35 | MCP tool use, policy Q&A |
+| Phi-4-mini | 3.8B | Q4_K_M | ~2.5 GB | ~25-35 | ~28-32 | Best reasoning/size ratio. 98.7% recall on threat detection w/ RAG |
+| Qwen 2.5 7B | 7B | Q4_K_M | ~4.5 GB | ~19-20 | ~12-18 | Full MCP orchestration, complex policy analysis |
+| Llama 3.2 3B | 3B | Q8_0 | ~3.5 GB | ~20-28 | ~22-28 | Higher quality at slight speed cost |
+
+### Why Phi-4-mini (3.8B) Is the Default Choice
+
+Research shows Phi-4-mini with retrieval-augmented generation (RAG) achieves
+**98.7% recall on network threat detection** (UNSW-NB15 dataset). At 3.8B
+parameters in Q4 quantization, it:
+
+- Fits in ~2.5 GB iGPU shared memory
+- Runs at ~25-35 tokens/sec on AMD Radeon 780M (interactive speed)
+- Has the best reasoning-to-parameter ratio of any open model at this size
+- Can reliably parse MCP tool schemas, construct API calls, interpret results
+- Does NOT require internet access — fully air-gapped capable
+
+### Minimum Viable Model Size for MCP Tool Use
+
+For a model to reliably orchestrate Kepha's MCP tools (parse JSON, understand
+tool schemas, construct correct API calls, interpret structured results):
+
+- **3B parameters** — basic tool use (single-tool calls, simple queries)
+- **3.8B parameters** — reliable structured output (Phi-4-mini sweet spot)
+- **7B parameters** — complex multi-step orchestration (chains of tool calls)
+- **Below 3B** — classification and parsing only, cannot do reliable tool calling
+
+### Architecture: Local LLM + Kepha MCP
+
+```
+┌──────────────────────────────────────────────────────┐
+│  User (phone/laptop on LAN)                          │
+│  "Block all IoT devices from reaching the internet"  │
+├──────────────────────────────────────────────────────┤
+│  Kepha Web UI / REST API                             │
+│  └─► MCP Server (internal/mcp/)                      │
+│      └─► Local LLM (Phi-4-mini, iGPU-accelerated)   │
+│          └─► MCP Tool Calls:                         │
+│              1. list_zones() → identifies iot zone   │
+│              2. create_alias(iot_devices, ...)        │
+│              3. create_policy(iot→wan, deny, ...)     │
+│              4. apply_config()                        │
+├──────────────────────────────────────────────────────┤
+│  No cloud. No API keys. No exfiltration risk.        │
+│  Inference runs on iGPU at 25-35 t/s.                │
+│  Total latency for above: ~3-5 seconds.              │
+└──────────────────────────────────────────────────────┘
+```
+
+### Software Stack for Local AI
+
+- **llama.cpp** with Vulkan backend (not ROCm — Vulkan sees full UMA memory,
+  ROCm only sees BIOS-allocated VRAM and misses GTT)
+- **llama-server** (HTTP API compatible with OpenAI chat completions format)
+- Kepha MCP server connects to local llama-server instead of cloud API
+- Model files stored on NVMe (~3-5 GB for Phi-4-mini Q4)
+- Optional: multiple models hot-swappable via llama-server model loading API
+
+---
+
+## 13. AMD vs Intel: The x86_64 Platform Showdown
+
+### Three Intel Tiers (Deep Dive)
+
+#### Tier 1: Intel N100/N305 — The Budget Firewall Workhorse
+
+| Spec | N100 | N305 | N150 (2025) | N355 (2025) |
+|------|------|------|-------------|-------------|
+| Cores | 4C/4T (E-cores) | 8C/8T (E-cores) | 4C/4T | 8C/8T |
+| Boost | 3.4 GHz | 3.8 GHz | 3.6 GHz | 3.9 GHz |
+| TDP | **6W** | **15W** | **6W** | **15W** |
+| GPU | 24 EU (Xe Gen12) | 32 EU (Xe Gen12) | 24 EU | 32 EU |
+| NPU | **None** | **None** | **None** | **None** |
+| Memory | Single-channel DDR5 | Single-channel DDR5 | Single-channel DDR5 | Single-channel DDR5 |
+| PCIe | 9x Gen3 | 9x Gen3 | 9x Gen3 | 9x Gen3 |
+| AES-NI | Yes | Yes | Yes | Yes |
+| 7B LLM | ~6-9 t/s (CPU only) | ~10-13 t/s (CPU only) | Similar | Similar |
+
+**Verdict:** Excellent pure firewall. Terrible for AI. Single-channel memory is
+the killer — ~19 GB/s bandwidth starves even small models. No NPU. The iGPU is
+too weak for meaningful inference offload. This is Protectli territory: a box
+that runs pfSense/OPNsense/Kepha as a firewall and nothing else.
+
+**Where to buy:** CWWK, Topton, Protectli VP2430. $100-300 range. Dozens of
+4x 2.5GbE i226-V fanless options on Amazon/AliExpress.
+
+#### Tier 2: Intel Core Ultra 7 155H (Meteor Lake) — The Sweet Spot
+
+| Spec | Value |
+|------|-------|
+| Cores | 16C/22T (6P + 8E + 2LP) |
+| Boost | 4.8 GHz |
+| TDP | **28W base** (configurable down, 115W MTP) |
+| GPU | 8 Xe cores (128 EUs), Xe-LPG, **~18 TOPS INT8** |
+| NPU | NPU 3.0, **11 TOPS** |
+| Platform TOPS | **34** (5 CPU + 18 GPU + 11 NPU) |
+| Memory | **Dual-channel** DDR5-5600 / LPDDR5x-7467. Upgradeable SO-DIMM. Up to 96 GB. |
+| PCIe | **8x Gen5 + 20x Gen4 = 28 lanes** |
+| AES-NI | Yes |
+| WiFi | Wi-Fi 7, Thunderbolt 4, USB4 |
+| 3B LLM | ~20-30 t/s (iGPU) |
+| 7B LLM | ~8-15 t/s (iGPU) |
+
+**Verdict:** This is the networking + AI sweet spot for Intel. 28 PCIe lanes
+means you can hang 8x 2.5GbE NICs and still have room for NVMe and WiFi.
+Dual-channel DDR5 with up to 96 GB. The iGPU is weaker than AMD's 780M but
+usable for 3B models. The NPU handles background classification at 11 TOPS
+while the CPU runs Suricata.
+
+**Where to buy:** CWWK F28 (8x i226-V 2.5GbE, ~$700-1,160 configured). Topton
+Ultra 7 155H firewall board (6x 2.5G + optional 10G SFP+, ~$400+ barebones).
+
+#### Tier 3: Intel Core Ultra 7 258V (Lunar Lake) — AI Beast, Network Hobbled
+
+| Spec | Value |
+|------|-------|
+| Cores | 8C/8T (4P Lion Cove + 4E Skymont, NO hyperthreading) |
+| Boost | 4.8 GHz |
+| TDP | **17W base** (8W minimum, 30W MTP) |
+| GPU | Arc 140V, 8 Xe2 cores (Battlemage), **~67 TOPS INT8**, XMX matrix units |
+| NPU | NPU 4.0, **48 TOPS** |
+| Platform TOPS | **120** (5 CPU + 67 GPU + 48 NPU) |
+| Memory | **On-package LPDDR5x-8533**. 16 or 32 GB. **NOT upgradeable.** |
+| PCIe | **4x Gen5 + 4x Gen4 = 8 lanes total** |
+| AES-NI | Yes |
+| 3B LLM | ~32-35 t/s (iGPU+NPU) |
+| 7B LLM | ~12-18 t/s (iGPU+NPU) |
+
+**Verdict:** The NPU (48 TOPS) and Xe2 GPU (67 TOPS) are incredible for AI.
+The 8-lane PCIe limit is fatal for a multi-NIC appliance. You can physically
+fit maybe 2x 2.5GbE ports before running out of lanes. On-package RAM means
+16 or 32 GB, fixed at purchase. Only 8 threads (no SMT).
+
+**This is an AI co-processor, not a firewall platform.** Could be paired with
+an N305 firewall box over 2.5GbE, with Lunar Lake running the LLM and the
+N305 running the packet path. But that's two boxes.
+
+**Where to buy:** MSI Cubi NUC AI+ 2MG (dual 2.5GbE, ~$600-1,000). ASUS NUC 14
+Pro AI. No dedicated firewall appliances exist with Lunar Lake.
+
+### AMD Comparison: Ryzen 8840U / 8845HS (Zen 4 + RDNA 3)
+
+| Spec | Ryzen 7 8840U | Ryzen 7 8845HS |
+|------|---------------|----------------|
+| Cores | 8C/16T (Zen 4) | 8C/16T (Zen 4) |
+| Boost | 5.1 GHz | 5.2 GHz |
+| cTDP | **9-28W** | **15-54W** |
+| GPU | Radeon 780M, 12 CUs RDNA 3, **~17.8 TFLOPS FP16** | Same |
+| NPU | Ryzen AI (XDNA 1), ~10 TOPS | Same |
+| Memory | Dual-channel DDR5-5600, SO-DIMM, up to 64 GB | Same |
+| PCIe | 20x Gen4 | 20x Gen4 |
+| AES-NI | Yes | Yes |
+| 3B LLM | ~25-35 t/s (iGPU Vulkan) | Same |
+| 7B LLM | ~19-20 t/s (iGPU Vulkan) | Same |
+
+### AMD Strix Point: Ryzen AI 9 HX 370 (Zen 5 + RDNA 3.5 + XDNA 2)
+
+| Spec | Value |
+|------|-------|
+| Cores | 12C/24T (4x Zen 5 + 8x Zen 5c) |
+| GPU | Radeon 890M, 16 CUs RDNA 3.5, **41% faster than 780M** |
+| NPU | XDNA 2, **50 TOPS** |
+| Memory | Dual-channel LPDDR5x-7500 |
+| 7B LLM | ~17-20 t/s (iGPU, ~400 t/s prefill with NPU assist) |
+
+### The Head-to-Head
+
+| Factor | AMD 8840U | Intel 155H | Intel 258V | Intel N305 |
+|--------|-----------|------------|------------|------------|
+| **Best 7B LLM t/s** | **~19-20** | ~8-15 | ~12-18 | ~10-13 (CPU) |
+| **Best 3B LLM t/s** | **~25-35** | ~20-30 | ~32-35 | ~5-10 (CPU) |
+| **PCIe lanes** | 20x Gen4 | **28 (8x5+20x4)** | 8 total | 9x Gen3 |
+| **Max RAM** | 64 GB | **96 GB** | 32 GB (fixed) | 32 GB |
+| **Configurable TDP** | **9-28W** | 28W base | 17W base | 6W base |
+| **Multi-NIC boards** | Limited (4x 2.5G) | **Excellent (8x 2.5G)** | Poor (2x max) | **Excellent** |
+| **Firewall + AI** | **Best balance** | Good firewall, OK AI | Best AI, weak firewall | Best firewall, no AI |
+| **Price range** | $200-400 | $400-1,200 | $600-1,000 | **$100-300** |
+
+**Winner for Kepha portable:** AMD Ryzen 7 8840U at 9W cTDP.
+
+- Best iGPU AI inference of any platform at this power level
+- 20 PCIe Gen4 lanes — enough for 4x 2.5GbE + NVMe + WiFi
+- Dual-channel DDR5 up to 64 GB — Suricata + 7B model + headroom
+- 9W configurable TDP — 100Wh battery bank lasts 12-20 hours at idle, 8-12 under load
+- The mobile gaming industry proved this chip runs at 9W in a fanless handheld (Steam Deck, ROG Ally)
+
+**Runner-up:** Intel Core Ultra 7 155H if you need maximum PCIe lane count
+(8x 2.5GbE + 10G SFP+) and are OK with weaker AI inference. Better for a
+desk/rack appliance than a battery-powered travel device.
+
+---
+
+## 14. Competitor Landscape & Pricing
+
+### What People Are Actually Buying
+
+| Product | Price | CPU | NICs | Key Differentiator |
+|---------|-------|-----|------|--------------------|
+| GL.iNet Beryl AX (MT3000) | $90 | MediaTek MT7981B 1.3GHz dual-core | 1x 2.5G + 1x 1G | USB-C, travel-sized, OpenWrt |
+| GL.iNet Beryl 7 (MT3600BE) | $140 | MediaTek quad-core 2.0GHz | 2x 2.5G | WiFi 7, USB-C powered, 1.1Gbps WireGuard |
+| GL.iNet Slate 7 (BE3600) | $170 | Same | 2x 2.5G | Same + built-in display |
+| **Firewalla Orange** | **$339** | **4-core ARM** | **2x 2.5GbE** | **WiFi 7, USB-C, 244g. First batch sold out.** |
+| Firewalla Purple SE | $179-199 | ARM quad-core | 2x 1GbE | Entry-level IPS appliance |
+| Firewalla Purple | $319-349 | 6-core ARM | 2x 1GbE | Full IPS + short-range WiFi |
+| Firewalla Gold SE | $439-469 | RK3568 (4x A55) | 2x 2.5G + 2x 1G | Flagship home firewall |
+| Firewalla Gold Plus | $569-619 | x86 Intel | 4x 2.5GbE | SMB segment |
+| Firewalla Gold Pro | $889 | Intel N97 | 2x 10GbE + 2x 2.5GbE | Enterprise/prosumer |
+| Protectli VP2430 | $299 (bare) | Intel N150 | 4x 2.5GbE i226-V | US-based, coreboot, no OS |
+| Protectli VP2440 | $400-500 | Intel N150 | 2x 10G SFP+ + 2x 2.5G | First Protectli with 10G |
+| Netgate 1100 | $225 | ARM A53 dual-core | 3x 1GbE | pfSense Plus included |
+| Netgate 2100 | $369-412 | ARM A53 dual-core | 4x 1GbE + 1 SFP | Mid-range pfSense |
+| Peplink BR1 Mini 5G | $500-600 | ARM | 1x GbE | Cellular (5G modem built-in) |
+| pcEngines APU | **Discontinued (2023)** | — | — | Nothing replaced it at its price point |
+
+### Where the Money Is
+
+| Tier | Price | Volume | Margin | Key Players |
+|------|-------|--------|--------|-------------|
+| < $100 | Consumer travel router | Highest | Razor-thin | GL.iNet dominates |
+| $100-300 | Prosumer | High | Moderate | Firewalla Purple SE, GL.iNet Beryl 7, Protectli |
+| **$300-500** | **SMB / Professional** | **Medium** | **High (65-75%)** | **Firewalla Orange/Purple/Gold SE, Protectli** |
+| $500-900 | Enterprise edge | Lower | Highest | Firewalla Gold Plus/Pro, Netgate |
+
+**The $300-500 tier is the sweet spot.** Firewalla has proven customers will
+pay $339-469 for a security appliance. Their estimated gross margins are 65-75%
+on hardware that costs $60-120 in BOM.
+
+### Firewalla: The Model to Study
+
+Firewalla went from a $90K Kickstarter in 2017 to an estimated $15-30M annual
+revenue. Their playbook:
+
+1. **No subscription fees** — one-time hardware purchase (key differentiator vs enterprise)
+2. **Mobile app UX** — consumer-friendly, hides complexity
+3. **Crowdfunding for market validation** — each new product launched via Kickstarter/Indiegogo
+4. **Software is the moat** — hardware is commodity ARM/Intel
+5. **Direct-to-consumer** — no enterprise sales team
+6. **Open-source device code** — builds community trust
+
+**Estimated Firewalla BOM (Gold SE at $439):**
+- RK3568 SoC: ~$12-15
+- 4GB DDR4: ~$8-10
+- 32GB eMMC: ~$4-5
+- Ethernet PHYs: ~$15-20
+- PCB + passives + enclosure + PSU: ~$20-30
+- **Estimated BOM: ~$60-80**
+- **Landed cost: ~$90-120**
+- **Gross margin: ~70-75%**
+
+**The Firewalla Orange ($339) directly validates the portable security appliance
+category.** It's a pocket-sized WiFi 7 firewall with USB-C power, 2x 2.5GbE,
+full IPS/VPN/microsegmentation. First batch sold out immediately.
+
+### What Kepha Brings That They Don't
+
+| Capability | Firewalla | GL.iNet | Kepha |
+|------------|-----------|---------|-------|
+| Firewall | nftables, basic rules | OpenWrt nftables | nftables via netlink, alias-first policy engine |
+| IDS/IPS | Yes (custom) | No | Suricata (full ET Open rules) |
+| VPN | WireGuard, OpenVPN | WireGuard, OpenVPN | WireGuard with full peer management + QR |
+| Zone model | Microsegmentation | Basic WAN/LAN | 9 configurable zones with inter-zone policies |
+| API | Proprietary app API | LuCI REST | 40+ endpoint REST API + OpenAPI 3.1 |
+| AI/MCP | No | No | **25+ MCP tools, local LLM orchestration** |
+| Config management | App-driven | Web/SSH | Transactional SQLite, full rollback, audit log |
+| XDP/eBPF | No | No | Full fast-path packet processing |
+| Active countermeasures | No | No | Tarpit, latency injection, RST chaos (disabled by default) |
+| LXC/container isolation | No | Docker (limited) | Native LXC, systemd-nspawn, full service isolation |
+
+**The MCP + local AI story is the differentiator nobody else has.** "Talk to
+your firewall in English, it configures itself, no cloud required" is a pitch
+that Firewalla cannot match without shipping GPU-capable hardware.
+
+---
+
+## 15. White-Label & Rebrandable Hardware
+
+### ODM Manufacturers Who Will Rebrand
+
+| Vendor | HQ | Products | Custom Branding | MOQ | Notes |
+|--------|------|----------|----------------|-----|-------|
+| **CWWK** | Shenzhen | Multi-NIC x86 mini PCs (N100-Core Ultra) | Free logo printing | 10-50 units | Also sells on Amazon. Same factory as Topton. |
+| **Topton** | Shenzhen | Same as CWWK (same OEM, different brand) | Free logo printing | 10-50 units | Also appears as HUNSN, Glovary, EGSMTPC |
+| **GL.iNet** | Shenzhen | Travel routers (ARM, WiFi) | **Full white-label service**: hardware + firmware + branding + cloud platform | Case-by-case | Most turnkey option. They handle everything. |
+| **Qotom** | Shenzhen | Intel multi-NIC mini PCs | OEM/ODM services | ~50+ | Consistent quality among Chinese ODMs |
+| **Yanling** | Shenzhen | Industrial fanless PCs | OEM services | ~100+ | Industrial-grade |
+| **Axiomtek** | **Taiwan** | Enterprise network appliance platforms | Formal OEM/ODM programs | ~100+ | Higher quality/price, TAA-friendly (Taiwan) |
+
+### The Practical White-Label Strategy
+
+**Phase 1 — Prove the product ($0 hardware cost):**
+- Publish a "Kepha Certified Hardware" list
+- Recommend Protectli VP2430 ($299) or CWWK N305 4-port ($180)
+- Sell Kepha as software subscription / support contract
+- Users buy their own hardware, install Kepha
+
+**Phase 2 — Pre-configured units ($5k-10k investment):**
+- Buy 50x CWWK/Topton AMD 8840U 4-port boards (~$200 ea = $10k)
+- Custom logo on boot screen and enclosure
+- Pre-flash Kepha firmware (Fedora IoT + Kepha + Phi-4-mini model)
+- Sell as "Kepha Gateway" at $449-599
+- Margin: 50-70%
+
+**Phase 3 — TAA-compliant SKU ($25-50k investment):**
+- Source from Axiomtek (Taiwan, TAA-designated) or commission
+  Protectli-style US final assembly
+- Same software stack
+- Sell as "Kepha Gateway GOV" at $699-899
+- List on GSA Schedule via Carahsoft/Immix reseller
+
+### GL.iNet White-Label — The Travel Router Path
+
+GL.iNet explicitly offers white-label service with:
+- Small batch for market validation
+- Full customization (hardware + firmware + branding + cloud management)
+- GoodCloud remote management platform (customizable with your branding)
+- Their ImageBuilder tool for custom OpenWrt firmware
+
+This is the fastest path to a branded travel router if you want WiFi 7 in a
+pocket form factor. GL.iNet handles hardware, you provide the security stack.
+The trade-off: you're building on OpenWrt, not Fedora IoT, and the ARM hardware
+limits AI capability.
+
+---
+
+## 16. Revised Recommendation: The Three-Product Strategy
+
+### Product 1: Kepha Software (free / subscription)
+- Open-source Kepha, installable on any x86_64 Linux with LXC or systemd-nspawn
+- Works on Protectli, CWWK, Topton, Dell, HPE, any dual-NIC x86 box
+- Revenue: support subscriptions ($10-30/month or $100-300/year)
+- **Investment: $0 hardware. Focus on firmware image (12 weeks).**
+
+### Product 2: Kepha Gateway ($449-599)
+- White-label CWWK/Topton AMD Ryzen 8840U, 4x 2.5GbE i226-V, 16GB DDR5
+- Pre-flashed Fedora IoT + Kepha + Phi-4-mini (local AI)
+- Custom branding (logo, boot screen, packaging)
+- **The pitch: "Self-defending network. No cloud. No subscription. Talk to it."**
+- Target: prosumer, SOHO, remote worker, privacy-conscious traveler
+- **Investment: ~$10k for first batch of 50 units**
+
+### Product 3: Kepha Gateway GOV ($699-899)
+- Axiomtek (Taiwan) or Protectli (US) hardware, TAA-compliant
+- Intel Core Ultra 155H for maximum PCIe lanes (8x 2.5GbE)
+- Fedora IoT with RHEL FIPS kernel module, `GOEXPERIMENT=boringcrypto`
+- IPsec (strongSwan) instead of WireGuard for FIPS builds
+- Listed on GSA Schedule via Carahsoft reseller
+- **Investment: ~$25-50k for first batch + GSA listing**
+
+### Product 4 (Future): Kepha Travel ($349-449)
+- GL.iNet white-label or custom AMD-based portable (battery-powered)
+- WiFi 7 AP/STA, 2x 2.5GbE, USB-C PD, 100Wh battery bank compatible
+- Phi-4-mini on iGPU for portable AI-driven security
+- **Only pursue after Product 1-2 revenue validates demand**
+
+---
+
+## 17. Updated Cost Summary
+
+| Product | BOM | Landed | Retail | Gross Margin |
+|---------|-----|--------|--------|--------------|
+| Kepha Software | $0 | $0 | $10-30/mo subscription | 100% (minus hosting/support) |
+| Kepha Gateway (AMD 8840U) | ~$200 | ~$250 | $449-599 | 50-60% |
+| Kepha Gateway GOV (Intel 155H, TAA) | ~$350 | ~$450 | $699-899 | 45-55% |
+| Kepha Travel (future, portable) | ~$150 | ~$200 | $349-449 | 45-55% |
+| Firewalla Orange (competitor ref) | ~$60 | ~$90 | $339 | ~70% |
+| Firewalla Gold SE (competitor ref) | ~$70 | ~$100 | $439 | ~75% |
+
+Firewalla achieves higher margins because they design their own ARM boards with
+cheap SoCs (RK3568 at $12-15). Using a white-label x86 board at $200 BOM means
+lower margins but also zero hardware engineering cost and dramatically more
+capable hardware (local AI, full Suricata, AVX2 WireGuard).
+
+---
+
+## 18. Updated Open Questions
+
+1. **Battery form factor:** Integrated battery (like Firewalla Orange) or
+   external USB-C PD bank? External is simpler, cheaper, user-replaceable,
+   airline-legal (under 100Wh). Integrated requires BMS design and adds weight/cost.
+
+2. **Display:** Firewalla Orange and GL.iNet Slate 7 both added small displays.
+   Market seems to want visible status without opening an app/browser.
+
+3. **Cellular modem:** Peplink charges $500-600 for a 5G travel router. Adding
+   a Quectel RM520N 5G modem (~$50 BOM) would create a unique value prop but
+   adds FCC certification cost (~$10-25k).
+
+4. **Dual-model AI:** Run Qwen 2.5 1.5B for real-time log classification (always on,
+   ~40 t/s, minimal power) AND Phi-4-mini for interactive MCP queries (on-demand,
+   ~25-35 t/s). Two-model architecture mirrors the CPU big.LITTLE pattern.
+
+5. **Model fine-tuning:** Should Kepha ship with a Phi-4-mini fine-tuned on
+   network security tasks? LoRA fine-tuning on UNSW-NB15, CICIDS, and MITRE
+   ATT&CK datasets could improve tool-calling accuracy significantly. Fine-tuning
+   cost: ~$50-200 in cloud GPU time.
+
+6. **AMD Ryzen AI 9 (Strix Point):** The 890M iGPU is 41% faster than 780M,
+   and the XDNA 2 NPU is 50 TOPS. When CWWK/Topton boards appear with this
+   chip (~$250-350 boards expected), it becomes the obvious upgrade path.
+   NPU handles prefill at ~400 t/s, iGPU handles generation at ~20 t/s.
