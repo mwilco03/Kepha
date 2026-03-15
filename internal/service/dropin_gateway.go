@@ -349,8 +349,8 @@ func (d *DropInGateway) applyInterceptionRules(cfg map[string]string) error {
 	return nftApplyRules(nft.TableFamilyINet, dropinNFTTableInet, []nftChainSpec{{
 		Name:     "dns_intercept",
 		Type:     nft.ChainTypeNAT,
-		Hook:     &hook,
-		Priority: &prio,
+		Hook:     hook,
+		Priority: prio,
 		Policy:   &policy,
 		Rules:    rules,
 	}})

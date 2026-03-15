@@ -222,8 +222,8 @@ func (v *VPNPolicyRouter) applyPolicies(mode string) error {
 		if err := nftApplyRules(nft.TableFamilyINet, v.nftTable, []nftChainSpec{{
 			Name:     "vpn_policy_mark",
 			Type:     nft.ChainTypeRoute,
-			Hook:     &hook,
-			Priority: &prio,
+			Hook:     hook,
+			Priority: prio,
 			Policy:   &policy,
 			Rules:    nftRules,
 		}}); err != nil {

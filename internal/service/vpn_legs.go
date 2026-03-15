@@ -6,12 +6,14 @@ import (
 	"log/slog"
 	"net"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"golang.zx2c4.com/wireguard/wgctrl"
+	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 )
 
 // VPNLeg defines a single site-to-site WireGuard tunnel to a remote site.
@@ -348,18 +350,17 @@ func (v *VPNLegs) startLeg(leg VPNLeg, privateKey string, listenPort int) (*legS
 		return nil, fmt.Errorf("create interface %s: %w", iface, err)
 	}
 
-	// Write WireGuard config file.
+	// Write WireGuard config file for reference.
 	confPath := filepath.Join(v.confDir, iface+".conf")
 	if err := v.writeWGConfig(confPath, leg, privateKey, listenPort); err != nil {
 		Net.LinkDel(iface)
 		return nil, fmt.Errorf("write wg config: %w", err)
 	}
 
-	// Apply WireGuard config (wg CLI — needs wgctrl for native).
-	cmd := exec.Command("wg", "setconf", iface, confPath)
-	if output, err := cmd.CombinedOutput(); err != nil {
+	// Apply WireGuard config via wgctrl (no shell-out to wg CLI).
+	if err := applyWGCtrlConfig(iface, privateKey, listenPort, leg); err != nil {
 		Net.LinkDel(iface)
-		return nil, fmt.Errorf("apply wg config on %s: %s: %w", iface, string(output), err)
+		return nil, fmt.Errorf("apply wg config on %s: %w", iface, err)
 	}
 
 	// Bring interface up.
@@ -579,4 +580,62 @@ func parseIntDefault(s string, defVal int) int {
 		return defVal
 	}
 	return n
+}
+
+// applyWGCtrlConfig configures a WireGuard interface via wgctrl instead of
+// shelling out to the wg CLI.
+func applyWGCtrlConfig(iface, privateKey string, listenPort int, leg VPNLeg) error {
+	client, err := wgctrl.New()
+	if err != nil {
+		return fmt.Errorf("wgctrl client: %w", err)
+	}
+	defer client.Close()
+
+	privKey, err := wgtypes.ParseKey(privateKey)
+	if err != nil {
+		return fmt.Errorf("parse private key: %w", err)
+	}
+
+	pubKey, err := wgtypes.ParseKey(leg.RemotePublicKey)
+	if err != nil {
+		return fmt.Errorf("parse remote public key: %w", err)
+	}
+
+	endpoint, err := net.ResolveUDPAddr("udp", leg.RemoteEndpoint)
+	if err != nil {
+		return fmt.Errorf("resolve endpoint %s: %w", leg.RemoteEndpoint, err)
+	}
+
+	var allowedIPs []net.IPNet
+	for _, cidr := range leg.RemoteSubnets {
+		_, ipnet, err := net.ParseCIDR(cidr)
+		if err != nil {
+			continue
+		}
+		allowedIPs = append(allowedIPs, *ipnet)
+	}
+
+	keepalive := 25 * time.Second
+
+	pc := wgtypes.PeerConfig{
+		PublicKey:                   pubKey,
+		Endpoint:                    endpoint,
+		AllowedIPs:                  allowedIPs,
+		ReplaceAllowedIPs:          true,
+		PersistentKeepaliveInterval: &keepalive,
+	}
+
+	if leg.PSK != "" {
+		psk, err := wgtypes.ParseKey(leg.PSK)
+		if err == nil {
+			pc.PresharedKey = &psk
+		}
+	}
+
+	return client.ConfigureDevice(iface, wgtypes.Config{
+		PrivateKey:   &privKey,
+		ListenPort:   &listenPort,
+		Peers:        []wgtypes.PeerConfig{pc},
+		ReplacePeers: true,
+	})
 }

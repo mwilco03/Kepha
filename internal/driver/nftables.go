@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sync"
 	"time"
@@ -35,7 +34,7 @@ func NewNFTables(store *config.Store, rulesetDir string) *NFTables {
 	}
 }
 
-// Apply compiles the current config and applies it via nft -f.
+// Apply compiles the current config and applies it via netlink.
 func (n *NFTables) Apply() error {
 	n.mu.Lock()
 	defer n.mu.Unlock()
@@ -45,12 +44,29 @@ func (n *NFTables) Apply() error {
 		return fmt.Errorf("build input: %w", err)
 	}
 
+	// Compile text for persistence and DryRun display.
 	ruleset, err := compiler.Compile(input)
 	if err != nil {
 		return fmt.Errorf("compile: %w", err)
 	}
 
-	return n.applyRuleset(ruleset)
+	// Write text to file for reference and debugging.
+	if err := n.writeRulesetFile(ruleset); err != nil {
+		return fmt.Errorf("write ruleset file: %w", err)
+	}
+
+	// Apply via netlink (no shell-out to nft CLI).
+	slog.Info("applying nftables ruleset via netlink")
+	if err := applyNetlink(input); err != nil {
+		return fmt.Errorf("netlink apply: %w", err)
+	}
+
+	if err := n.verify(ruleset); err != nil {
+		slog.Warn("post-apply verification failed", "error", err)
+		return fmt.Errorf("post-apply verification: %w", err)
+	}
+
+	return nil
 }
 
 // ApplyWithConfirm applies rules with an auto-rollback timer.
@@ -138,7 +154,8 @@ func (n *NFTables) buildInput() (*compiler.Input, error) {
 	}, nil
 }
 
-func (n *NFTables) applyRuleset(ruleset *compiler.CompiledRuleset) error {
+// writeRulesetFile persists the compiled ruleset text for debugging and reference.
+func (n *NFTables) writeRulesetFile(ruleset *compiler.CompiledRuleset) error {
 	if err := os.MkdirAll(n.rulesetDir, 0o750); err != nil {
 		return fmt.Errorf("create ruleset dir: %w", err)
 	}
@@ -147,19 +164,6 @@ func (n *NFTables) applyRuleset(ruleset *compiler.CompiledRuleset) error {
 	if err := os.WriteFile(path, []byte(ruleset.Text), 0o640); err != nil {
 		return fmt.Errorf("write ruleset: %w", err)
 	}
-
-	slog.Info("applying nftables ruleset", "path", path)
-	cmd := exec.Command("nft", "-f", path)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("nft apply failed: %s: %w", string(output), err)
-	}
-
-	if err := n.verify(ruleset); err != nil {
-		slog.Warn("post-apply verification failed", "error", err)
-		return fmt.Errorf("post-apply verification: %w", err)
-	}
-
 	return nil
 }
 

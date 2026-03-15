@@ -17,6 +17,8 @@ import (
 	nft "github.com/google/nftables"
 	"github.com/google/nftables/expr"
 	"golang.org/x/crypto/curve25519"
+	"golang.zx2c4.com/wireguard/wgctrl"
+	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 )
 
 // VPN provider constants for the top 15 commercial providers + Tailscale.
@@ -158,6 +160,33 @@ func (v *VPNProvider) Validate(cfg map[string]string) error {
 		if cfg["tailscale_auth_key"] == "" {
 			return fmt.Errorf("tailscale_auth_key is required for Tailscale provider")
 		}
+		if len(cfg["tailscale_auth_key"]) > 256 {
+			return fmt.Errorf("tailscale_auth_key exceeds maximum length of 256")
+		}
+		if hostname := cfg["tailscale_hostname"]; hostname != "" {
+			if len(hostname) > 63 {
+				return fmt.Errorf("tailscale_hostname exceeds maximum length of 63")
+			}
+			for _, c := range hostname {
+				if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-') {
+					return fmt.Errorf("tailscale_hostname contains invalid character %q; only alphanumeric and hyphens allowed", c)
+				}
+			}
+			if hostname[0] == '-' || hostname[len(hostname)-1] == '-' {
+				return fmt.Errorf("tailscale_hostname must not start or end with a hyphen")
+			}
+		}
+		if routes := cfg["tailscale_advertise_routes"]; routes != "" {
+			for _, cidr := range strings.Split(routes, ",") {
+				cidr = strings.TrimSpace(cidr)
+				if cidr == "" {
+					continue
+				}
+				if _, _, err := net.ParseCIDR(cidr); err != nil {
+					return fmt.Errorf("tailscale_advertise_routes: invalid CIDR %q: %w", cidr, err)
+				}
+			}
+		}
 		return nil
 	}
 
@@ -274,7 +303,8 @@ func (v *VPNProvider) Stop() error {
 			v.process = nil
 		}
 		if v.wgIface != "" {
-			exec.Command("wg-quick", "down", v.wgIface).Run()
+			Net.LinkSetDown(v.wgIface)
+			Net.LinkDel(v.wgIface)
 			v.wgIface = ""
 		}
 	}
@@ -325,11 +355,22 @@ func (v *VPNProvider) startWireGuard(cfg map[string]string) error {
 		return fmt.Errorf("write wireguard config: %w", err)
 	}
 
-	// Bring up interface.
-	exec.Command("wg-quick", "down", v.wgIface).Run() // ignore error if not up
-	out, err := exec.Command("wg-quick", "up", v.wgIface).CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("wg-quick up: %s: %w", string(out), err)
+	// Bring up interface via netlink + wgctrl (no wg-quick shell-out).
+	Net.LinkSetDown(v.wgIface)
+	Net.LinkDel(v.wgIface)
+
+	if err := Net.LinkAdd(v.wgIface, "wireguard"); err != nil {
+		return fmt.Errorf("create interface %s: %w", v.wgIface, err)
+	}
+
+	if err := v.applyWGCtrlFromConfig(wgConf); err != nil {
+		Net.LinkDel(v.wgIface)
+		return fmt.Errorf("configure wireguard %s: %w", v.wgIface, err)
+	}
+
+	if err := Net.LinkSetUp(v.wgIface); err != nil {
+		Net.LinkDel(v.wgIface)
+		return fmt.Errorf("bring up %s: %w", v.wgIface, err)
 	}
 
 	// Set up split tunnel routing if configured.
@@ -380,6 +421,129 @@ func (v *VPNProvider) generateWireGuardConfig(cfg map[string]string) (string, er
 	return b.String(), nil
 }
 
+// applyWGCtrlFromConfig parses a WireGuard config text and applies it via
+// wgctrl. This replaces shelling out to wg-quick.
+func (v *VPNProvider) applyWGCtrlFromConfig(confText string) error {
+	client, err := wgctrl.New()
+	if err != nil {
+		return fmt.Errorf("wgctrl client: %w", err)
+	}
+	defer client.Close()
+
+	var privKeyStr, addressStr string
+	var listenPort int
+	var peers []wgtypes.PeerConfig
+	var currentPeer *wgtypes.PeerConfig
+
+	for _, line := range strings.Split(confText, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || line[0] == '#' {
+			continue
+		}
+		if strings.EqualFold(line, "[Interface]") {
+			currentPeer = nil
+			continue
+		}
+		if strings.EqualFold(line, "[Peer]") {
+			if currentPeer != nil {
+				peers = append(peers, *currentPeer)
+			}
+			currentPeer = &wgtypes.PeerConfig{ReplaceAllowedIPs: true}
+			continue
+		}
+
+		parts := strings.SplitN(line, "=", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		key := strings.TrimSpace(parts[0])
+		val := strings.TrimSpace(parts[1])
+
+		if currentPeer == nil {
+			// Interface section.
+			switch strings.ToLower(key) {
+			case "privatekey":
+				privKeyStr = val
+			case "listenport":
+				fmt.Sscanf(val, "%d", &listenPort)
+			case "address":
+				addressStr = val
+			}
+		} else {
+			// Peer section.
+			switch strings.ToLower(key) {
+			case "publickey":
+				pk, err := wgtypes.ParseKey(val)
+				if err == nil {
+					currentPeer.PublicKey = pk
+				}
+			case "presharedkey":
+				psk, err := wgtypes.ParseKey(val)
+				if err == nil {
+					currentPeer.PresharedKey = &psk
+				}
+			case "endpoint":
+				ep, err := net.ResolveUDPAddr("udp", val)
+				if err == nil {
+					currentPeer.Endpoint = ep
+				}
+			case "allowedips":
+				for _, cidr := range strings.Split(val, ",") {
+					cidr = strings.TrimSpace(cidr)
+					_, ipnet, err := net.ParseCIDR(cidr)
+					if err == nil {
+						currentPeer.AllowedIPs = append(currentPeer.AllowedIPs, *ipnet)
+					}
+				}
+			case "persistentkeepalive":
+				var secs int
+				if _, err := fmt.Sscanf(val, "%d", &secs); err == nil {
+					d := time.Duration(secs) * time.Second
+					currentPeer.PersistentKeepaliveInterval = &d
+				}
+			}
+		}
+	}
+	if currentPeer != nil {
+		peers = append(peers, *currentPeer)
+	}
+
+	if privKeyStr == "" {
+		return fmt.Errorf("no PrivateKey found in config")
+	}
+
+	privKey, err := wgtypes.ParseKey(privKeyStr)
+	if err != nil {
+		return fmt.Errorf("parse private key: %w", err)
+	}
+
+	cfg := wgtypes.Config{
+		PrivateKey:   &privKey,
+		Peers:        peers,
+		ReplacePeers: true,
+	}
+	if listenPort > 0 {
+		cfg.ListenPort = &listenPort
+	}
+
+	if err := client.ConfigureDevice(v.wgIface, cfg); err != nil {
+		return fmt.Errorf("wgctrl configure: %w", err)
+	}
+
+	// Add address via netlink if present.
+	if addressStr != "" {
+		// Handle comma-separated addresses (e.g., "10.66.0.2/32, fd00::2/128").
+		for _, addr := range strings.Split(addressStr, ",") {
+			addr = strings.TrimSpace(addr)
+			if addr != "" {
+				Net.AddrAdd(v.wgIface, addr)
+			}
+		}
+	}
+
+	return nil
+}
+
 // --- OpenVPN connection ---
 
 func (v *VPNProvider) startOpenVPN(cfg map[string]string) error {
@@ -397,14 +561,27 @@ func (v *VPNProvider) startOpenVPN(cfg map[string]string) error {
 	}
 
 	// Write auth file if needed.
+	var authPath string
 	if cfg["username"] != "" && cfg["password"] != "" {
-		authPath := "/tmp/gk-vpn-auth.txt"
+		authFile, err := os.CreateTemp("", "gk-vpn-auth-*.txt")
+		if err != nil {
+			return fmt.Errorf("create auth temp file: %w", err)
+		}
+		authPath = authFile.Name()
 		authContent := cfg["username"] + "\n" + cfg["password"] + "\n"
-		if err := os.WriteFile(authPath, []byte(authContent), 0o600); err != nil {
+		if _, err := authFile.WriteString(authContent); err != nil {
+			authFile.Close()
+			os.Remove(authPath)
 			return fmt.Errorf("write auth file: %w", err)
+		}
+		authFile.Close()
+		if err := os.Chmod(authPath, 0o600); err != nil {
+			os.Remove(authPath)
+			return fmt.Errorf("chmod auth file: %w", err)
 		}
 	}
 
+	// openvpn is a third-party daemon that must be managed via CLI.
 	cmd := exec.Command("openvpn",
 		"--config", confPath,
 		"--daemon",
@@ -412,8 +589,8 @@ func (v *VPNProvider) startOpenVPN(cfg map[string]string) error {
 		"--writepid", "/run/gatekeeper/vpn-provider.pid",
 	)
 
-	if cfg["username"] != "" {
-		cmd.Args = append(cmd.Args, "--auth-user-pass", "/tmp/gk-vpn-auth.txt")
+	if authPath != "" {
+		cmd.Args = append(cmd.Args, "--auth-user-pass", authPath)
 	}
 
 	if err := cmd.Start(); err != nil {
@@ -446,9 +623,20 @@ func (v *VPNProvider) generateOpenVPNConfig(cfg map[string]string) (string, erro
 	b.WriteString("cipher AES-256-GCM\n")
 	b.WriteString("verb 3\n")
 
-	confPath := "/tmp/gk-vpn-provider.ovpn"
-	if err := os.WriteFile(confPath, []byte(b.String()), 0o600); err != nil {
+	confFile, err := os.CreateTemp("", "gk-vpn-provider-*.ovpn")
+	if err != nil {
+		return "", fmt.Errorf("create openvpn config temp file: %w", err)
+	}
+	confPath := confFile.Name()
+	if _, err := confFile.WriteString(b.String()); err != nil {
+		confFile.Close()
+		os.Remove(confPath)
 		return "", fmt.Errorf("write openvpn config: %w", err)
+	}
+	confFile.Close()
+	if err := os.Chmod(confPath, 0o600); err != nil {
+		os.Remove(confPath)
+		return "", fmt.Errorf("chmod openvpn config: %w", err)
 	}
 	return confPath, nil
 }

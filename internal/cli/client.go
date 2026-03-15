@@ -101,7 +101,7 @@ func (c *Client) do(method, path string, body any) ([]byte, int, error) {
 	}
 	defer resp.Body.Close()
 
-	data, err := io.ReadAll(resp.Body)
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20)) // 10 MB limit
 	if err != nil {
 		return nil, resp.StatusCode, err
 	}

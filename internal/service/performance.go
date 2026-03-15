@@ -412,7 +412,7 @@ func (p *PerformanceTuner) applyConntrackBypass(notrackZones string) {
 		Name:     "prerouting",
 		Type:     nft.ChainTypeFilter,
 		Hooknum:  nft.ChainHookPrerouting,
-		Priority: &prio,
+		Priority: prio,
 	})
 
 	// For each trusted zone interface, add a notrack rule.

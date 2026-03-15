@@ -316,7 +316,7 @@ func (m *LinuxNetworkManager) RuleAddSrc(src string, table int, priority int) er
 // RuleAddFwmark adds a fwmark-based policy routing rule.
 func (m *LinuxNetworkManager) RuleAddFwmark(mark uint32, table int, priority int) error {
 	rule := netlink.NewRule()
-	rule.Mark = int(mark)
+	rule.Mark = mark
 	rule.Table = table
 	rule.Priority = priority
 	return netlink.RuleAdd(rule)

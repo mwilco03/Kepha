@@ -260,8 +260,8 @@ func (p *ParentalControls) applyScheduleRules(timezone string) error {
 	return nftApplyRules(nft.TableFamilyINet, p.nftTable, []nftChainSpec{{
 		Name:     "schedule",
 		Type:     nft.ChainTypeFilter,
-		Hook:     &hook,
-		Priority: &prio,
+		Hook:     hook,
+		Priority: prio,
 		Policy:   &policy,
 		Rules:    dropRules,
 	}})

@@ -5,16 +5,17 @@ import (
 	"encoding/base64"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/gatekeeper-firewall/gatekeeper/internal/validate"
 	"golang.org/x/crypto/curve25519"
+	"golang.zx2c4.com/wireguard/wgctrl"
+	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 )
 
 // WGPeer represents a WireGuard peer.
@@ -168,34 +169,28 @@ func (w *WireGuard) PruneStalePeers(maxAge time.Duration) ([]string, error) {
 	return pruned, nil
 }
 
-// findStalePeers queries wg for latest handshake timestamps and returns
-// public keys of peers that are stale.
+// findStalePeers queries WireGuard via wgctrl for latest handshake timestamps
+// and returns public keys of peers that are stale.
 func (w *WireGuard) findStalePeers(maxAge time.Duration) ([]string, error) {
-	cmd := exec.Command("wg", "show", w.iface, "latest-handshakes")
-	output, err := cmd.CombinedOutput()
+	client, err := wgctrl.New()
 	if err != nil {
-		return nil, fmt.Errorf("wg show latest-handshakes: %s: %w", string(output), err)
+		return nil, fmt.Errorf("wgctrl client: %w", err)
+	}
+	defer client.Close()
+
+	device, err := client.Device(w.iface)
+	if err != nil {
+		return nil, fmt.Errorf("wgctrl device %s: %w", w.iface, err)
 	}
 
 	now := time.Now()
 	var stale []string
-	for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
-		if line == "" {
-			continue
-		}
-		fields := strings.Fields(line)
-		if len(fields) != 2 {
-			continue
-		}
-		pubkey := fields[0]
-		ts, err := strconv.ParseInt(fields[1], 10, 64)
-		if err != nil {
-			continue
-		}
-		if ts == 0 {
+	for _, peer := range device.Peers {
+		pubkey := peer.PublicKey.String()
+		if peer.LastHandshakeTime.IsZero() {
 			// Never handshaked — always stale.
 			stale = append(stale, pubkey)
-		} else if maxAge > 0 && now.Sub(time.Unix(ts, 0)) > maxAge {
+		} else if maxAge > 0 && now.Sub(peer.LastHandshakeTime) > maxAge {
 			stale = append(stale, pubkey)
 		}
 	}
@@ -233,27 +228,111 @@ func (w *WireGuard) PublicKey() string {
 	return publicKeyFromPrivate(w.config.PrivateKey)
 }
 
-// Apply writes the config and restarts the WireGuard interface.
+// Apply configures the WireGuard interface via wgctrl and netlink.
 func (w *WireGuard) Apply() error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
+	// Write config file for reference.
 	if err := w.writeConfig(); err != nil {
 		return err
 	}
 
-	// Apply via wg-quick.
-	cmd := exec.Command("wg-quick", "down", w.iface)
-	_ = cmd.Run() // Ignore error if interface doesn't exist.
+	// Tear down existing interface (best-effort).
+	WGNet.LinkSetDown(w.iface)
+	WGNet.LinkDel(w.iface)
 
-	cmd = exec.Command("wg-quick", "up", w.iface)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("wg-quick up: %s: %w", string(output), err)
+	// Create WireGuard interface via netlink.
+	if err := WGNet.LinkAdd(w.iface, "wireguard"); err != nil {
+		return fmt.Errorf("create interface %s: %w", w.iface, err)
+	}
+
+	// Configure via wgctrl.
+	if err := w.applyWGConfig(); err != nil {
+		WGNet.LinkDel(w.iface)
+		return fmt.Errorf("configure wireguard: %w", err)
+	}
+
+	// Add address.
+	if err := WGNet.AddrAdd(w.iface, w.config.Address); err != nil {
+		WGNet.LinkDel(w.iface)
+		return fmt.Errorf("add address %s: %w", w.config.Address, err)
+	}
+
+	// Bring interface up.
+	if err := WGNet.LinkSetUp(w.iface); err != nil {
+		WGNet.LinkDel(w.iface)
+		return fmt.Errorf("bring up %s: %w", w.iface, err)
 	}
 
 	slog.Info("wireguard interface applied", "iface", w.iface)
 	return nil
+}
+
+// applyWGConfig configures the WireGuard device via wgctrl.
+func (w *WireGuard) applyWGConfig() error {
+	client, err := wgctrl.New()
+	if err != nil {
+		return fmt.Errorf("wgctrl client: %w", err)
+	}
+	defer client.Close()
+
+	privKey, err := wgtypes.ParseKey(w.config.PrivateKey)
+	if err != nil {
+		return fmt.Errorf("parse private key: %w", err)
+	}
+
+	listenPort := w.config.ListenPort
+
+	var peers []wgtypes.PeerConfig
+	for _, p := range w.config.Peers {
+		if validate.WGPublicKey(p.PublicKey) != nil {
+			continue
+		}
+		if validate.WGAllowedIPs(p.AllowedIPs) != nil {
+			continue
+		}
+		if validate.WGEndpoint(p.Endpoint) != nil {
+			continue
+		}
+
+		pubKey, err := wgtypes.ParseKey(p.PublicKey)
+		if err != nil {
+			continue
+		}
+
+		var allowedIPs []net.IPNet
+		for _, cidr := range strings.Split(p.AllowedIPs, ",") {
+			cidr = strings.TrimSpace(cidr)
+			_, ipnet, err := net.ParseCIDR(cidr)
+			if err != nil {
+				continue
+			}
+			allowedIPs = append(allowedIPs, *ipnet)
+		}
+
+		pc := wgtypes.PeerConfig{
+			PublicKey:         pubKey,
+			AllowedIPs:        allowedIPs,
+			ReplaceAllowedIPs: true,
+		}
+
+		if p.Endpoint != "" {
+			endpoint, err := net.ResolveUDPAddr("udp", p.Endpoint)
+			if err == nil {
+				pc.Endpoint = endpoint
+			}
+		}
+
+		peers = append(peers, pc)
+	}
+
+	return client.ConfigureDevice(w.iface, wgtypes.Config{
+		PrivateKey:   &privKey,
+		ListenPort:   &listenPort,
+		Peers:        peers,
+		ReplacePeers: true,
+	})
 }
 
 func (w *WireGuard) writeConfig() error {

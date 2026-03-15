@@ -59,8 +59,8 @@ func applyIPv6LeakPrevention(vpnIface string) error {
 	outputChain := nftChainSpec{
 		Name:     "output",
 		Type:     nft.ChainTypeFilter,
-		Hook:     &hook,
-		Priority: &prio,
+		Hook:     hook,
+		Priority: prio,
 		Policy:   &dropPolicy,
 		Rules:    rules,
 	}
@@ -79,8 +79,8 @@ func applyIPv6LeakPrevention(vpnIface string) error {
 	fwdChain := nftChainSpec{
 		Name:     "forward",
 		Type:     nft.ChainTypeFilter,
-		Hook:     &fwdHook,
-		Priority: &prio,
+		Hook:     fwdHook,
+		Priority: prio,
 		Policy:   &dropPolicy,
 		Rules:    fwdRules,
 	}

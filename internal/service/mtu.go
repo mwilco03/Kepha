@@ -332,7 +332,7 @@ func (m *MTUManager) applyMSSClamping(cfg map[string]string) error {
 		Name:     "forward",
 		Type:     nft.ChainTypeFilter,
 		Hooknum:  nft.ChainHookForward,
-		Priority: &prio,
+		Priority: prio,
 	})
 
 	// Build the MSS clamping rule.
