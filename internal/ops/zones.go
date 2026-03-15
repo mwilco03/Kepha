@@ -23,7 +23,7 @@ func (o *Ops) CreateZone(actor Actor, z *model.Zone) error {
 	z.Name = validate.Sanitize(z.Name)
 	z.Interface = validate.Sanitize(z.Interface)
 	z.NetworkCIDR = validate.Sanitize(z.NetworkCIDR)
-	z.TrustLevel = validate.Sanitize(z.TrustLevel)
+	z.TrustLevel = model.TrustLevel(validate.Sanitize(string(z.TrustLevel)))
 	z.Description = validate.Sanitize(z.Description)
 
 	if z.Name == "" {
@@ -39,7 +39,7 @@ func (o *Ops) CreateZone(actor Actor, z *model.Zone) error {
 		return err
 	}
 	if z.TrustLevel != "" {
-		if err := validate.TrustLevel(z.TrustLevel); err != nil {
+		if err := validate.TrustLevel(string(z.TrustLevel)); err != nil {
 			return err
 		}
 	}
@@ -54,7 +54,7 @@ func (o *Ops) CreateZone(actor Actor, z *model.Zone) error {
 func (o *Ops) UpdateZone(actor Actor, z *model.Zone) error {
 	z.Interface = validate.Sanitize(z.Interface)
 	z.NetworkCIDR = validate.Sanitize(z.NetworkCIDR)
-	z.TrustLevel = validate.Sanitize(z.TrustLevel)
+	z.TrustLevel = model.TrustLevel(validate.Sanitize(string(z.TrustLevel)))
 	z.Description = validate.Sanitize(z.Description)
 
 	if err := validate.Interface(z.Interface); err != nil {
@@ -64,7 +64,7 @@ func (o *Ops) UpdateZone(actor Actor, z *model.Zone) error {
 		return err
 	}
 	if z.TrustLevel != "" {
-		if err := validate.TrustLevel(z.TrustLevel); err != nil {
+		if err := validate.TrustLevel(string(z.TrustLevel)); err != nil {
 			return err
 		}
 	}

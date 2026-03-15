@@ -12,6 +12,69 @@ import (
 // This file implements the NetworkManager netlink-dependent methods
 // using the vishvananda/netlink library. No exec.Command("ip", ...) calls.
 
+// LinkList enumerates all network interfaces with their basic attributes.
+func (m *LinuxNetworkManager) LinkList() ([]LinkInfo, error) {
+	links, err := netlink.LinkList()
+	if err != nil {
+		return nil, fmt.Errorf("netlink link list: %w", err)
+	}
+
+	var result []LinkInfo
+	for _, link := range links {
+		attrs := link.Attrs()
+
+		kind := link.Type()
+		if attrs.Flags&net.FlagLoopback != 0 {
+			kind = "loopback"
+		} else if kind == "" {
+			kind = "device"
+		}
+
+		state := "down"
+		if attrs.Flags&net.FlagUp != 0 {
+			state = "up"
+		}
+
+		mac := ""
+		if attrs.HardwareAddr != nil {
+			mac = attrs.HardwareAddr.String()
+		}
+
+		// Get assigned addresses.
+		addrs, _ := netlink.AddrList(link, netlink.FAMILY_ALL)
+		var cidrs []string
+		for _, a := range addrs {
+			cidrs = append(cidrs, a.IPNet.String())
+		}
+
+		// Get master (bridge/bond parent).
+		master := ""
+		if attrs.MasterIndex > 0 {
+			if masterLink, err := netlink.LinkByIndex(attrs.MasterIndex); err == nil {
+				master = masterLink.Attrs().Name
+			}
+		}
+
+		// Check carrier via sysfs (link detected / cable plugged).
+		hasCarrier := false
+		if data, err := os.ReadFile(fmt.Sprintf("/sys/class/net/%s/carrier", attrs.Name)); err == nil {
+			hasCarrier = len(data) > 0 && data[0] == '1'
+		}
+
+		result = append(result, LinkInfo{
+			Name:       attrs.Name,
+			Kind:       kind,
+			State:      state,
+			MTU:        attrs.MTU,
+			MACAddress: mac,
+			Addresses:  cidrs,
+			Master:     master,
+			HasCarrier: hasCarrier,
+		})
+	}
+	return result, nil
+}
+
 // LinkAdd creates a network interface (bridge, veth, vlan, etc).
 func (m *LinuxNetworkManager) LinkAdd(name string, kind string) error {
 	var link netlink.Link
@@ -223,6 +286,37 @@ func (m *LinuxNetworkManager) RouteReplace(via string, dev string) error {
 func (m *LinuxNetworkManager) RuleAdd(oif string, table int, priority int) error {
 	rule := netlink.NewRule()
 	rule.OifName = oif
+	rule.Table = table
+	rule.Priority = priority
+	return netlink.RuleAdd(rule)
+}
+
+// RuleAddSrc adds a source-IP-based policy routing rule.
+func (m *LinuxNetworkManager) RuleAddSrc(src string, table int, priority int) error {
+	_, srcNet, err := net.ParseCIDR(src)
+	if err != nil {
+		// Try as bare IP.
+		ip := net.ParseIP(src)
+		if ip == nil {
+			return fmt.Errorf("parse src %s: invalid", src)
+		}
+		bits := 32
+		if ip.To4() == nil {
+			bits = 128
+		}
+		srcNet = &net.IPNet{IP: ip, Mask: net.CIDRMask(bits, bits)}
+	}
+	rule := netlink.NewRule()
+	rule.Src = srcNet
+	rule.Table = table
+	rule.Priority = priority
+	return netlink.RuleAdd(rule)
+}
+
+// RuleAddFwmark adds a fwmark-based policy routing rule.
+func (m *LinuxNetworkManager) RuleAddFwmark(mark uint32, table int, priority int) error {
+	rule := netlink.NewRule()
+	rule.Mark = mark
 	rule.Table = table
 	rule.Priority = priority
 	return netlink.RuleAdd(rule)

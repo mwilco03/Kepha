@@ -6,6 +6,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/gatekeeper-firewall/gatekeeper/internal/model"
 )
 
 // Sanitize strips null bytes and trims whitespace from user input.
@@ -22,9 +24,10 @@ var (
 	hostnameRe  = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$`)
 	macRe       = regexp.MustCompile(`^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$`)
 	base64Re    = regexp.MustCompile(`^[A-Za-z0-9+/=]{1,128}$`)
-	allowedProto = map[string]bool{"tcp": true, "udp": true, "icmp": true, "": true}
-	allowedAction = map[string]bool{"allow": true, "deny": true, "reject": true, "log": true}
-	allowedTrust  = map[string]bool{"none": true, "low": true, "medium": true, "high": true, "full": true}
+	// Derived from model constants — single source of truth.
+	allowedProto  = toStringSet(model.ValidProtocols)
+	allowedAction = toStringSet(model.ValidActions)
+	allowedTrust  = toStringSet(model.ValidTrustLevels)
 )
 
 // Name validates a resource name (zone, alias, policy, profile).
@@ -198,6 +201,15 @@ func WGAllowedIPs(ips string) error {
 		}
 	}
 	return nil
+}
+
+// toStringSet converts a typed enum map to a string-keyed lookup.
+func toStringSet[K ~string](m map[K]bool) map[string]bool {
+	out := make(map[string]bool, len(m))
+	for k, v := range m {
+		out[string(k)] = v
+	}
+	return out
 }
 
 // WGEndpoint validates a WireGuard endpoint (host:port).

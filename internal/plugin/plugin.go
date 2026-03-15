@@ -391,7 +391,7 @@ func (m *Manager) diagHandler(pluginName, epName, scriptPath string) http.Handle
 		ctx, cancel := context.WithTimeout(r.Context(), scriptTimeout)
 		defer cancel()
 
-		cmd := exec.CommandContext(ctx, "/bin/sh", "-c", scriptPath)
+		cmd := exec.CommandContext(ctx, scriptPath)
 		cmd.Dir = filepath.Dir(scriptPath)
 
 		// Minimal environment to reduce information leakage.

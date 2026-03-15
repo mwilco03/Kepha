@@ -92,6 +92,8 @@ func main() {
 		err = cmdFingerprint(os.Args[2:], outputFmt)
 	case "xdp":
 		err = cmdXDP(os.Args[2:], outputFmt)
+	case "discover":
+		err = cmdDiscover(os.Args[2:], outputFmt)
 	case "deps":
 		err = cmdDeps(os.Args[2:])
 	case "help", "--help", "-h":
@@ -212,7 +214,7 @@ func cmdZone(b cli.Backend, args []string, outputFmt string) error {
 		cidr := fs.String("cidr", "", "Network CIDR")
 		trust := fs.String("trust", "none", "Trust level")
 		_ = fs.Parse(args[1:])
-		z := &model.Zone{Name: *name, Interface: *iface, NetworkCIDR: *cidr, TrustLevel: *trust}
+		z := &model.Zone{Name: *name, Interface: *iface, NetworkCIDR: *cidr, TrustLevel: model.TrustLevel(*trust)}
 		if err := b.CreateZone(z); err != nil {
 			return err
 		}
@@ -786,6 +788,75 @@ func cmdService(args []string) error {
 	}
 }
 
+func cmdDiscover(_ []string, outputFmt string) error {
+	topo, err := service.DiscoverTopology()
+	if err != nil {
+		return err
+	}
+
+	if outputFmt == "json" {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(topo)
+	}
+
+	fmt.Println("=== Upstream Network (auto-detected) ===")
+	fmt.Println()
+	fmt.Printf("  IP:       %s\n", valueOrMissing(topo.UpstreamIP))
+	fmt.Printf("  Gateway:  %s\n", valueOrMissing(topo.DefaultGateway))
+	fmt.Printf("  Subnet:   %s\n", valueOrMissing(topo.UpstreamSubnet))
+	fmt.Printf("  DNS:      %s\n", valueOrMissing(topo.UpstreamDNS))
+	fmt.Println()
+
+	fmt.Println("=== Interfaces ===")
+	fmt.Println()
+	if topo.WAN != nil {
+		fmt.Printf("  WAN:  %s  (%s, %s)\n", topo.WAN.Name, topo.WAN.MACAddress, topo.WAN.State)
+		if len(topo.WAN.Addresses) > 0 {
+			fmt.Printf("        %s\n", strings.Join(topo.WAN.Addresses, ", "))
+		}
+	} else {
+		fmt.Println("  WAN:  (not detected — no default route)")
+	}
+
+	for _, l := range topo.LAN {
+		carrier := "no-link"
+		if l.HasCarrier {
+			carrier = "link-up"
+		}
+		fmt.Printf("  LAN:  %-12s  (%s, %s, %s)\n", l.Name, l.MACAddress, l.State, carrier)
+		if len(l.Addresses) > 0 {
+			fmt.Printf("        %s\n", strings.Join(l.Addresses, ", "))
+		}
+	}
+	fmt.Println()
+
+	if topo.Suggestion != nil {
+		fmt.Println("=== Drop-in Gateway ===")
+		fmt.Println()
+		fmt.Println("  Ready for drop-in mode. Enable with zero config:")
+		fmt.Println("    gk svc enable dropin-gateway")
+		fmt.Println()
+		fmt.Println("  Or override specific values:")
+		fmt.Printf("    gk svc enable dropin-gateway --config ip=%s,gateway=%s,subnet=%s,dns=%s\n",
+			topo.UpstreamIP, topo.DefaultGateway, topo.UpstreamSubnet, topo.UpstreamDNS)
+		fmt.Println()
+		fmt.Printf("  %s\n", topo.Suggestion.Reason)
+	} else {
+		fmt.Println("Cannot auto-detect WAN/LAN pair.")
+		fmt.Println("Ensure two physical NICs are connected.")
+	}
+
+	return nil
+}
+
+func valueOrMissing(s string) string {
+	if s == "" {
+		return "(not detected)"
+	}
+	return s
+}
+
 func cmdDeps(args []string) error {
 	pm, err := backend.DetectPackageManager()
 	if err != nil {
@@ -1341,6 +1412,7 @@ Commands:
   mtu         MTU management (status, diagnostics, zone MTU info)
   perf        Performance tuning (status, conntrack, nic)
   ping        Ping a target host
+  discover    Auto-detect network topology (WAN/LAN interfaces)
   deps        Manage system dependencies (check, install)
   version     Show version
 

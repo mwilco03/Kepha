@@ -230,7 +230,9 @@ func NewRouterWithConfig(cfg *RouterConfig) http.Handler {
 	diagLimiter := NewRateLimiter(diagRate, diagRate*2)
 	diagRL := diagLimiter.Middleware
 
-	mux.HandleFunc("GET /api/v1/diag/interfaces", h.diagInterfaces) // Read-only, no subprocess.
+	mux.HandleFunc("GET /api/v1/diag/interfaces", h.diagInterfaces)   // Read-only, zone-to-interface map.
+	mux.HandleFunc("GET /api/v1/diag/links", h.diagLinks)             // Read-only, all system interfaces via netlink.
+	mux.HandleFunc("GET /api/v1/diag/topology", h.diagTopology)       // Auto-detect WAN/LAN layout.
 	mux.HandleFunc("GET /api/v1/diag/leases", h.diagLeases)         // Read-only, file parse.
 	mux.HandleFunc("GET /api/v1/perf/nic", h.perfNIC)               // Read-only, sysfs + ethtool.
 	mux.HandleFunc("GET /api/v1/diag/dry-run", h.dryRun)

@@ -465,7 +465,7 @@ func (e *Enforcer) RevokeKey(id string) error {
 func (e *Enforcer) ListKeys() ([]APIKeyInfo, error) {
 	rows, err := e.db.Query(`
 		SELECT id, name, key_hash, role, zone_scope, profile_scope, created_at, expires_at, active
-		FROM api_keys ORDER BY created_at DESC
+		FROM api_keys ORDER BY created_at DESC LIMIT 1000
 	`)
 	if err != nil {
 		return nil, fmt.Errorf("rbac: list keys: %w", err)

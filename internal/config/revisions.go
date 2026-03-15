@@ -78,7 +78,7 @@ func (s *Store) ListRevisions() ([]struct {
 	Timestamp string `json:"timestamp"`
 	Message   string `json:"message"`
 }, error) {
-	rows, err := s.db.Query("SELECT rev_number, timestamp, message FROM config_revisions ORDER BY rev_number DESC")
+	rows, err := s.db.Query("SELECT rev_number, timestamp, message FROM config_revisions ORDER BY rev_number DESC LIMIT 1000")
 	if err != nil {
 		return nil, err
 	}
