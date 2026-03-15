@@ -102,6 +102,7 @@ func (m *mockNetworkManager) RuleAdd(string, int, int) error                  { 
 func (m *mockNetworkManager) RuleAddSrc(string, int, int) error               { return nil }
 func (m *mockNetworkManager) RuleAddFwmark(uint32, int, int) error            { return nil }
 func (m *mockNetworkManager) RuleDel(int) error                               { return nil }
+func (m *mockNetworkManager) LinkList() ([]backend.LinkInfo, error)            { return nil, nil }
 
 func (m *mockNetworkManager) Ping(string, int, int, string) (backend.PingResult, error) {
 	return backend.PingResult{}, nil

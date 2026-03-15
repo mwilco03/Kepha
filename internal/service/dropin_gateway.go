@@ -62,8 +62,8 @@ func (d *DropInGateway) DefaultConfig() map[string]string {
 
 func (d *DropInGateway) ConfigSchema() map[string]ConfigField {
 	return map[string]ConfigField{
-		"wan_interface":   {Description: "WAN-facing interface (connects to upstream router)", Required: true, Type: "string"},
-		"lan_interface":   {Description: "LAN-facing interface (connects to client devices)", Required: true, Type: "string"},
+		"wan_interface":   {Description: "WAN-facing interface (connects to upstream router). Leave blank for auto-detection via default route.", Required: false, Type: "string"},
+		"lan_interface":   {Description: "LAN-facing interface (connects to client devices). Leave blank for auto-detection.", Required: false, Type: "string"},
 		"bridge_name":     {Description: "Bridge interface name", Default: "br-dropin", Type: "string"},
 		"intercept_dns":   {Description: "Intercept and filter DNS queries", Default: "true", Type: "bool"},
 		"local_dns_port":  {Description: "Local DNS resolver port to redirect intercepted DNS to", Default: "5353", Type: "string"},
@@ -74,13 +74,33 @@ func (d *DropInGateway) ConfigSchema() map[string]ConfigField {
 }
 
 func (d *DropInGateway) Validate(cfg map[string]string) error {
-	if cfg["wan_interface"] == "" {
-		return fmt.Errorf("wan_interface is required")
+	wan := cfg["wan_interface"]
+	lan := cfg["lan_interface"]
+
+	// Auto-discover if not specified.
+	if wan == "" || lan == "" {
+		topo, err := DiscoverTopology()
+		if err != nil {
+			return fmt.Errorf("auto-discovery failed: %w (set wan_interface and lan_interface manually)")
+		}
+		if topo.Suggestion == nil {
+			return fmt.Errorf("auto-discovery could not determine WAN/LAN interfaces; set wan_interface and lan_interface manually")
+		}
+		if wan == "" {
+			wan = topo.Suggestion.WANInterface
+		}
+		if lan == "" {
+			lan = topo.Suggestion.LANInterface
+		}
 	}
-	if cfg["lan_interface"] == "" {
-		return fmt.Errorf("lan_interface is required")
+
+	if wan == "" {
+		return fmt.Errorf("wan_interface is required (auto-discovery found no default route)")
 	}
-	if cfg["wan_interface"] == cfg["lan_interface"] {
+	if lan == "" {
+		return fmt.Errorf("lan_interface is required (auto-discovery found no LAN candidates)")
+	}
+	if wan == lan {
 		return fmt.Errorf("wan_interface and lan_interface must be different")
 	}
 	return nil
@@ -97,7 +117,6 @@ func (d *DropInGateway) Start(cfg map[string]string) error {
 	defer d.mu.Unlock()
 
 	d.state = StateStarting
-	d.cfg = cfg
 
 	bridge := cfg["bridge_name"]
 	if bridge == "" {
@@ -106,6 +125,31 @@ func (d *DropInGateway) Start(cfg map[string]string) error {
 
 	wan := cfg["wan_interface"]
 	lan := cfg["lan_interface"]
+
+	// Auto-discover interfaces if not explicitly configured.
+	if wan == "" || lan == "" {
+		topo, err := DiscoverTopology()
+		if err != nil {
+			d.state = StateError
+			return fmt.Errorf("auto-discovery failed: %w", err)
+		}
+		if topo.Suggestion == nil {
+			d.state = StateError
+			return fmt.Errorf("auto-discovery could not determine WAN/LAN; set wan_interface and lan_interface manually")
+		}
+		if wan == "" {
+			wan = topo.Suggestion.WANInterface
+			cfg["wan_interface"] = wan
+		}
+		if lan == "" {
+			lan = topo.Suggestion.LANInterface
+			cfg["lan_interface"] = lan
+		}
+		slog.Info("dropin-gateway: auto-discovered interfaces",
+			"wan", wan, "lan", lan, "reason", topo.Suggestion.Reason)
+	}
+
+	d.cfg = cfg
 
 	// Step 1: Create bridge.
 	if err := Net.LinkAdd(bridge, "bridge"); err != nil {

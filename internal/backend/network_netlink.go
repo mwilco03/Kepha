@@ -12,6 +12,69 @@ import (
 // This file implements the NetworkManager netlink-dependent methods
 // using the vishvananda/netlink library. No exec.Command("ip", ...) calls.
 
+// LinkList enumerates all network interfaces with their basic attributes.
+func (m *LinuxNetworkManager) LinkList() ([]LinkInfo, error) {
+	links, err := netlink.LinkList()
+	if err != nil {
+		return nil, fmt.Errorf("netlink link list: %w", err)
+	}
+
+	var result []LinkInfo
+	for _, link := range links {
+		attrs := link.Attrs()
+
+		kind := link.Type()
+		if attrs.Flags&net.FlagLoopback != 0 {
+			kind = "loopback"
+		} else if kind == "" {
+			kind = "device"
+		}
+
+		state := "down"
+		if attrs.Flags&net.FlagUp != 0 {
+			state = "up"
+		}
+
+		mac := ""
+		if attrs.HardwareAddr != nil {
+			mac = attrs.HardwareAddr.String()
+		}
+
+		// Get assigned addresses.
+		addrs, _ := netlink.AddrList(link, netlink.FAMILY_ALL)
+		var cidrs []string
+		for _, a := range addrs {
+			cidrs = append(cidrs, a.IPNet.String())
+		}
+
+		// Get master (bridge/bond parent).
+		master := ""
+		if attrs.MasterIndex > 0 {
+			if masterLink, err := netlink.LinkByIndex(attrs.MasterIndex); err == nil {
+				master = masterLink.Attrs().Name
+			}
+		}
+
+		// Check carrier via sysfs (link detected / cable plugged).
+		hasCarrier := false
+		if data, err := os.ReadFile(fmt.Sprintf("/sys/class/net/%s/carrier", attrs.Name)); err == nil {
+			hasCarrier = len(data) > 0 && data[0] == '1'
+		}
+
+		result = append(result, LinkInfo{
+			Name:       attrs.Name,
+			Kind:       kind,
+			State:      state,
+			MTU:        attrs.MTU,
+			MACAddress: mac,
+			Addresses:  cidrs,
+			Master:     master,
+			HasCarrier: hasCarrier,
+		})
+	}
+	return result, nil
+}
+
 // LinkAdd creates a network interface (bridge, veth, vlan, etc).
 func (m *LinuxNetworkManager) LinkAdd(name string, kind string) error {
 	var link netlink.Link

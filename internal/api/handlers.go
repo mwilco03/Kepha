@@ -648,6 +648,28 @@ func (h *handlers) diagInterfaces(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, ifaces)
 }
 
+func (h *handlers) diagLinks(w http.ResponseWriter, r *http.Request) {
+	if h.net == nil {
+		writeError(w, http.StatusServiceUnavailable, "network manager not available")
+		return
+	}
+	links, err := h.net.LinkList()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, links)
+}
+
+func (h *handlers) diagTopology(w http.ResponseWriter, r *http.Request) {
+	topo, err := service.DiscoverTopology()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, topo)
+}
+
 func (h *handlers) diagPing(w http.ResponseWriter, r *http.Request) {
 	target := r.PathValue("target")
 	if target == "" {

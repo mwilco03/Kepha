@@ -92,6 +92,8 @@ func main() {
 		err = cmdFingerprint(os.Args[2:], outputFmt)
 	case "xdp":
 		err = cmdXDP(os.Args[2:], outputFmt)
+	case "discover":
+		err = cmdDiscover(os.Args[2:], outputFmt)
 	case "deps":
 		err = cmdDeps(os.Args[2:])
 	case "help", "--help", "-h":
@@ -786,6 +788,72 @@ func cmdService(args []string) error {
 	}
 }
 
+func cmdDiscover(_ []string, outputFmt string) error {
+	topo, err := service.DiscoverTopology()
+	if err != nil {
+		return err
+	}
+
+	if outputFmt == "json" {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(topo)
+	}
+
+	fmt.Println("=== Network Topology Discovery ===")
+	fmt.Println()
+
+	if topo.WAN != nil {
+		fmt.Printf("WAN interface:  %s  (%s)\n", topo.WAN.Name, topo.WAN.State)
+		if len(topo.WAN.Addresses) > 0 {
+			fmt.Printf("  Addresses:    %s\n", strings.Join(topo.WAN.Addresses, ", "))
+		}
+		if topo.WAN.MACAddress != "" {
+			fmt.Printf("  MAC:          %s\n", topo.WAN.MACAddress)
+		}
+	} else {
+		fmt.Println("WAN interface:  (not detected — no default route found)")
+	}
+
+	if topo.DefaultGateway != "" {
+		fmt.Printf("Default GW:     %s\n", topo.DefaultGateway)
+	}
+	fmt.Println()
+
+	fmt.Printf("LAN candidates: %d\n", len(topo.LAN))
+	for _, l := range topo.LAN {
+		carrier := "no-link"
+		if l.HasCarrier {
+			carrier = "link-up"
+		}
+		fmt.Printf("  %-12s  %s  %s  %s\n", l.Name, l.State, carrier, l.MACAddress)
+		if len(l.Addresses) > 0 {
+			fmt.Printf("    Addresses: %s\n", strings.Join(l.Addresses, ", "))
+		}
+	}
+	fmt.Println()
+
+	if topo.Suggestion != nil {
+		fmt.Println("=== Suggestion for Drop-in Gateway ===")
+		fmt.Printf("  wan_interface: %s\n", topo.Suggestion.WANInterface)
+		fmt.Printf("  lan_interface: %s\n", topo.Suggestion.LANInterface)
+		fmt.Printf("  Reason: %s\n", topo.Suggestion.Reason)
+		fmt.Println()
+		fmt.Println("To enable drop-in gateway with auto-detected settings:")
+		fmt.Println("  gk svc enable dropin-gateway")
+		fmt.Println()
+		fmt.Println("Or with explicit interfaces:")
+		fmt.Printf("  gk svc enable dropin-gateway --config wan_interface=%s,lan_interface=%s\n",
+			topo.Suggestion.WANInterface, topo.Suggestion.LANInterface)
+	} else {
+		fmt.Println("Could not auto-detect a WAN/LAN pair.")
+		fmt.Println("Manually specify interfaces when enabling:")
+		fmt.Println("  gk svc enable dropin-gateway --config wan_interface=eth0,lan_interface=eth1")
+	}
+
+	return nil
+}
+
 func cmdDeps(args []string) error {
 	pm, err := backend.DetectPackageManager()
 	if err != nil {
@@ -1341,6 +1409,7 @@ Commands:
   mtu         MTU management (status, diagnostics, zone MTU info)
   perf        Performance tuning (status, conntrack, nic)
   ping        Ping a target host
+  discover    Auto-detect network topology (WAN/LAN interfaces)
   deps        Manage system dependencies (check, install)
   version     Show version
 

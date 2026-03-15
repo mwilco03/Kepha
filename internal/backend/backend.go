@@ -247,6 +247,9 @@ const (
 // NetworkManager abstracts network interface operations.
 // Replaces: ip link, ip addr, ip route, ip rule, bridge, sysctl.
 type NetworkManager interface {
+	// LinkList enumerates all network interfaces with their basic attributes.
+	LinkList() ([]LinkInfo, error)
+
 	// SysctlSet writes a sysctl value via /proc/sys.
 	SysctlSet(key string, value string) error
 
@@ -373,6 +376,18 @@ type ConntrackEntry struct {
 	State    string `json:"state"`
 	Bytes    int64  `json:"bytes"`
 	Packets  int64  `json:"packets"`
+}
+
+// LinkInfo holds basic attributes for a network interface as returned by LinkList.
+type LinkInfo struct {
+	Name       string   `json:"name"`
+	Kind       string   `json:"kind"`        // "device", "bridge", "veth", "vlan", "loopback", etc.
+	State      string   `json:"state"`        // "up", "down", "unknown"
+	MTU        int      `json:"mtu"`
+	MACAddress string   `json:"mac_address"`
+	Addresses  []string `json:"addresses"`    // CIDRs assigned to this interface
+	Master     string   `json:"master"`       // parent bridge/bond name, if any
+	HasCarrier bool     `json:"has_carrier"`  // cable plugged in / link detected
 }
 
 // NICInfo holds hardware and offload details for a network interface.
