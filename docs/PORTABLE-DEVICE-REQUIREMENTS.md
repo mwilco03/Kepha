@@ -1194,34 +1194,190 @@ and let the $117 CWWK box be the hardware recommendation.
 
 ---
 
-## 18. Revised Open Questions
+## 18. Hardware-First: What Can You Actually Buy in Mass?
 
-1. **Is the firmware image enough?** pfSense and OPNsense prove software-only
-   distribution works. But both have terrible UX for non-experts. If Kepha's
-   web UI + MCP tools make it genuinely accessible to non-networking people,
-   that alone is the differentiator — no hardware play needed.
+Stop thinking about what Kepha needs. Start from what exists at volume.
 
-2. **OpenWrt port:** Should Kepha run on GL.iNet travel routers? That puts it
-   on $35-89 hardware with WiFi. The trade-off: ARM, limited RAM (128MB-512MB
-   on cheap models), OpenWrt kernel constraints. Kepha's Go binary and SQLite
-   may be too heavy for a 128MB MIPS device. The Beryl AX (512MB) might work
-   with a stripped-down Kepha (no Suricata, no XDP, basic zones only).
+### The Actual Price Floor (Complete Devices, Bulk)
 
-3. **"Kepha Lite" for constrained hardware:** A reduced Kepha build that runs
-   on 256-512MB ARM devices. No Suricata, no XDP, no local AI. Just nftables
-   zones + WireGuard + dnsmasq + web UI + API. This is what would run on a
-   $35 GL.iNet Opal and compete directly in the travel router space.
+| Device | Unit Price | MOQ | CPU | RAM | Storage | Ethernet | Linux |
+|--------|-----------|-----|-----|-----|---------|----------|-------|
+| **Allwinner H313 TV box (X96Q)** | **$7-9** | 1,000+ | 4xA53 | 2GB DDR3 | 16GB eMMC | 100Mbps | Armbian (community) |
+| **Allwinner H618 TV box** | **$14-17** | 100+ | 4xA53 | 2-4GB DDR4 | 32GB eMMC | 100M/1G | Armbian (better) |
+| **Dell Wyse 5070 (refurb lot)** | **$14-20** | 50+ lots | J4105 4C x86 | 4GB DDR4 | 16GB eMMC | Gigabit | Native x86 |
+| **Amlogic S905X3 TV box** | **$15-23** | 500+ | 4xA55 | 4GB DDR4 | 32-64GB eMMC | Gigabit* | Armbian (good) |
+| **Orange Pi Zero 3 (1GB)** | **$15** | retail | 4xA53 | 1GB | MicroSD | Gigabit | Armbian (good) |
+| **MT7986 OEM router (Alibaba)** | **$35-50** | 1,000+ | 4xA53 @2GHz | 1-2GB | 128MB+ NAND | 2x 2.5GbE | OpenWrt (excellent) |
+| **BPI-R3 Mini** | **$65-79** | retail | 4xA53 @2GHz | 2GB | 8GB eMMC | 2x 2.5GbE | OpenWrt (excellent) |
+| **ZBT MT7981B router** | **$48** | 1,000+ | 2xA53 (not quad) | 1GB | NAND | 3x GbE | OpenWrt |
+| **J4125 4-port firewall (Alibaba)** | **$70-110** | 100+ | 4C x86 | barebone | barebone | 4x GbE | Native x86 |
+| **N100 4-port firewall (Alibaba)** | **$90-130** | 100+ | 4C/4T x86 | barebone | barebone | 4x 2.5GbE | Native x86 |
+| **GL.iNet Flint 2 (retail)** | **$130** | 1 | 4xA53 @2GHz | 1GB | 8GB eMMC | 2x2.5G+4xGbE | OpenWrt (excellent) |
 
-4. **Local AI as an upgrade path:** Start with Kepha Lite on cheap hardware.
-   Users who want AI-driven management upgrade to x86_64 hardware where the
-   iGPU enables local LLM. The MCP tools work with cloud LLMs in the meantime
-   (user provides their own API key). Local AI is a feature, not the product.
+*S905X3 Gigabit only on board revisions with RTL8211F PHY — verify before bulk order.
 
-5. **The $70 Dell Wyse play:** Should the "getting started" guide literally be
-   "buy a $50 Dell Wyse 5070 on eBay, add a $20 quad-NIC, flash this image"?
-   That's the kind of accessible entry point that builds a community.
+### The $7-9 X96Q: Can Kepha Run On It?
 
-6. **Crowdfunding for validation:** Firewalla launched every product on
-   Kickstarter/Indiegogo first. The first Firewalla Red raised $90K. Is a
-   Kickstarter for a "Kepha Box" ($179 pre-configured N100) the right way to
-   test market demand before committing to inventory?
+A quad-core ARM Cortex-A53 box with 2GB RAM and 16GB eMMC for **$7-9 per unit
+at 1,000+ from Alibaba.** Ships with Android. Armbian community images boot on it.
+
+Specs: Allwinner H313, 4xA53 @ 1.5GHz, 2GB DDR3, 16GB eMMC, 100Mbps Ethernet,
+WiFi (2.4GHz b/g/n), HDMI, 2x USB 2.0, IR receiver, 5V/2A power.
+
+**What works for Kepha:**
+- 4 cores @ 1.5GHz — enough for nftables, dnsmasq, WireGuard, Go HTTP server
+- 2GB RAM — comfortable for Kepha (~200MB), leaves 1.5GB+ free
+- 16GB eMMC — plenty for Alpine + Kepha + SQLite + logs
+- AArch64 — same `GOARCH=arm64` binary as everything else
+- WiFi — can act as AP or STA (hotel uplink)
+
+**What doesn't work:**
+- **100Mbps Ethernet** — not Gigabit. Fine for hotel WiFi (usually <50Mbps),
+  bad for home gateway use. Some H618 boards have Gigabit — verify per model.
+- **No second Ethernet port** — needs USB Ethernet adapter for router mode,
+  or WiFi-only mode (WiFi STA uplink → WiFi AP for clients)
+- **Armbian community support only** — not upstream OpenWrt, no vendor Linux
+  support. You own the BSP.
+- **100Mbps WiFi chip** — 2.4GHz only on cheapest models. Some H618 variants
+  have dual-band AC.
+
+**The play:** At $9/unit, you can sell a "Kepha Travel Security" device for
+$39-49 retail with your firmware pre-flashed. That's **75-80% margin** on
+hardware alone, before any subscription revenue. The device is a travel
+security appliance, not a home router — 100Mbps is fine because hotel/airport
+WiFi is the bottleneck, not the device.
+
+### The $14-20 Refurb Wyse 5070: The x86 Pallet Play
+
+Dell Wyse 5070 Extended: Intel J4105 (quad-core Celeron, x86_64), 4GB DDR4,
+16GB eMMC, Gigabit Ethernet, 2x USB 3.0, DisplayPort, ThinOS/no OS.
+
+**Available in lots of 50-129 units on eBay for $14-20 per unit.**
+
+240 million Windows 10 PCs are being retired in 2025-2026. The ITAD
+(IT Asset Disposition) market is flooded. Prices will keep dropping.
+
+**For Kepha:**
+- Native x86_64 — no cross-compilation, no ARM quirks
+- 4GB RAM — comfortable
+- Gigabit Ethernet — real throughput
+- Enterprise-grade — fanless, designed for 24/7 operation
+- Needs a USB Ethernet adapter ($8-12) for second NIC, or a $20 quad-NIC PCIe
+  card (the Extended model has a PCIe slot)
+
+**The play:** Buy a pallet of 50 Wyse 5070s for ~$1,000. Add $12 USB GbE
+adapters ($600). Flash Kepha. Total cost: ~$32/unit all-in. Sell at $79-99.
+**60-70% margin.** Or just publish the image and tell people "buy a $20 Wyse
+5070 on eBay."
+
+**Source bulk:** Contact ITAD wholesalers — Tradeloop, Shore Data, B-Stock,
+DirectLiquidation. These companies liquidate enterprise hardware by the pallet.
+
+### The $35-50 OEM MT7986 Router: The Proper Network Appliance
+
+MediaTek MT7986 (Filogic 830): quad-core A53 @ 2GHz, WiFi 6 AX, 2.5GbE,
+full upstream OpenWrt support. This is what's inside the GL.iNet Flint 2
+($130 retail) and the Banana Pi BPI-R3 ($89 retail).
+
+**At $35-50/unit from Alibaba OEM at 1,000+ MOQ**, you get:
+- Complete router with case, antennas, power supply
+- WiFi 6 dual-band (real AP, not a TV box hack)
+- 2x 2.5GbE or 5x GbE (proper routing ports)
+- 1-2GB RAM, NAND or eMMC storage
+- Full OpenWrt support (kernel 6.12.x, upstream DTS)
+- Your branding, your firmware, your packaging
+
+**The play:** White-label a MT7986 router from Alibaba. Flash Kepha + OpenWrt.
+Sell as "Kepha Gateway" at $99-129. That's **50-65% margin** on a proper
+quad-core WiFi 6 router with 2.5GbE. Undercuts GL.iNet Flint 2 ($130) with
+better software.
+
+**Key Alibaba suppliers:**
+- Shenzhen Zhibotong Electronics
+- Huasifei Technology
+- Hosecom
+- Banana Pi / Sinovoip (also does OEM/ODM)
+
+MOQ for custom packaging/branding: typically 500-1,000 units.
+Sample units: 1-5 from most suppliers.
+
+### The BPI-R3 Mini at $65-79: Developer Gateway
+
+Same MT7986 SoC as the $35-50 OEM routers but sold as an open dev board:
+- 2GB DDR4, 8GB eMMC, 2x 2.5GbE, WiFi 6, M.2 slot
+- Full schematics published, reference OpenWrt image
+- Retail available now (Amazon, Banana Pi store)
+- No MOQ — buy 1 or buy 100
+
+This is the "build the firmware, test everything, then go to Alibaba OEM
+for volume" board.
+
+### Price-to-Margin Matrix
+
+| Hardware | Your Cost | Sell At | Margin | Use Case |
+|----------|----------|--------|--------|----------|
+| X96Q TV box (1000+) | $9 | $39-49 | 75-80% | Travel security, impulse buy |
+| Wyse 5070 refurb (50+) | $32 all-in | $79-99 | 60-70% | Budget home gateway |
+| MT7986 OEM router (1000+) | $40-50 | $99-129 | 50-65% | Proper WiFi 6 gateway |
+| N100 4-port (100+) | $155 all-in | $249-299 | 40-50% | Power user / small biz |
+
+### What This Means for Strategy
+
+**Tier 0 stays the same:** Free firmware image, no hardware spend.
+
+**Tier 1 changes:** Don't just publish a compatibility list. Pick ONE cheap
+device and make it THE recommended Kepha hardware:
+
+- **Option A: The $39 travel device.** X96Q + Kepha firmware. Competes with
+  nothing — there is no $39 travel security appliance. GL.iNet Opal ($35) is
+  a dumb VPN router, not a firewall. This creates a new category.
+
+- **Option B: The $99 home gateway.** MT7986 OEM + Kepha firmware. WiFi 6,
+  2.5GbE, proper router. Undercuts Firewalla Purple SE ($199) by half with
+  better specs. Competes with GL.iNet Flint 2 ($130) on price AND software.
+
+- **Option C: The $79 x86 gateway.** Refurb Wyse 5070 + USB NIC + Kepha.
+  x86 native, 4GB RAM, runs full Suricata. Cheapest IDS/IPS appliance on
+  the market. Competes with nothing at this price.
+
+You don't have to pick one. But you should START with one.
+
+---
+
+## 19. Revised Open Questions
+
+1. **Which $9 TV box exactly?** The X96Q is the reference, but there are
+   dozens of Allwinner H313/H618 variants. Need to identify the specific
+   model with the best Armbian support, ideally one with Gigabit Ethernet
+   (H618 variants). Order 5 samples from different Alibaba suppliers and test.
+
+2. **100Mbps vs Gigabit:** Is 100Mbps Ethernet acceptable for a travel
+   security device? Hotel WiFi rarely exceeds 50Mbps. Airport WiFi is
+   10-30Mbps. If the use case is "secure my hotel connection," 100Mbps is
+   fine. If the use case is "home gateway," it's not. This determines
+   whether the $9 H313 box works or you need the $15-17 H618 with Gigabit.
+
+3. **Armbian vs OpenWrt for TV box firmware:** Armbian gives you a real
+   Debian/Ubuntu userspace — easy to package Kepha. OpenWrt gives you better
+   network stack but no upstream support for Allwinner TV boxes. For the
+   $9 TV box play, Armbian is the only option. For the $40 MT7986 play,
+   OpenWrt is the right choice. Two firmware images, same Kepha binary.
+
+4. **FCC/CE certification:** Selling a device with WiFi requires
+   certification. The OEM TV box already has FCC ID from the original
+   manufacturer. Changing firmware doesn't void that IF you don't modify
+   the radio parameters. Need legal review. The Wyse 5070 path avoids
+   this entirely (wired only, already certified).
+
+5. **Single NIC routing:** The X96Q and Wyse 5070 both have single Ethernet.
+   Options: (a) USB Ethernet adapter for WAN/LAN split, (b) VLAN trunking
+   on single port, (c) WiFi as WAN + Ethernet as LAN (travel mode).
+   Option (c) is the natural travel router model — no adapter needed.
+
+6. **The "buy a pallet" question:** 50 Wyse 5070s for ~$1,000 is real money
+   but not scary money. 1,000 X96Q boxes for ~$9,000 is more commitment.
+   Start with 50-100 units of whichever wins the sample test, sell on
+   Amazon/eBay to validate demand before scaling to 1,000+.
+
+7. **Crowdfunding:** Still valid. A $39 "travel security device" on
+   Kickstarter has impulse-buy energy. Much easier to fund than a $449 box.
