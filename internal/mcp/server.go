@@ -245,6 +245,10 @@ func New(cfg MCPConfig) *Server {
 		cfg.DangerousRateLimit = 5
 	}
 
+	if cfg.Permissions == nil {
+		slog.Warn("mcp: no principal permissions configured — all tools are accessible to any principal")
+	}
+
 	s := &Server{
 		cfg:     cfg,
 		tools:   make(map[string]*Tool),
