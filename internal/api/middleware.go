@@ -1,8 +1,10 @@
 package api
 
 import (
+	"crypto/subtle"
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 )
@@ -20,10 +22,17 @@ func AuthMiddleware(apiKey string, next http.Handler) http.Handler {
 
 		key := r.Header.Get("X-API-Key")
 		if key == "" {
+			// Try Bearer token.
+			if auth := r.Header.Get("Authorization"); strings.HasPrefix(auth, "Bearer ") {
+				key = strings.TrimSpace(auth[7:])
+			}
+		}
+		if key == "" {
 			// Try Basic auth.
 			_, key, _ = r.BasicAuth()
 		}
-		if key != apiKey {
+		// Constant-time comparison to prevent timing attacks.
+		if subtle.ConstantTimeCompare([]byte(key), []byte(apiKey)) != 1 {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 			return
 		}

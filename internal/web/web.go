@@ -4,6 +4,7 @@ import (
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"embed"
 	"encoding/hex"
 	"encoding/json"
@@ -472,7 +473,8 @@ func handleLoginSubmit(apiKey string, sessions *sessionStore, limiter *loginRate
 		}
 
 		key := r.FormValue("api_key")
-		if key != apiKey {
+		// Constant-time comparison to prevent timing attacks on the API key.
+		if subtle.ConstantTimeCompare([]byte(key), []byte(apiKey)) != 1 {
 			slog.Warn("failed login attempt", "ip", clientIP)
 			http.Redirect(w, r, "/login?error=invalid", http.StatusSeeOther)
 			return
