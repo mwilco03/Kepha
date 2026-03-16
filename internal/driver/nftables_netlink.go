@@ -21,15 +21,9 @@ func applyNetlink(input *compiler.Input) error {
 		return fmt.Errorf("nftables netlink connection: %w", err)
 	}
 
-	// Delete existing gatekeeper table (best-effort).
+	// Delete existing gatekeeper table and recreate atomically in a single batch.
+	// Using delete+add in one Flush() ensures atomic replacement.
 	conn.DelTable(&nft.Table{Family: nft.TableFamilyINet, Name: "gatekeeper"})
-	_ = conn.Flush() // Ignore error if table doesn't exist.
-
-	// Create fresh connection for atomic batch.
-	conn, err = nft.New()
-	if err != nil {
-		return fmt.Errorf("nftables netlink connection: %w", err)
-	}
 
 	table := conn.AddTable(&nft.Table{Family: nft.TableFamilyINet, Name: "gatekeeper"})
 
@@ -337,7 +331,12 @@ func buildSet(table *nft.Table, name string, aliasType model.AliasType, members 
 		Name:  name,
 	}
 
-	var elems []nft.SetElement
+	// Pre-allocate: networks need 2 elements each (interval start+end), others need 1.
+	capacity := len(members)
+	if aliasType == model.AliasTypeNetwork {
+		capacity *= 2
+	}
+	elems := make([]nft.SetElement, 0, capacity)
 
 	switch aliasType {
 	case model.AliasTypeHost:
@@ -426,13 +425,22 @@ func cidrEnd(ipnet *net.IPNet) []byte {
 // --- Alias member resolution (mirrors compiler logic) ---
 
 func resolveMembers(a *model.Alias, aliasMap map[string]*model.Alias, depth int) []string {
+	seen := make(map[string]struct{})
+	return resolveMembersDedup(a, aliasMap, depth, seen)
+}
+
+func resolveMembersDedup(a *model.Alias, aliasMap map[string]*model.Alias, depth int, seen map[string]struct{}) []string {
 	if depth > 10 {
 		return nil
 	}
 	if a.Type != model.AliasTypeNested {
-		var safe []string
+		safe := make([]string, 0, len(a.Members))
 		for _, m := range a.Members {
+			if _, dup := seen[m]; dup {
+				continue
+			}
 			if validate.AliasMember(m, string(a.Type)) == nil {
+				seen[m] = struct{}{}
 				safe = append(safe, m)
 			}
 		}
@@ -444,13 +452,23 @@ func resolveMembers(a *model.Alias, aliasMap map[string]*model.Alias, depth int)
 		if !ok {
 			continue
 		}
-		resolved = append(resolved, resolveMembers(nested, aliasMap, depth+1)...)
+		resolved = append(resolved, resolveMembersDedup(nested, aliasMap, depth+1, seen)...)
 	}
 	return resolved
 }
 
 func nlSanitizeName(name string) string {
-	return strings.ReplaceAll(strings.ReplaceAll(name, "-", "_"), ".", "_")
+	var b strings.Builder
+	b.Grow(len(name))
+	for _, c := range name {
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9', c == '_':
+			b.WriteRune(c)
+		default:
+			b.WriteByte('_')
+		}
+	}
+	return b.String()
 }
 
 // --- Netlink expression helpers ---
@@ -579,7 +597,11 @@ func nlVerdictDrop() []expr.Any {
 }
 
 func nlRule(groups ...[]expr.Any) []expr.Any {
-	var result []expr.Any
+	n := 0
+	for _, g := range groups {
+		n += len(g)
+	}
+	result := make([]expr.Any, 0, n)
 	for _, g := range groups {
 		result = append(result, g...)
 	}

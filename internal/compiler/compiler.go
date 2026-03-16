@@ -86,10 +86,19 @@ func Compile(input *Input) (*CompiledRuleset, error) {
 		b.WriteString("\t}\n\n")
 	}
 
+	// Find WAN interface once for all chain builders.
+	var wanIface string
+	for _, z := range input.Zones {
+		if z.Name == "wan" {
+			wanIface = z.Interface
+			break
+		}
+	}
+
 	// Emit the base chains.
 	writeInputChain(&b, input)
-	writeForwardChain(&b, input, policyMap, aliasMap, zoneProfiles, profileDevices)
-	writeNATChain(&b, input)
+	writeForwardChain(&b, input, policyMap, aliasMap, zoneProfiles, profileDevices, wanIface)
+	writeNATChain(&b, wanIface)
 
 	b.WriteString("}\n")
 
@@ -135,22 +144,13 @@ func writeInputChain(b *strings.Builder, input *Input) {
 
 func writeForwardChain(b *strings.Builder, input *Input, policyMap map[string]*model.Policy,
 	aliasMap map[string]*model.Alias, zoneProfiles map[int64][]model.Profile,
-	profileDevices map[int64][]model.DeviceAssignment) {
+	profileDevices map[int64][]model.DeviceAssignment, wanIface string) {
 
 	b.WriteString("\tchain forward {\n")
 	b.WriteString("\t\ttype filter hook forward priority filter; policy drop;\n\n")
 	b.WriteString("\t\t# Allow established/related.\n")
 	b.WriteString("\t\tct state established,related accept\n")
 	b.WriteString("\t\tct state invalid drop\n\n")
-
-	// Find WAN zone for outbound rules.
-	var wanIface string
-	for _, z := range input.Zones {
-		if z.Name == "wan" {
-			wanIface = z.Interface
-			break
-		}
-	}
 
 	// Per-zone forwarding rules based on profiles and policies.
 	for _, zone := range input.Zones {
@@ -197,15 +197,7 @@ func writeForwardChain(b *strings.Builder, input *Input, policyMap map[string]*m
 	b.WriteString("\t}\n\n")
 }
 
-func writeNATChain(b *strings.Builder, input *Input) {
-	var wanIface string
-	for _, z := range input.Zones {
-		if z.Name == "wan" {
-			wanIface = z.Interface
-			break
-		}
-	}
-
+func writeNATChain(b *strings.Builder, wanIface string) {
 	if wanIface == "" {
 		return
 	}
@@ -278,14 +270,23 @@ func compileRule(r model.Rule, srcIface, wanIface string, aliasMap map[string]*m
 const maxAliasExpansion = 10000
 
 func resolveAliasMembers(a *model.Alias, aliasMap map[string]*model.Alias, depth int) []string {
+	seen := make(map[string]struct{})
+	return resolveAliasMembersDedup(a, aliasMap, depth, seen)
+}
+
+func resolveAliasMembersDedup(a *model.Alias, aliasMap map[string]*model.Alias, depth int, seen map[string]struct{}) []string {
 	if depth > 10 {
 		return nil // Prevent infinite recursion.
 	}
 
 	if a.Type != model.AliasTypeNested {
-		var safe []string
+		safe := make([]string, 0, len(a.Members))
 		for _, m := range a.Members {
+			if _, dup := seen[m]; dup {
+				continue
+			}
 			if validate.AliasMember(m, string(a.Type)) == nil {
+				seen[m] = struct{}{}
 				safe = append(safe, m)
 			}
 		}
@@ -298,7 +299,7 @@ func resolveAliasMembers(a *model.Alias, aliasMap map[string]*model.Alias, depth
 		if !ok {
 			continue
 		}
-		resolved = append(resolved, resolveAliasMembers(nested, aliasMap, depth+1)...)
+		resolved = append(resolved, resolveAliasMembersDedup(nested, aliasMap, depth+1, seen)...)
 		if len(resolved) > maxAliasExpansion {
 			resolved = resolved[:maxAliasExpansion]
 			return resolved

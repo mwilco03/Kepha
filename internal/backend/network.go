@@ -323,9 +323,13 @@ func (m *LinuxNetworkManager) ConntrackList(proto string) ([]ConntrackEntry, err
 	for scanner.Scan() {
 		line := scanner.Text()
 
-		// Filter by protocol if specified.
-		if proto != "" && !strings.Contains(line, proto) {
-			continue
+		// Filter by protocol using the parsed field (index 2) instead of
+		// substring search, which could false-match on addresses/other fields.
+		if proto != "" {
+			fields := strings.Fields(line)
+			if len(fields) < 3 || fields[2] != proto {
+				continue
+			}
 		}
 
 		entry := parseConntrackLine(line)
