@@ -300,6 +300,18 @@ func (e *Enforcer) CreateKey(name, role string, zoneScope, profileScope []string
 		return "", "", ErrInvalidRole
 	}
 
+	// Reject scope values containing the delimiter to prevent parsing ambiguity.
+	for _, s := range zoneScope {
+		if strings.Contains(s, ",") {
+			return "", "", fmt.Errorf("rbac: zone scope %q contains invalid comma", s)
+		}
+	}
+	for _, s := range profileScope {
+		if strings.Contains(s, ",") {
+			return "", "", fmt.Errorf("rbac: profile scope %q contains invalid comma", s)
+		}
+	}
+
 	id, err = generateID()
 	if err != nil {
 		return "", "", err
@@ -683,14 +695,10 @@ func RBACMiddleware(enforcer *Enforcer) func(http.Handler) http.Handler {
 
 			ak, err := enforcer.ValidateKey(rawKey)
 			if err != nil {
-				status := http.StatusUnauthorized
-				msg := "invalid api key"
-				if errors.Is(err, ErrKeyInactive) {
-					msg = "api key has been revoked"
-				} else if errors.Is(err, ErrKeyExpired) {
-					msg = "api key has expired"
-				}
-				writeJSONError(w, status, msg)
+				// Log the specific reason server-side for debugging,
+				// but return a generic message to prevent key enumeration.
+				slog.Debug("rbac: authentication failed", "error", err, "remote", r.RemoteAddr)
+				writeJSONError(w, http.StatusUnauthorized, "invalid api key")
 				return
 			}
 
