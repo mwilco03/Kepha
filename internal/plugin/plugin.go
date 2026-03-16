@@ -388,11 +388,35 @@ func (m *Manager) diagHandler(pluginName, epName, scriptPath string) http.Handle
 			"endpoint", epName,
 			"script", scriptPath)
 
+		// Re-validate symlinks at execution time to prevent TOCTOU attacks.
+		// The path was validated at manifest load, but could have been changed since.
+		resolved, err := filepath.EvalSymlinks(scriptPath)
+		if err != nil {
+			m.logger.Warn("diagnostic script path resolution failed",
+				"plugin", pluginName, "endpoint", epName, "error", err)
+			http.Error(w, "script not found", http.StatusInternalServerError)
+			return
+		}
+		pluginDir := filepath.Dir(filepath.Dir(resolved)) // approximate; use stored dir
+		// Get the actual plugin directory from the registry.
+		m.mu.Lock()
+		if p, ok := m.plugins[pluginName]; ok {
+			pluginDir = p.dir
+		}
+		m.mu.Unlock()
+		if !strings.HasPrefix(resolved, pluginDir) {
+			m.logger.Error("diagnostic script escapes plugin directory at execution time",
+				"plugin", pluginName, "endpoint", epName,
+				"resolved", resolved, "pluginDir", pluginDir)
+			http.Error(w, "script path violation", http.StatusForbidden)
+			return
+		}
+
 		ctx, cancel := context.WithTimeout(r.Context(), scriptTimeout)
 		defer cancel()
 
-		cmd := exec.CommandContext(ctx, scriptPath)
-		cmd.Dir = filepath.Dir(scriptPath)
+		cmd := exec.CommandContext(ctx, resolved)
+		cmd.Dir = filepath.Dir(resolved)
 
 		// Minimal environment to reduce information leakage.
 		cmd.Env = []string{
@@ -405,7 +429,7 @@ func (m *Manager) diagHandler(pluginName, epName, scriptPath string) http.Handle
 		cmd.Stdout = &stdout
 		cmd.Stderr = &stderr
 
-		err := cmd.Run()
+		err = cmd.Run()
 		if ctx.Err() == context.DeadlineExceeded {
 			m.logger.Warn("diagnostic script timed out",
 				"plugin", pluginName,
@@ -442,7 +466,29 @@ func (m *Manager) uiHandler(pluginName, pageName, tmplPath string) http.Handler 
 			"page", pageName,
 			"template", tmplPath)
 
-		data, err := os.ReadFile(tmplPath)
+		// Re-validate symlinks at execution time to prevent TOCTOU attacks.
+		resolved, err := filepath.EvalSymlinks(tmplPath)
+		if err != nil {
+			m.logger.Warn("failed to resolve UI template path",
+				"plugin", pluginName, "page", pageName, "error", err)
+			http.Error(w, "template not found", http.StatusInternalServerError)
+			return
+		}
+		m.mu.Lock()
+		pDir := ""
+		if p, ok := m.plugins[pluginName]; ok {
+			pDir = p.dir
+		}
+		m.mu.Unlock()
+		if pDir != "" && !strings.HasPrefix(resolved, pDir) {
+			m.logger.Error("UI template escapes plugin directory at request time",
+				"plugin", pluginName, "page", pageName,
+				"resolved", resolved, "pluginDir", pDir)
+			http.Error(w, "template path violation", http.StatusForbidden)
+			return
+		}
+
+		data, err := os.ReadFile(resolved)
 		if err != nil {
 			m.logger.Warn("failed to read UI template",
 				"plugin", pluginName,
@@ -452,6 +498,10 @@ func (m *Manager) uiHandler(pluginName, pageName, tmplPath string) http.Handler 
 			return
 		}
 
+		// Security headers — plugin HTML is untrusted.
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'none'")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write(data)

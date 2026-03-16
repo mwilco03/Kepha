@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -58,8 +59,8 @@ type IOC struct {
 	CreatedAt time.Time   `json:"created_at"`
 	ExpiresAt time.Time   `json:"expires_at"` // Zero = permanent
 	Active    bool        `json:"active"`
-	HitCount  int64       `json:"hit_count"`  // Times this IOC was matched on the fast path
-	LastHit   time.Time   `json:"last_hit"`   // Last time this IOC was matched
+	HitCount  int64       `json:"hit_count"`  // Times this IOC was matched on the fast path (atomic)
+	LastHit   time.Time   `json:"last_hit"`   // Last time this IOC was matched (best-effort under RLock)
 }
 
 // ResponseTemplate maps IOC type+severity to a countermeasure response.
@@ -427,15 +428,15 @@ func (s *IOCStore) MatchIP(ip string) *IOC {
 
 	// 1. Exact IP match — O(1).
 	if ioc := s.byIP[ip]; ioc != nil && s.isActive(ioc) {
-		ioc.HitCount++
-		ioc.LastHit = now
+		atomic.AddInt64(&ioc.HitCount, 1)
+		ioc.LastHit = now // Best-effort under RLock; acceptable approximation.
 		return ioc
 	}
 
 	// 2. CIDR scan.
 	for _, ioc := range s.cidrs {
 		if s.isActive(ioc) && matchCIDRNet(ip, ioc.Value) {
-			ioc.HitCount++
+			atomic.AddInt64(&ioc.HitCount, 1)
 			ioc.LastHit = now
 			return ioc
 		}
@@ -448,7 +449,7 @@ func (s *IOCStore) MatchIP(ip string) *IOC {
 			if asn := s.asnResolver.Resolve(parsed); asn != nil {
 				asnKey := asn.String() // "AS14618"
 				if ioc := s.byASN[asnKey]; ioc != nil && s.isActive(ioc) {
-					ioc.HitCount++
+					atomic.AddInt64(&ioc.HitCount, 1)
 					ioc.LastHit = now
 					return ioc
 				}
@@ -466,7 +467,7 @@ func (s *IOCStore) MatchFingerprint(hash string) *IOC {
 	defer s.mu.RUnlock()
 
 	if ioc := s.byFingerprint[hash]; ioc != nil && s.isActive(ioc) {
-		ioc.HitCount++
+		atomic.AddInt64(&ioc.HitCount, 1)
 		ioc.LastHit = time.Now()
 		return ioc
 	}
@@ -480,7 +481,7 @@ func (s *IOCStore) MatchDomain(domain string) *IOC {
 	defer s.mu.RUnlock()
 
 	if ioc := s.byDomain[domain]; ioc != nil && s.isActive(ioc) {
-		ioc.HitCount++
+		atomic.AddInt64(&ioc.HitCount, 1)
 		ioc.LastHit = time.Now()
 		return ioc
 	}

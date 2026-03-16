@@ -398,6 +398,10 @@ func (h *HAManager) Start(cfg map[string]string) error {
 		slog.Info("ha: starting in standalone mode")
 
 	case "active-passive", "active-active":
+		// SECURITY: warn that stub elector is in use — both nodes will claim master.
+		// A real elector (etcd) should be configured for production HA.
+		slog.Warn("ha: using stub leader elector in cluster mode — both nodes will become master; configure etcd for production",
+			"mode", h.haCfg.Mode)
 		// Generate and apply keepalived config.
 		if err := h.generateKeepalivedConfig(); err != nil {
 			return fmt.Errorf("generate keepalived config: %w", err)
@@ -648,7 +652,8 @@ func (h *HAManager) generateKeepalivedConfig() error {
 	b.WriteString("}\n")
 
 	confPath := filepath.Join(h.haCfg.KeepalivedConfDir, "keepalived.conf")
-	if err := os.WriteFile(confPath, []byte(b.String()), 0o644); err != nil {
+	// Restrict to owner-only: config contains VRRP auth password.
+	if err := os.WriteFile(confPath, []byte(b.String()), 0o600); err != nil {
 		return fmt.Errorf("write keepalived.conf: %w", err)
 	}
 

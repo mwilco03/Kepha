@@ -266,6 +266,10 @@ func compileRule(r model.Rule, srcIface, wanIface string, aliasMap map[string]*m
 	return strings.Join(parts, " ")
 }
 
+// maxAliasExpansion caps the total number of resolved members to prevent
+// exponential blowup from deeply nested aliases with many members.
+const maxAliasExpansion = 10000
+
 func resolveAliasMembers(a *model.Alias, aliasMap map[string]*model.Alias, depth int) []string {
 	if depth > 10 {
 		return nil // Prevent infinite recursion.
@@ -288,6 +292,10 @@ func resolveAliasMembers(a *model.Alias, aliasMap map[string]*model.Alias, depth
 			continue
 		}
 		resolved = append(resolved, resolveAliasMembers(nested, aliasMap, depth+1)...)
+		if len(resolved) > maxAliasExpansion {
+			resolved = resolved[:maxAliasExpansion]
+			return resolved
+		}
 	}
 	return resolved
 }
@@ -321,8 +329,20 @@ func modelActionToNFT(action model.RuleAction) string {
 	}
 }
 
+// sanitizeName produces a valid nftables identifier from a user-supplied name.
+// Only alphanumeric characters and underscores are kept.
 func sanitizeName(name string) string {
-	return strings.ReplaceAll(strings.ReplaceAll(name, "-", "_"), ".", "_")
+	var b strings.Builder
+	b.Grow(len(name))
+	for _, c := range name {
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9', c == '_':
+			b.WriteRune(c)
+		default:
+			b.WriteByte('_')
+		}
+	}
+	return b.String()
 }
 
 func validateInput(input *Input) error {

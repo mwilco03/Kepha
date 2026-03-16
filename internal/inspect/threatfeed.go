@@ -3,6 +3,7 @@ package inspect
 import (
 	"bufio"
 	"crypto/sha256"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -147,6 +148,9 @@ func NewFeedScheduler(engine *Engine, cacheDir string) *FeedScheduler {
 		cacheDir: cacheDir,
 		client: &http.Client{
 			Timeout: 30 * time.Second,
+			Transport: &http.Transport{
+				TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12},
+			},
 		},
 		stopCh: make(chan struct{}),
 	}

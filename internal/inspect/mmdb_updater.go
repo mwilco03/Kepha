@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"crypto/sha256"
+	"crypto/tls"
 	"fmt"
 	"io"
 	"log/slog"
@@ -130,6 +131,9 @@ func NewMMDBUpdater(cfg MMDBConfig, store *IOCStore) *MMDBUpdater {
 		source:     source,
 		client: &http.Client{
 			Timeout: 120 * time.Second,
+			Transport: &http.Transport{
+				TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12},
+			},
 		},
 		stopCh: make(chan struct{}),
 	}
@@ -371,14 +375,16 @@ func (u *MMDBUpdater) downloadMaxMind() error {
 	}
 
 	edition := "GeoLite2-ASN"
+	// Use query params for edition/suffix only; license key goes in the
+	// Authorization header to avoid logging/caching credential exposure.
 	url := fmt.Sprintf(
-		"https://download.maxmind.com/app/geoip_download?edition_id=%s&license_key=%s&suffix=tar.gz",
-		edition, key,
+		"https://download.maxmind.com/app/geoip_download?edition_id=%s&suffix=tar.gz",
+		edition,
 	)
 
 	slog.Info("downloading MaxMind GeoLite2-ASN")
 
-	body, err := u.fetchURL(url)
+	body, err := u.fetchURLWithAuth(url, key)
 	if err != nil {
 		return err
 	}
@@ -408,9 +414,29 @@ func (u *MMDBUpdater) downloadMaxMind() error {
 	return u.installMMDB(mmdbData, hash)
 }
 
+// fetchURLWithAuth downloads a URL with a Basic auth header for the license key.
+func (u *MMDBUpdater) fetchURLWithAuth(url, licenseKey string) ([]byte, error) {
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		u.setError(fmt.Sprintf("create request failed: %v", err))
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	req.SetBasicAuth("", licenseKey)
+	return u.doFetch(req)
+}
+
 // fetchURL downloads a URL with error handling common to both sources.
 func (u *MMDBUpdater) fetchURL(url string) ([]byte, error) {
-	resp, err := u.client.Get(url)
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		u.setError(fmt.Sprintf("create request failed: %v", err))
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	return u.doFetch(req)
+}
+
+func (u *MMDBUpdater) doFetch(req *http.Request) ([]byte, error) {
+	resp, err := u.client.Do(req)
 	if err != nil {
 		u.setError(fmt.Sprintf("download failed: %v", err))
 		return nil, fmt.Errorf("download: %w", err)
