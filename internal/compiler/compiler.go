@@ -2,11 +2,16 @@ package compiler
 
 import (
 	"fmt"
+	"log/slog"
+	"regexp"
 	"strings"
 
 	"github.com/gatekeeper-firewall/gatekeeper/internal/model"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/validate"
 )
+
+// validIfaceName matches valid Linux interface names (alphanumeric, dash, underscore, dot; max 15 chars).
+var validIfaceName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,14}$`)
 
 // CompiledRuleset is the output of the compiler — a complete nftables ruleset.
 type CompiledRuleset struct {
@@ -157,6 +162,8 @@ func writeForwardChain(b *strings.Builder, input *Input, policyMap map[string]*m
 		for _, profile := range profiles {
 			policy := policyMap[profile.PolicyName]
 			if policy == nil {
+				slog.Warn("profile references missing policy — skipping",
+					"profile", profile.Name, "zone", zone.Name, "policy", profile.PolicyName)
 				continue
 			}
 
@@ -350,12 +357,14 @@ func validateInput(input *Input) error {
 		return fmt.Errorf("no zones defined")
 	}
 
-	// Check for WAN zone.
+	// Check for WAN zone and validate interface names.
 	hasWAN := false
 	for _, z := range input.Zones {
 		if z.Name == "wan" {
 			hasWAN = true
-			break
+		}
+		if z.Interface != "" && !validIfaceName.MatchString(z.Interface) {
+			return fmt.Errorf("zone %q has invalid interface name: %q", z.Name, z.Interface)
 		}
 	}
 	if !hasWAN {

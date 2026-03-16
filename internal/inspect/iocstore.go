@@ -346,9 +346,18 @@ func (s *IOCStore) existsLocked(iocType IOCType, value string) bool {
 	}
 }
 
+// maxBulkIOCs caps the number of IOCs that can be added in a single bulk operation
+// to prevent memory exhaustion.
+const maxBulkIOCs = 100000
+
 // BulkAddIOCs adds multiple IOCs in a single transaction.
 // Used by threat feed ingestion and external tool imports.
+// Capped at maxBulkIOCs entries per call.
 func (s *IOCStore) BulkAddIOCs(iocs []IOC) (added int, err error) {
+	if len(iocs) > maxBulkIOCs {
+		return 0, fmt.Errorf("bulk add limit exceeded: %d entries (max %d)", len(iocs), maxBulkIOCs)
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 

@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -284,11 +285,19 @@ type leaseEntry struct {
 }
 
 // parseLeaseFile reads dnsmasq leases from the given file path.
+// Only reads from /var/lib/ or /tmp/ to prevent path traversal.
 func parseLeaseFile(path string) []leaseEntry {
 	if path == "" {
 		path = "/var/lib/misc/dnsmasq.leases"
 	}
-	data, err := os.ReadFile(path)
+	// Restrict to safe directories to prevent information disclosure
+	// if an admin misconfigures the lease file path.
+	cleaned := filepath.Clean(path)
+	if !strings.HasPrefix(cleaned, "/var/lib/") && !strings.HasPrefix(cleaned, "/tmp/") {
+		slog.Warn("lease file path outside allowed directories, ignoring", "path", path)
+		return nil
+	}
+	data, err := os.ReadFile(cleaned)
 	if err != nil {
 		return nil
 	}

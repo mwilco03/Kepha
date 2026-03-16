@@ -258,11 +258,38 @@ func New(cfg MCPConfig) *Server {
 // ─── HTTP Handlers ───────────────────────────────────────────────────────────
 
 // Handler returns an HTTP handler for the MCP SSE endpoint.
+// Includes Origin header validation to prevent CSRF attacks.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /mcp/sse", s.handleSSE)
 	mux.HandleFunc("POST /mcp/message", s.handleMessage)
-	return mux
+	return originCheckMiddleware(mux)
+}
+
+// originCheckMiddleware validates the Origin header on incoming requests
+// to prevent cross-site request forgery via EventSource or fetch from
+// attacker-controlled pages. Requests without an Origin (e.g., curl,
+// server-to-server) are allowed; requests with a non-localhost Origin
+// are rejected.
+func originCheckMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		origin := r.Header.Get("Origin")
+		if origin != "" {
+			// Allow only localhost origins.
+			if !strings.HasPrefix(origin, "http://localhost") &&
+				!strings.HasPrefix(origin, "https://localhost") &&
+				!strings.HasPrefix(origin, "http://127.0.0.1") &&
+				!strings.HasPrefix(origin, "https://127.0.0.1") &&
+				!strings.HasPrefix(origin, "http://[::1]") &&
+				!strings.HasPrefix(origin, "https://[::1]") {
+				slog.Warn("mcp: rejected request with non-local Origin",
+					"origin", origin, "method", r.Method, "path", r.URL.Path)
+				http.Error(w, "Forbidden: cross-origin requests not allowed", http.StatusForbidden)
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // handleSSE establishes a Server-Sent Events connection.
