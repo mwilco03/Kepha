@@ -714,15 +714,16 @@ func (s *Server) auditToolCall(principal, toolName string, args json.RawMessage,
 	}
 }
 
-// promptContextHash produces a truncated SHA-256 hash of the tool arguments,
-// used as a compact fingerprint in audit logs to correlate tool calls with
-// the prompts that triggered them.
+// promptContextHash produces a full SHA-256 hash of the tool arguments,
+// used as a fingerprint in audit logs to correlate tool calls with
+// the prompts that triggered them. Uses the full 32-byte hash to
+// eliminate collision risk in audit trails.
 func promptContextHash(args json.RawMessage) string {
 	if len(args) == 0 {
 		return ""
 	}
 	h := sha256.Sum256(args)
-	return fmt.Sprintf("%x", h[:16])
+	return fmt.Sprintf("%x", h)
 }
 
 // ─── SSE Helpers ─────────────────────────────────────────────────────────────

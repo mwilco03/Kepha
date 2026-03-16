@@ -302,14 +302,14 @@ func (s *FeedScheduler) refreshAll() {
 
 // fetchFeed downloads and parses a single threat feed.
 func (s *FeedScheduler) fetchFeed(mf *ManagedFeed) {
-	slog.Info("fetching threat feed", "name", mf.Feed.Name, "url", mf.Feed.URL)
+	slog.Info("fetching threat feed", "name", mf.Feed.Name)
 
 	resp, err := s.client.Get(mf.Feed.URL)
 	if err != nil {
-		mf.LastError = fmt.Sprintf("download failed: %v", err)
+		mf.LastError = "download failed"
 		mf.RetryCount++
 		slog.Warn("threat feed download failed — keeping last-known-good",
-			"name", mf.Feed.Name, "error", err, "retries", mf.RetryCount)
+			"name", mf.Feed.Name, "retries", mf.RetryCount)
 		return
 	}
 	defer resp.Body.Close()

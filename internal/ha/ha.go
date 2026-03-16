@@ -568,6 +568,17 @@ func (h *HAManager) parseConfig(cfg map[string]string) error {
 // ---------------------------------------------------------------------------
 
 // generateKeepalivedConfig writes a keepalived.conf for VRRP failover.
+// keepalivedSafe returns true if s contains only safe characters for keepalived config values.
+// Prevents config injection via newlines, braces, or special characters.
+func keepalivedSafe(s string) bool {
+	for _, c := range s {
+		if c == '\n' || c == '\r' || c == '{' || c == '}' || c == ';' || c == '#' || c == '"' || c == '\'' {
+			return false
+		}
+	}
+	return true
+}
+
 func (h *HAManager) generateKeepalivedConfig() error {
 	if err := os.MkdirAll(h.haCfg.KeepalivedConfDir, 0o755); err != nil {
 		return fmt.Errorf("create keepalived conf dir: %w", err)
@@ -576,6 +587,19 @@ func (h *HAManager) generateKeepalivedConfig() error {
 	vip := h.haCfg.VirtualIP
 	iface := h.haCfg.VRRPInterface
 	priority := h.haCfg.VRRPPriority
+
+	// Validate config values to prevent keepalived config injection.
+	if !keepalivedSafe(h.haCfg.NodeID) || !keepalivedSafe(iface) || !keepalivedSafe(vip) {
+		return fmt.Errorf("keepalived config contains unsafe characters in node_id, interface, or vip")
+	}
+	if h.haCfg.VRRPAuthPass != "" && !keepalivedSafe(h.haCfg.VRRPAuthPass) {
+		return fmt.Errorf("keepalived auth_pass contains unsafe characters")
+	}
+	for _, peer := range h.haCfg.PeerNodes {
+		if !keepalivedSafe(peer) {
+			return fmt.Errorf("keepalived peer node address contains unsafe characters: %q", peer)
+		}
+	}
 
 	// Determine VRRP state: higher priority starts as MASTER.
 	vrrpState := "BACKUP"

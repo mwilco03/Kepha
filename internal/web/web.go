@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"html/template"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -307,18 +308,33 @@ func parseLeaseFile(path string) []leaseEntry {
 			continue
 		}
 		fields := strings.Fields(line)
-		if len(fields) >= 4 {
-			expiry := fields[0]
-			if ts, err := strconv.ParseInt(expiry, 10, 64); err == nil {
-				expiry = time.Unix(ts, 0).Format("2006-01-02 15:04:05")
-			}
-			leases = append(leases, leaseEntry{
-				Expiry:   expiry,
-				MAC:      fields[1],
-				IP:       fields[2],
-				Hostname: fields[3],
-			})
+		if len(fields) < 4 {
+			continue
 		}
+		expiry := fields[0]
+		if ts, err := strconv.ParseInt(expiry, 10, 64); err == nil {
+			expiry = time.Unix(ts, 0).Format("2006-01-02 15:04:05")
+		} else {
+			continue // Skip lines with non-numeric expiry.
+		}
+		mac := fields[1]
+		ip := fields[2]
+		hostname := fields[3]
+		// Basic format validation: MAC should be xx:xx:xx:xx:xx:xx,
+		// IP should parse as a valid address.
+		if len(mac) != 17 || net.ParseIP(ip) == nil {
+			continue
+		}
+		// Truncate hostname to prevent extremely long values.
+		if len(hostname) > 253 {
+			hostname = hostname[:253]
+		}
+		leases = append(leases, leaseEntry{
+			Expiry:   expiry,
+			MAC:      mac,
+			IP:       ip,
+			Hostname: hostname,
+		})
 	}
 	return leases
 }

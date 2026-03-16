@@ -418,10 +418,12 @@ func (m *Manager) diagHandler(pluginName, epName, scriptPath string) http.Handle
 		cmd := exec.CommandContext(ctx, resolved)
 		cmd.Dir = filepath.Dir(resolved)
 
-		// Minimal environment to reduce information leakage.
+		// Minimal, restricted environment. HOME is set to a plugin-specific
+		// temp dir to avoid world-writable /tmp. PATH is empty so scripts
+		// must use absolute paths for any external commands.
 		cmd.Env = []string{
-			"PATH=/usr/bin:/bin:/usr/sbin:/sbin",
-			"HOME=/tmp",
+			"PATH=",
+			"HOME=" + filepath.Dir(resolved),
 			"LANG=C.UTF-8",
 		}
 
