@@ -1,10 +1,10 @@
 package xdp
 
 import (
+	"crypto/rand"
 	"encoding/binary"
 	"fmt"
 	"log/slog"
-	"math/rand"
 	"net"
 	"sync"
 
@@ -401,7 +401,12 @@ func (e *Enforcer) rstChaosRule(saddr []expr.Any, global CountermeasureConfig) [
 // ttlRandomRule rewrites the IP TTL to a random value between 32-128.
 // This confuses OS fingerprinting and traceroute tools.
 func (e *Enforcer) ttlRandomRule(daddr []expr.Any) []expr.Any {
-	ttl := byte(32 + rand.Intn(96))
+	b := make([]byte, 1)
+	if _, err := rand.Read(b); err != nil {
+		slog.Error("crypto/rand failed for TTL randomization", "error", err)
+		b[0] = 64 // Safe fallback TTL.
+	}
+	ttl := byte(32 + int(b[0])%96)
 
 	return concat(daddr,
 		[]expr.Any{
