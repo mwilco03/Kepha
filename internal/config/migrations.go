@@ -105,6 +105,42 @@ CREATE TABLE IF NOT EXISTS audit_log (
 		name: "003_zone_mtu",
 		sql:  `ALTER TABLE zones ADD COLUMN mtu INTEGER NOT NULL DEFAULT 0;`,
 	},
+	{
+		name: "004_content_filter",
+		sql: `
+CREATE TABLE IF NOT EXISTS content_filters (
+	id                INTEGER PRIMARY KEY AUTOINCREMENT,
+	name              TEXT NOT NULL UNIQUE,
+	zone_id           INTEGER NOT NULL DEFAULT 0,
+	profile_id        INTEGER NOT NULL DEFAULT 0,
+	blocked_categories TEXT NOT NULL DEFAULT '',
+	blocked_domains   TEXT NOT NULL DEFAULT '',
+	allowed_domains   TEXT NOT NULL DEFAULT '',
+	enabled           INTEGER NOT NULL DEFAULT 1,
+	description       TEXT NOT NULL DEFAULT '',
+	created_at        DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+	updated_at        DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS filter_exceptions (
+	id              INTEGER PRIMARY KEY AUTOINCREMENT,
+	filter_id       INTEGER NOT NULL REFERENCES content_filters(id) ON DELETE CASCADE,
+	domain          TEXT NOT NULL,
+	category        TEXT NOT NULL DEFAULT '',
+	justification   TEXT NOT NULL,
+	requested_by    TEXT NOT NULL,
+	status          TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','approved','denied','expired','revoked')),
+	approved_by     TEXT NOT NULL DEFAULT '',
+	approval_note   TEXT NOT NULL DEFAULT '',
+	expires_at      DATETIME NOT NULL,
+	created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+	reviewed_at     DATETIME
+);
+CREATE INDEX IF NOT EXISTS idx_filter_exceptions_status ON filter_exceptions(status);
+CREATE INDEX IF NOT EXISTS idx_filter_exceptions_filter ON filter_exceptions(filter_id);
+CREATE INDEX IF NOT EXISTS idx_filter_exceptions_domain ON filter_exceptions(domain);
+`,
+	},
 }
 
 // Migrate runs all pending schema migrations.

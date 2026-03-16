@@ -40,6 +40,9 @@ type RouterConfig struct {
 	// MMDBUpdater is the ASN mmdb auto-updater (optional).
 	MMDBUpdater *inspect.MMDBUpdater
 
+	// ContentFilterEngine is the content filter engine (optional).
+	ContentFilterEngine *service.ContentFilterEngine
+
 	// MTUMgr is the MTU management service (optional).
 	MTUMgr *service.MTUManager
 
@@ -210,6 +213,28 @@ func NewRouterWithConfig(cfg *RouterConfig) http.Handler {
 		mux.HandleFunc("DELETE /api/v1/xdp/blocklist/{ip}", xh.removeBlocklistEntry)
 		mux.HandleFunc("GET /api/v1/xdp/acls", xh.listACLRules)
 		mux.HandleFunc("POST /api/v1/xdp/acls", xh.addACLRule)
+	}
+
+	// Content filtering (requires content filter engine or store).
+	{
+		cfh := &contentFilterHandlers{store: cfg.Store, engine: cfg.ContentFilterEngine}
+		mux.HandleFunc("GET /api/v1/content-filters", cfh.listFilters)
+		mux.HandleFunc("POST /api/v1/content-filters", cfh.createFilter)
+		mux.HandleFunc("GET /api/v1/content-filters/{name}", cfh.getFilter)
+		mux.HandleFunc("PUT /api/v1/content-filters/{name}", cfh.updateFilter)
+		mux.HandleFunc("DELETE /api/v1/content-filters/{name}", cfh.deleteFilter)
+
+		// Exception workflow: request → review (admin approve/deny) → revoke.
+		mux.HandleFunc("GET /api/v1/content-filters/exceptions", cfh.listExceptions)
+		mux.HandleFunc("POST /api/v1/content-filters/exceptions", cfh.requestException)
+		mux.HandleFunc("GET /api/v1/content-filters/exceptions/{id}", cfh.getException)
+		mux.HandleFunc("POST /api/v1/content-filters/exceptions/{id}/approve", cfh.approveException)
+		mux.HandleFunc("POST /api/v1/content-filters/exceptions/{id}/deny", cfh.denyException)
+		mux.HandleFunc("POST /api/v1/content-filters/exceptions/{id}/revoke", cfh.revokeException)
+
+		// Check/test a domain against filters.
+		mux.HandleFunc("GET /api/v1/content-filters/check", cfh.checkDomain)
+		mux.HandleFunc("GET /api/v1/content-filters/stats", cfh.stats)
 	}
 
 	// RBAC key management (requires RBAC to be enabled).

@@ -54,6 +54,12 @@ const (
 	ActionServicesRead  = "services:read"
 	ActionServicesWrite = "services:write"
 	ActionMCPConnect    = "mcp:connect"
+
+	// Content filtering.
+	ActionContentFilterRead     = "content_filter:read"
+	ActionContentFilterWrite    = "content_filter:write"
+	ActionExceptionRequest      = "content_filter:exception_request"
+	ActionExceptionApprove      = "content_filter:exception_approve" // Admin-only: approve/deny/revoke exceptions.
 )
 
 // ValidRoles contains all recognized role names.
@@ -80,6 +86,8 @@ var rolePermissions = map[string]map[string]bool{
 		ActionAuditRead: true,
 		ActionServicesRead: true, ActionServicesWrite: true,
 		ActionMCPConnect: true,
+		ActionContentFilterRead: true, ActionContentFilterWrite: true,
+		ActionExceptionRequest: true, ActionExceptionApprove: true,
 	},
 	RoleOperator: {
 		ActionZonesRead: true, ActionZonesWrite: true,
@@ -93,6 +101,8 @@ var rolePermissions = map[string]map[string]bool{
 		ActionDiagRead: true, ActionDiagActive: true,
 		ActionAuditRead: true,
 		ActionServicesRead: true, ActionServicesWrite: true,
+		ActionContentFilterRead: true, ActionContentFilterWrite: true,
+		ActionExceptionRequest: true,
 	},
 	RoleAuditor: {
 		ActionZonesRead: true,
@@ -105,6 +115,7 @@ var rolePermissions = map[string]map[string]bool{
 		ActionDiagRead: true,
 		ActionAuditRead: true,
 		ActionServicesRead: true,
+		ActionContentFilterRead: true,
 	},
 	RoleDiagnostics: {
 		ActionZonesRead: true,
@@ -658,6 +669,19 @@ func routeAction(method, path string) string {
 			return ActionServicesWrite
 		}
 		return ActionServicesRead
+
+	// Content filtering.
+	case strings.HasPrefix(path, "/api/v1/content-filters/exceptions") && isWrite:
+		// Exception review (approve/deny/revoke) requires admin approval permission.
+		if strings.Contains(path, "/approve") || strings.Contains(path, "/deny") || strings.Contains(path, "/revoke") {
+			return ActionExceptionApprove
+		}
+		return ActionExceptionRequest
+	case strings.HasPrefix(path, "/api/v1/content-filters"):
+		if isWrite {
+			return ActionContentFilterWrite
+		}
+		return ActionContentFilterRead
 
 	// MCP websocket/SSE endpoint.
 	case strings.HasPrefix(path, "/api/v1/mcp"):

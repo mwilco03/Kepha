@@ -132,3 +132,73 @@ type ConfigRevision struct {
 	Message   string    `json:"message"`
 	Snapshot  string    `json:"snapshot,omitempty"`
 }
+
+// --- Content Filtering ---
+
+// ContentCategory represents a filterable content category (e.g., "malware", "adult", "gambling").
+type ContentCategory string
+
+const (
+	CategoryMalware     ContentCategory = "malware"
+	CategoryPhishing    ContentCategory = "phishing"
+	CategoryAdult       ContentCategory = "adult"
+	CategoryGambling    ContentCategory = "gambling"
+	CategorySocialMedia ContentCategory = "social_media"
+	CategoryStreaming   ContentCategory = "streaming"
+	CategoryGaming      ContentCategory = "gaming"
+	CategoryAds         ContentCategory = "ads"
+	CategoryTracking    ContentCategory = "tracking"
+	CategoryCustom      ContentCategory = "custom"
+)
+
+// ValidCategories is the canonical set of content categories.
+var ValidCategories = map[ContentCategory]bool{
+	CategoryMalware: true, CategoryPhishing: true, CategoryAdult: true,
+	CategoryGambling: true, CategorySocialMedia: true, CategoryStreaming: true,
+	CategoryGaming: true, CategoryAds: true, CategoryTracking: true,
+	CategoryCustom: true,
+}
+
+// ContentFilter defines a content filtering rule bound to a zone or profile.
+type ContentFilter struct {
+	ID               int64           `json:"id"`
+	Name             string          `json:"name"`
+	ZoneID           int64           `json:"zone_id"`           // 0 = applies to all zones.
+	ProfileID        int64           `json:"profile_id"`        // 0 = applies to all profiles in zone.
+	BlockedCategories []ContentCategory `json:"blocked_categories"`
+	BlockedDomains   []string        `json:"blocked_domains"`   // Explicit domain blocklist.
+	AllowedDomains   []string        `json:"allowed_domains"`   // Explicit domain allowlist (overrides blocks).
+	Enabled          bool            `json:"enabled"`
+	Description      string          `json:"description,omitempty"`
+	CreatedAt        time.Time       `json:"created_at"`
+	UpdatedAt        time.Time       `json:"updated_at"`
+}
+
+// ExceptionStatus tracks the lifecycle of a filter exception request.
+type ExceptionStatus string
+
+const (
+	ExceptionPending  ExceptionStatus = "pending"
+	ExceptionApproved ExceptionStatus = "approved"
+	ExceptionDenied   ExceptionStatus = "denied"
+	ExceptionExpired  ExceptionStatus = "expired"
+	ExceptionRevoked  ExceptionStatus = "revoked"
+)
+
+// FilterException is a documented, admin-approved bypass for a content filter rule.
+// Exceptions require justification and explicit admin approval before they take effect.
+// Each exception is scoped to a specific filter, domain, and time window.
+type FilterException struct {
+	ID            int64           `json:"id"`
+	FilterID      int64           `json:"filter_id"`       // Which filter this exception bypasses.
+	Domain        string          `json:"domain"`          // The domain being excepted.
+	Category      ContentCategory `json:"category"`        // The blocked category being bypassed.
+	Justification string          `json:"justification"`   // Required: why this exception is needed.
+	RequestedBy   string          `json:"requested_by"`    // Who requested the exception (API key ID or name).
+	Status        ExceptionStatus `json:"status"`
+	ApprovedBy    string          `json:"approved_by,omitempty"`  // Admin who approved/denied.
+	ApprovalNote  string          `json:"approval_note,omitempty"` // Admin's rationale.
+	ExpiresAt     time.Time       `json:"expires_at"`      // When the exception automatically expires.
+	CreatedAt     time.Time       `json:"created_at"`
+	ReviewedAt    time.Time       `json:"reviewed_at,omitempty"`
+}
