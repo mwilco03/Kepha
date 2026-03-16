@@ -519,17 +519,34 @@ func (h *handlers) commitConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Record the previous revision so we can auto-rollback on failure.
+	prevRev := 0
+	if revs, err := h.ops.ListRevisions(); err == nil && len(revs) > 0 {
+		prevRev = revs[0].RevNumber
+	}
+
 	rev, err := h.ops.Commit(apiActor, body.Message)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	// Daemon-owned: apply nftables after commit.
+	// Daemon-owned: apply nftables after commit with auto-rollback timer.
+	// If /api/v1/config/confirm is not called within 60s, the config
+	// automatically rolls back to the previous revision. This prevents
+	// lockouts from bad firewall rules.
 	if h.nft != nil {
-		if err := h.nft.Apply(); err != nil {
-			writeError(w, http.StatusInternalServerError, "commit saved but nft apply failed: "+err.Error())
-			return
+		if prevRev > 0 {
+			if err := h.nft.ApplyWithConfirm(prevRev); err != nil {
+				writeError(w, http.StatusInternalServerError, "commit saved but nft apply failed: "+err.Error())
+				return
+			}
+		} else {
+			// First commit ever — no previous revision to rollback to.
+			if err := h.nft.Apply(); err != nil {
+				writeError(w, http.StatusInternalServerError, "commit saved but nft apply failed: "+err.Error())
+				return
+			}
 		}
 	}
 
@@ -540,7 +557,13 @@ func (h *handlers) commitConfig(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{"rev": rev, "message": body.Message})
+	resp := map[string]any{"rev": rev, "message": body.Message}
+	if prevRev > 0 && h.nft != nil {
+		resp["confirm_required"] = true
+		resp["confirm_timeout_sec"] = 60
+		resp["rollback_rev"] = prevRev
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (h *handlers) rollbackConfig(w http.ResponseWriter, r *http.Request) {

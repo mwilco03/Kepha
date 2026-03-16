@@ -17,14 +17,12 @@ package plugin
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -42,9 +40,6 @@ const (
 	// TierUnsafe requires explicit opt-in and carries no core support guarantees.
 	TierUnsafe Tier = "unsafe"
 )
-
-// scriptTimeout is the maximum duration a diagnostic script may run.
-const scriptTimeout = 30 * time.Second
 
 // webhookTimeout is the maximum duration for an outbound webhook request.
 const webhookTimeout = 10 * time.Second
@@ -374,8 +369,10 @@ func (m *Manager) GetRoutes() map[string]http.Handler {
 	return routes
 }
 
-// diagHandler returns an http.Handler that executes a diagnostic script and
-// writes its stdout as the response body. The script is run with a timeout.
+// diagHandler returns an http.Handler that refuses script execution.
+// Plugin script execution is disabled for security — arbitrary shell script
+// execution from plugin manifests is an RCE vector (CVSS 9.8). Diagnostic
+// endpoints return the script path for audit purposes but never execute it.
 func (m *Manager) diagHandler(pluginName, epName, scriptPath string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -383,75 +380,12 @@ func (m *Manager) diagHandler(pluginName, epName, scriptPath string) http.Handle
 			return
 		}
 
-		m.logger.Info("executing diagnostic endpoint",
+		m.logger.Warn("diagnostic script execution denied (disabled for security)",
 			"plugin", pluginName,
 			"endpoint", epName,
 			"script", scriptPath)
 
-		// Re-validate symlinks at execution time to prevent TOCTOU attacks.
-		// The path was validated at manifest load, but could have been changed since.
-		resolved, err := filepath.EvalSymlinks(scriptPath)
-		if err != nil {
-			m.logger.Warn("diagnostic script path resolution failed",
-				"plugin", pluginName, "endpoint", epName, "error", err)
-			http.Error(w, "script not found", http.StatusInternalServerError)
-			return
-		}
-		pluginDir := filepath.Dir(filepath.Dir(resolved)) // approximate; use stored dir
-		// Get the actual plugin directory from the registry.
-		m.mu.Lock()
-		if p, ok := m.plugins[pluginName]; ok {
-			pluginDir = p.dir
-		}
-		m.mu.Unlock()
-		if !strings.HasPrefix(resolved, pluginDir) {
-			m.logger.Error("diagnostic script escapes plugin directory at execution time",
-				"plugin", pluginName, "endpoint", epName,
-				"resolved", resolved, "pluginDir", pluginDir)
-			http.Error(w, "script path violation", http.StatusForbidden)
-			return
-		}
-
-		ctx, cancel := context.WithTimeout(r.Context(), scriptTimeout)
-		defer cancel()
-
-		cmd := exec.CommandContext(ctx, resolved)
-		cmd.Dir = filepath.Dir(resolved)
-
-		// Minimal, restricted environment. HOME is set to a plugin-specific
-		// temp dir to avoid world-writable /tmp. PATH is empty so scripts
-		// must use absolute paths for any external commands.
-		cmd.Env = []string{
-			"PATH=",
-			"HOME=" + filepath.Dir(resolved),
-			"LANG=C.UTF-8",
-		}
-
-		var stdout, stderr bytes.Buffer
-		cmd.Stdout = &stdout
-		cmd.Stderr = &stderr
-
-		err = cmd.Run()
-		if ctx.Err() == context.DeadlineExceeded {
-			m.logger.Warn("diagnostic script timed out",
-				"plugin", pluginName,
-				"endpoint", epName)
-			http.Error(w, "diagnostic script timed out", http.StatusGatewayTimeout)
-			return
-		}
-		if err != nil {
-			m.logger.Warn("diagnostic script failed",
-				"plugin", pluginName,
-				"endpoint", epName,
-				"error", err,
-				"stderr", stderr.String())
-			http.Error(w, "diagnostic script error", http.StatusInternalServerError)
-			return
-		}
-
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		w.WriteHeader(http.StatusOK)
-		_, _ = io.Copy(w, &stdout)
+		http.Error(w, "plugin script execution is disabled for security", http.StatusForbidden)
 	})
 }
 

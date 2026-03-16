@@ -141,6 +141,18 @@ func (s *Store) Export() (*ConfigSnapshot, error) {
 	}, nil
 }
 
+// importSafeTables is the allowlist of tables that Import may truncate.
+// This prevents SQL injection if the table list is ever made dynamic.
+var importSafeTables = map[string]bool{
+	"device_assignments": true,
+	"rules":              true,
+	"profiles":           true,
+	"alias_members":      true,
+	"aliases":            true,
+	"policies":           true,
+	"zones":              true,
+}
+
 // Import restores config from a snapshot, replacing all current data.
 func (s *Store) Import(snap *ConfigSnapshot) error {
 	tx, err := s.db.Begin()
@@ -151,6 +163,9 @@ func (s *Store) Import(snap *ConfigSnapshot) error {
 
 	// Clear all tables in dependency order.
 	for _, table := range []string{"device_assignments", "rules", "profiles", "alias_members", "aliases", "policies", "zones"} {
+		if !importSafeTables[table] {
+			return fmt.Errorf("refusing to clear unknown table %q", table)
+		}
 		if _, err := tx.Exec("DELETE FROM " + table); err != nil {
 			return fmt.Errorf("clear %s: %w", table, err)
 		}
