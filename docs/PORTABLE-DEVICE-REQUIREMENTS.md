@@ -1381,3 +1381,255 @@ You don't have to pick one. But you should START with one.
 
 7. **Crowdfunding:** Still valid. A $39 "travel security device" on
    Kickstarter has impulse-buy energy. Much easier to fund than a $449 box.
+
+---
+
+## 20. The Fortress CAISI Precedent: What Actually Mattered
+
+### What Was CAISI?
+
+**CAISI** (Combat Service Support Automated Information Systems Interface) was
+the U.S. Army's largest tactical wireless LAN — supply chain logistics from
+the battlefield to warehouses worldwide. **Fortress Technologies** (Oldsmar, FL;
+acquired by General Dynamics Mission Systems in 2011 for undisclosed sum) built
+the hardware: the **ES520 Secure Wireless Access Bridge**, deployed as the
+"CAISI Bridge Module." Over 55,000 units delivered via Telos Corporation as
+prime contractor.
+
+### The Product Family
+
+| Product | Role | Radios | Ports | Special |
+|---------|------|--------|-------|---------|
+| **ES520** | Deployable Mesh Point | Dual 802.11a/g | 8x RJ-45 10/100 PoE | The CAISI bridge |
+| **ES210** | Tactical/wearable | Single 802.11a/b/g/n | 2x Ethernet | Body-worn, edge sensors |
+| **ES440** | Infrastructure | 4-radio 802.11a/g/n | Multiple | Fixed installation |
+| **ES820** | Vehicle | Dual 802.11a/b/g | Multiple | MIL-STD-810G, dash panel |
+| **ES2440** | High-capacity | 4-radio MIMO | Multiple | Next-gen infrastructure |
+| **FC-X** | Inline encryptor | N/A (wired) | GbE | Up to 1.9 Gbps throughput |
+
+Price range: **$1,000-5,000/unit** at government scale. Surplus ES520s have
+appeared on GovPlanet for ~$100, indicating commodity status at end of life.
+
+### What Made It "Amazing": The Bridge + Local Network Model
+
+A single ES520 simultaneously did:
+
+1. **Wireless bridge** — point-to-point or mesh backhaul to other Fortress
+   nodes up to 32 miles (directional antenna) or 4 miles (omni)
+2. **Local WiFi AP** — up to 100 secure clients, 4 SSIDs
+3. **8-port Ethernet switch** — wired devices plug in directly, with PoE
+4. **Layer 2 AES-256 encryption** — FIPS 140-2 Level 2 validated, wraps ALL
+   frames independent of WiFi encryption. Hardware-accelerated.
+5. **Self-forming mesh** — FastPath Mesh: nodes find each other, build the
+   network, self-heal on failure. No controller required.
+
+**The killer concept:** Plug this box into any network anywhere — hotel, host
+nation infrastructure, forward operating base, moving vehicle. It creates a
+**cryptographically isolated local network** in minutes. The upstream is
+untrusted. Your local side is FIPS-encrypted. The bridge is transparent at
+Layer 2 — applications don't know it's there.
+
+Real-world: At Camp Arifjan, Kuwait, an ammunition outpost 2+ miles away
+was bridged back to base, enabling work in minutes that previously took hours.
+
+### The Certifications That Made It Sellable
+
+| Certification | What It Proved | Kepha Relevance |
+|--------------|---------------|-----------------|
+| **FIPS 140-2 Level 2** | Crypto module validated for federal use | $150-500K, 12-24 months to get |
+| **Common Criteria EAL4+** | Security evaluated by NIAP | $200K-1M, 18-36 months |
+| **DoD UC APL** | Approved for DoD unified communications | Requires FIPS + CC first |
+| **Army IA-APL** | First tactical wireless solution listed | Army-specific |
+| **NSA Suite B** | Upgradeable to Secret-level crypto | CSfC path |
+| **NSA CSfC** | Can carry classified on commercial HW | The holy grail |
+| **MIL-STD-461F** | Electromagnetic compatibility | Hardware certification |
+| **Wi-Fi Alliance** | Interoperability tested | ~$5-20K |
+
+The ES520 was the **first** fully rugged tactical wireless solution on the
+Army IA-APL (August 2009) and among the **only** mesh products on the UC APL
+with both FIPS 140 and Common Criteria (April 2011).
+
+### What WiFi Features Actually Matter (Lessons from CAISI)
+
+The Fortress devices had 802.11a/g/n — ancient by today's standards. The WiFi
+standard didn't matter. What mattered was the **security architecture on top**:
+
+#### The Encryption Layering (What Made Fortress Different)
+
+```
+┌─────────────────────────────────────┐
+│ Application Data                     │
+├─────────────────────────────────────┤
+│ IPsec / VPN tunnel (Layer 3)        │  ← Optional: user VPN
+├─────────────────────────────────────┤
+│ Fortress AES-256 (Layer 2)          │  ← FIPS-validated, hardware-accel
+├─────────────────────────────────────┤
+│ WPA2/WPA3 (Layer 2, WiFi)          │  ← Standard WiFi encryption
+├─────────────────────────────────────┤
+│ 802.11 Radio                         │  ← Physical transport
+└─────────────────────────────────────┘
+```
+
+Three layers of encryption. The Fortress Layer 2 crypto operated **below** any
+WiFi encryption and **above** the radio — meaning even on an open WiFi network,
+all frames were AES-256 encrypted. This is what the NSA CSfC program requires:
+**two independent layers of encryption from different vendors.**
+
+#### Feature Tiers: What Kepha Should Implement
+
+**Tier 1 — Travel Security (the "Fortress for mortals"):**
+
+| Feature | What | How (on Kepha) |
+|---------|------|----------------|
+| WiFi STA uplink | Connect to untrusted hotel/airport WiFi | wpa_supplicant, already standard |
+| WiFi AP | Create trusted local SSID | hostapd, already standard |
+| Always-on VPN | WireGuard tunnel encrypts all backhaul | Kepha already does this |
+| DNS filtering | Block malware/phishing at DNS layer | dnsmasq, already built |
+| Client isolation | Prevent lateral movement | nftables bridge rules |
+| Rogue AP detection | Scan for evil twins on upstream | Periodic channel survey via iw |
+| Captive portal auth | Auto-detect and handle hotel login pages | HTTP redirect detection |
+
+This is the $39-49 device. Same concept as CAISI — bridge untrusted upstream,
+create secure local — without the FIPS price tag. **Nobody sells this for $39.**
+
+**Tier 2 — Enterprise Portable (the $200-500 gap):**
+
+Everything from Tier 1, plus:
+
+| Feature | What | How (on Kepha) |
+|---------|------|----------------|
+| WPA3-Enterprise (192-bit) | Certificate-based auth, not passwords | hostapd + EAP-TLS |
+| 802.1X RADIUS | Wired + wireless port control | hostapd + FreeRADIUS or external |
+| WIDS | Wireless intrusion detection | Dedicated scanning + analysis |
+| WIPS | Active rogue AP containment | Deauth frames (legal gray area) |
+| PMF (802.11w) | Management frame protection | hostapd config, mandatory |
+| EAP-TLS mutual cert auth | Both device and user authenticate | PKI + PKCS#11 |
+| IDS/IPS (Suricata) | Deep packet inspection | Suricata on x86 (RAM-dependent) |
+| Split tunneling policy | Route corporate vs personal differently | nftables + policy routing |
+
+**There is nothing between $339 (Firewalla Orange) and $1,000 (Cradlepoint)
+that offers WPA3-Enterprise, 802.1X, WIDS, and IDS/IPS in a portable form
+factor.** That gap is the Fortress concept at 1/10th the price.
+
+**Tier 3 — Government Path (when certs justify the investment):**
+
+Everything from Tier 2, plus:
+
+| Feature | What | Cost to Certify |
+|---------|------|----------------|
+| FIPS 140-3 validated crypto | Required for federal | $150K-500K, 12-24 months |
+| Common Criteria (NIAP PP) | Required for DoD APL | $200K-1M, 18-36 months |
+| CSfC listing | Can carry classified | Requires FIPS + CC, 24-48 months |
+| Layer 2 encryption (MACsec) | Encrypt independent of WiFi | 802.1AE, kernel + NIC support |
+| CAC/PIV smart card auth | Federal employee auth | PKCS#11, OpenSC |
+| STIG compliance | DoD hardened config | Automated hardening scripts |
+| Spectrum analysis | RF threat detection | Dedicated radio or SDR |
+| Remote attestation | Verify device integrity | TPM 2.0 + measured boot |
+| TAA compliance | Manufactured in approved countries | Supply chain audit |
+
+This is $699-999 per unit. The certifications alone cost $500K-2M and take
+2-4 years. This is Tier 4+ — only after Tiers 0-2 prove the product. But
+the architecture should be **designed** for this from day one so the cert
+path isn't a rewrite.
+
+### The Market Gap (Visualized)
+
+```
+Price    $35      $90      $199     $339     $500     $1000    $3000    $8000
+         │        │        │        │        │        │        │        │
+Consumer │ GL.iNet │ Beryl  │ FW     │ FW     │        │        │        │
+         │ Opal   │ AX     │ Purple │ Orange │        │        │        │
+         │ VPN    │ VPN    │ IDS    │ WiFi7  │        │        │        │
+         │ only   │ only   │ basic  │ IDS    │        │        │        │
+         │        │        │        │        │        │        │        │
+Enterprise                                    │ Meraki │Cradle- │        │
+                                              │ Z4C    │point   │        │
+                          ████████████████████                  │        │
+                          █ NOBODY HERE █████                   │        │
+                          █ Enterprise WiFi █                   │        │
+                          █ Portable        █                   │        │
+                          █ No cloud lock-in█                   │        │
+                          ████████████████████                  │        │
+                                                                │        │
+Military                                                        │ Rajant │Fortress
+                                                                │ Persist│ES820
+                                                                │        │Silvus
+```
+
+### WiFi Chipset Selection for White-Label
+
+If building a Kepha device with WiFi, the chipset choice matters:
+
+| Chipset | WiFi | Frequencies | Linux/OpenWrt | WPA3-Ent | AP+STA | OEM Price |
+|---------|------|-------------|---------------|----------|--------|-----------|
+| **MT7915** | WiFi 6 AX | 2.4+5GHz | Excellent | Yes | Yes | $8-15 |
+| **MT7916** | WiFi 6 AX | 2.4+5GHz | Excellent | Yes | Yes | $10-18 |
+| **MT7986** | WiFi 6 AX (SoC) | 2.4+5GHz | Excellent | Yes | Yes | N/A (SoC) |
+| **MT7996** | WiFi 7 BE | 2.4+5+6GHz | Good (maturing) | Yes | Yes | $15-25 |
+| **QCA9984** | WiFi 5 AC W2 | 2.4+5GHz | Good (ath10k) | Yes | Limited | $10-20 |
+| **IPQ6018** | WiFi 6 AX (SoC) | 2.4+5GHz | Improving (ath11k) | Yes | Yes | N/A (SoC) |
+| **Intel AX210** | WiFi 6E | 2.4+5+6GHz | Excellent (iwlwifi) | Yes | Limited* | M.2 card |
+| **Intel BE200** | WiFi 7 | 2.4+5+6GHz | Good (maturing) | Yes | Limited* | M.2 card |
+
+*Intel cards work as AP via hostapd but with limitations (no DFS on some
+channels, limited concurrent AP+STA modes). Best for x86 devices.
+
+**MediaTek is the clear winner** for a white-label device:
+- Active upstream Linux kernel contributions (unlike Qualcomm's BSP model)
+- Full OpenWrt support in the filogic target
+- hostapd supports WPA3-Enterprise 192-bit on MT7915+
+- Concurrent AP+STA mode works reliably (travel router pattern)
+- SoC options (MT7986/MT7981) integrate CPU+WiFi+Ethernet, reducing BOM
+
+### What the Fortress-Inspired Kepha Device Looks Like
+
+```
+┌──────────────────────────────────────────────────────┐
+│                   KEPHA GATEWAY                       │
+│                  (MT7986 based)                       │
+│                                                       │
+│  ┌─────────────┐    ┌──────────────────────────────┐ │
+│  │ WiFi Radio 1│    │      Kepha (gatekeeperd)      │ │
+│  │ 5GHz AP     │◄──►│  nftables zones + aliases     │ │
+│  │ "Kepha-5G"  │    │  WireGuard VPN (always-on)    │ │
+│  └─────────────┘    │  dnsmasq (DNS filter + DHCP)  │ │
+│                      │  WIDS scanner (periodic)      │ │
+│  ┌─────────────┐    │  REST API + Web UI + MCP      │ │
+│  │ WiFi Radio 2│    │  SQLite config + audit log    │ │
+│  │ 2.4GHz STA  │◄──►│  Captive portal handler       │ │
+│  │ (hotel WiFi)│    │  Active countermeasures       │ │
+│  └─────────────┘    └──────────────────────────────┘ │
+│                                                       │
+│  ┌─────────────┐    ┌──────────────────────────────┐ │
+│  │ 2.5GbE WAN  │◄──►│  Upstream (wired or WiFi STA) │ │
+│  └─────────────┘    │  ┌────────────────────────┐   │ │
+│  ┌─────────────┐    │  │ WireGuard tunnel        │   │ │
+│  │ 2.5GbE LAN  │◄──►│  │ (encrypts ALL backhaul) │   │ │
+│  └─────────────┘    │  └────────────────────────┘   │ │
+│                      └──────────────────────────────┘ │
+│                                                       │
+│  Modes:                                               │
+│  • Travel: WiFi STA (hotel) → VPN → WiFi AP (you)    │
+│  • Home:   Ethernet WAN → Firewall → WiFi AP + LAN   │
+│  • Bridge: Ethernet ← encrypted tunnel → Ethernet     │
+│  • Mesh:   WireGuard mesh between multiple Kepha nodes│
+└──────────────────────────────────────────────────────┘
+```
+
+**That's the Fortress CAISI concept:**
+- Untrusted upstream (any WiFi, any Ethernet, anywhere)
+- Encrypted tunnel (WireGuard instead of proprietary Fortress crypto)
+- Trusted local network (WiFi AP + Ethernet switch)
+- Self-forming mesh (WireGuard mesh between Kepha nodes)
+- Zone-based firewall (nftables via netlink, Kepha's core)
+
+**What it costs:**
+- $40-60 OEM hardware (MT7986)
+- Sell at $129-179
+- 50-65% margin
+- No FIPS cert needed for commercial market
+- WPA3-Enterprise + 802.1X + WIDS = features nobody else offers at this price
+
+**What Fortress charged:** $2,000-8,000/unit.
+**What Kepha charges:** $129-179/unit.
+**Same concept. Modern silicon. Open source. 1/20th the price.**
