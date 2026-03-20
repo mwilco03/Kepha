@@ -2,16 +2,21 @@ package web
 
 import (
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"embed"
 	"encoding/hex"
 	"encoding/json"
 	"html/template"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gatekeeper-firewall/gatekeeper/internal/backend"
@@ -56,14 +61,16 @@ func Handler(store *config.Store, svcMgrs ...*service.Manager) http.Handler {
 // HandlerWithDeps creates the web UI with full dependency injection.
 func HandlerWithDeps(store *config.Store, deps *WebDeps) http.Handler {
 	mux := http.NewServeMux()
+	sessions := newSessionStore()
+	limiter := newLoginRateLimiter()
 
 	// Static assets are always public.
 	mux.Handle("GET /static/", http.FileServerFS(staticFS))
 
 	// Login page is always accessible.
 	mux.HandleFunc("GET /login", handleLoginPage())
-	mux.HandleFunc("POST /login", handleLoginSubmit(deps.APIKey))
-	mux.HandleFunc("GET /logout", handleLogout())
+	mux.HandleFunc("POST /login", handleLoginSubmit(deps.APIKey, sessions, limiter))
+	mux.HandleFunc("GET /logout", handleLogout(sessions))
 
 	// All other routes require session auth.
 	mux.HandleFunc("GET /", handleDashboard(store, deps))
@@ -82,11 +89,12 @@ func HandlerWithDeps(store *config.Store, deps *WebDeps) http.Handler {
 		mux.HandleFunc("GET /services", handleServices(deps.ServiceMgr))
 	}
 
-	// Wrap with session auth if API key is configured.
+	// Wrap with session auth and security headers if API key is configured.
+	var handler http.Handler = mux
 	if deps.APIKey != "" {
-		return sessionAuth(deps.APIKey, mux)
+		handler = sessionAuth(deps.APIKey, sessions, handler)
 	}
-	return mux
+	return securityHeaders(handler)
 }
 
 func handleDashboard(store *config.Store, deps *WebDeps) http.HandlerFunc {
@@ -279,11 +287,19 @@ type leaseEntry struct {
 }
 
 // parseLeaseFile reads dnsmasq leases from the given file path.
+// Only reads from /var/lib/ or /tmp/ to prevent path traversal.
 func parseLeaseFile(path string) []leaseEntry {
 	if path == "" {
 		path = "/var/lib/misc/dnsmasq.leases"
 	}
-	data, err := os.ReadFile(path)
+	// Restrict to safe directories to prevent information disclosure
+	// if an admin misconfigures the lease file path.
+	cleaned := filepath.Clean(path)
+	if !strings.HasPrefix(cleaned, "/var/lib/") && !strings.HasPrefix(cleaned, "/tmp/") {
+		slog.Warn("lease file path outside allowed directories, ignoring", "path", path)
+		return nil
+	}
+	data, err := os.ReadFile(cleaned)
 	if err != nil {
 		return nil
 	}
@@ -293,18 +309,33 @@ func parseLeaseFile(path string) []leaseEntry {
 			continue
 		}
 		fields := strings.Fields(line)
-		if len(fields) >= 4 {
-			expiry := fields[0]
-			if ts, err := strconv.ParseInt(expiry, 10, 64); err == nil {
-				expiry = time.Unix(ts, 0).Format("2006-01-02 15:04:05")
-			}
-			leases = append(leases, leaseEntry{
-				Expiry:   expiry,
-				MAC:      fields[1],
-				IP:       fields[2],
-				Hostname: fields[3],
-			})
+		if len(fields) < 4 {
+			continue
 		}
+		expiry := fields[0]
+		if ts, err := strconv.ParseInt(expiry, 10, 64); err == nil {
+			expiry = time.Unix(ts, 0).Format("2006-01-02 15:04:05")
+		} else {
+			continue // Skip lines with non-numeric expiry.
+		}
+		mac := fields[1]
+		ip := fields[2]
+		hostname := fields[3]
+		// Basic format validation: MAC should be xx:xx:xx:xx:xx:xx,
+		// IP should parse as a valid address.
+		if len(mac) != 17 || net.ParseIP(ip) == nil {
+			continue
+		}
+		// Truncate hostname to prevent extremely long values.
+		if len(hostname) > 253 {
+			hostname = hostname[:253]
+		}
+		leases = append(leases, leaseEntry{
+			Expiry:   expiry,
+			MAC:      mac,
+			IP:       ip,
+			Hostname: hostname,
+		})
 	}
 	return leases
 }
@@ -388,9 +419,20 @@ func handleServices(mgr *service.Manager) http.HandlerFunc {
 	}
 }
 
+// securityHeaders wraps a handler to add standard security response headers.
+func securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'")
+		next.ServeHTTP(w, r)
+	})
+}
+
 // sessionAuth wraps a handler with cookie-based session authentication.
 // Static assets and the login page bypass auth.
-func sessionAuth(apiKey string, next http.Handler) http.Handler {
+func sessionAuth(apiKey string, sessions *sessionStore, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Public paths: static assets, login, logout.
 		if strings.HasPrefix(r.URL.Path, "/static/") ||
@@ -398,7 +440,7 @@ func sessionAuth(apiKey string, next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		if !validSession(r, apiKey) {
+		if !validSession(r, apiKey, sessions) {
 			http.Redirect(w, r, "/login", http.StatusSeeOther)
 			return
 		}
@@ -415,21 +457,41 @@ func handleLoginPage() http.HandlerFunc {
 	}
 }
 
-func handleLoginSubmit(apiKey string) http.HandlerFunc {
+func handleLoginSubmit(apiKey string, sessions *sessionStore, limiter *loginRateLimiter) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
+
+		// Rate limit login attempts by remote address.
+		clientIP := r.RemoteAddr
+		if idx := strings.LastIndex(clientIP, ":"); idx >= 0 {
+			clientIP = clientIP[:idx]
+		}
+		if !limiter.allow(clientIP) {
+			slog.Warn("login rate limited", "ip", clientIP)
+			http.Error(w, "Too many login attempts. Try again later.", http.StatusTooManyRequests)
+			return
+		}
+
 		key := r.FormValue("api_key")
-		if key != apiKey {
+		// Constant-time comparison to prevent timing attacks on the API key.
+		if subtle.ConstantTimeCompare([]byte(key), []byte(apiKey)) != 1 {
+			slog.Warn("failed login attempt", "ip", clientIP)
 			http.Redirect(w, r, "/login?error=invalid", http.StatusSeeOther)
 			return
 		}
-		setSessionCookie(w, apiKey)
+
+		limiter.reset(clientIP)
+		setSessionCookie(w, apiKey, sessions)
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 	}
 }
 
-func handleLogout() http.HandlerFunc {
+func handleLogout(sessions *sessionStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// Invalidate session server-side.
+		if cookie, err := r.Cookie(sessionCookieName); err == nil {
+			sessions.revoke(cookie.Value)
+		}
 		http.SetCookie(w, &http.Cookie{
 			Name:     sessionCookieName,
 			Value:    "",
@@ -442,12 +504,14 @@ func handleLogout() http.HandlerFunc {
 	}
 }
 
-// setSessionCookie creates an HMAC-signed session cookie.
-func setSessionCookie(w http.ResponseWriter, apiKey string) {
-	sig := signSession(apiKey)
+// setSessionCookie creates a cryptographically random session token,
+// stores it server-side, and sets it as a cookie.
+func setSessionCookie(w http.ResponseWriter, apiKey string, sessions *sessionStore) {
+	token := generateSessionToken(apiKey)
+	sessions.add(token)
 	http.SetCookie(w, &http.Cookie{
 		Name:     sessionCookieName,
-		Value:    sig,
+		Value:    token,
 		Path:     "/",
 		MaxAge:   86400, // 24 hours.
 		HttpOnly: true,
@@ -456,21 +520,113 @@ func setSessionCookie(w http.ResponseWriter, apiKey string) {
 	})
 }
 
-// validSession checks the session cookie against the API key.
-func validSession(r *http.Request, apiKey string) bool {
+// validSession checks the session cookie against the server-side session store.
+func validSession(r *http.Request, apiKey string, sessions *sessionStore) bool {
 	cookie, err := r.Cookie(sessionCookieName)
-	if err != nil {
+	if err != nil || cookie.Value == "" {
 		return false
 	}
-	expected := signSession(apiKey)
-	return hmac.Equal([]byte(cookie.Value), []byte(expected))
+	return sessions.valid(cookie.Value)
 }
 
-// signSession produces an HMAC-SHA256 of a fixed payload using the API key.
-func signSession(apiKey string) string {
+// generateSessionToken creates a random nonce and signs it with the API key.
+// Format: hex(nonce) + "." + hex(HMAC-SHA256(apiKey, nonce))
+func generateSessionToken(apiKey string) string {
+	nonce := make([]byte, 32)
+	if _, err := rand.Read(nonce); err != nil {
+		panic("crypto/rand failed: " + err.Error())
+	}
+	nonceHex := hex.EncodeToString(nonce)
 	mac := hmac.New(sha256.New, []byte(apiKey))
-	mac.Write([]byte("gatekeeper-web-session"))
-	return hex.EncodeToString(mac.Sum(nil))
+	mac.Write(nonce)
+	sig := hex.EncodeToString(mac.Sum(nil))
+	return nonceHex + "." + sig
+}
+
+// sessionStore tracks active sessions server-side with expiry.
+type sessionStore struct {
+	mu       sync.Mutex
+	sessions map[string]time.Time // token → expiry
+}
+
+func newSessionStore() *sessionStore {
+	s := &sessionStore{sessions: make(map[string]time.Time)}
+	go s.cleanupLoop()
+	return s
+}
+
+func (s *sessionStore) add(token string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sessions[token] = time.Now().Add(24 * time.Hour)
+}
+
+func (s *sessionStore) valid(token string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	expiry, ok := s.sessions[token]
+	if !ok {
+		return false
+	}
+	if time.Now().After(expiry) {
+		delete(s.sessions, token)
+		return false
+	}
+	return true
+}
+
+func (s *sessionStore) revoke(token string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.sessions, token)
+}
+
+func (s *sessionStore) cleanupLoop() {
+	ticker := time.NewTicker(15 * time.Minute)
+	defer ticker.Stop()
+	for range ticker.C {
+		s.mu.Lock()
+		now := time.Now()
+		for token, expiry := range s.sessions {
+			if now.After(expiry) {
+				delete(s.sessions, token)
+			}
+		}
+		s.mu.Unlock()
+	}
+}
+
+// loginRateLimiter tracks failed login attempts per IP.
+type loginRateLimiter struct {
+	mu       sync.Mutex
+	attempts map[string][]time.Time
+}
+
+func newLoginRateLimiter() *loginRateLimiter {
+	return &loginRateLimiter{attempts: make(map[string][]time.Time)}
+}
+
+// allow returns true if the IP has fewer than 5 attempts in the last minute.
+func (l *loginRateLimiter) allow(ip string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	cutoff := time.Now().Add(-1 * time.Minute)
+	var recent []time.Time
+	for _, t := range l.attempts[ip] {
+		if t.After(cutoff) {
+			recent = append(recent, t)
+		}
+	}
+	recent = append(recent, time.Now())
+	l.attempts[ip] = recent
+	return len(recent) <= 5
+}
+
+func (l *loginRateLimiter) reset(ip string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	delete(l.attempts, ip)
 }
 
 func render(w http.ResponseWriter, name string, data any) {

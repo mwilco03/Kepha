@@ -245,6 +245,10 @@ func New(cfg MCPConfig) *Server {
 		cfg.DangerousRateLimit = 5
 	}
 
+	if cfg.Permissions == nil {
+		slog.Warn("mcp: no principal permissions configured — all tools are accessible to any principal")
+	}
+
 	s := &Server{
 		cfg:     cfg,
 		tools:   make(map[string]*Tool),
@@ -258,11 +262,38 @@ func New(cfg MCPConfig) *Server {
 // ─── HTTP Handlers ───────────────────────────────────────────────────────────
 
 // Handler returns an HTTP handler for the MCP SSE endpoint.
+// Includes Origin header validation to prevent CSRF attacks.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /mcp/sse", s.handleSSE)
 	mux.HandleFunc("POST /mcp/message", s.handleMessage)
-	return mux
+	return originCheckMiddleware(mux)
+}
+
+// originCheckMiddleware validates the Origin header on incoming requests
+// to prevent cross-site request forgery via EventSource or fetch from
+// attacker-controlled pages. Requests without an Origin (e.g., curl,
+// server-to-server) are allowed; requests with a non-localhost Origin
+// are rejected.
+func originCheckMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		origin := r.Header.Get("Origin")
+		if origin != "" {
+			// Allow only localhost origins.
+			if !strings.HasPrefix(origin, "http://localhost") &&
+				!strings.HasPrefix(origin, "https://localhost") &&
+				!strings.HasPrefix(origin, "http://127.0.0.1") &&
+				!strings.HasPrefix(origin, "https://127.0.0.1") &&
+				!strings.HasPrefix(origin, "http://[::1]") &&
+				!strings.HasPrefix(origin, "https://[::1]") {
+				slog.Warn("mcp: rejected request with non-local Origin",
+					"origin", origin, "method", r.Method, "path", r.URL.Path)
+				http.Error(w, "Forbidden: cross-origin requests not allowed", http.StatusForbidden)
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // handleSSE establishes a Server-Sent Events connection.
@@ -687,15 +718,16 @@ func (s *Server) auditToolCall(principal, toolName string, args json.RawMessage,
 	}
 }
 
-// promptContextHash produces a truncated SHA-256 hash of the tool arguments,
-// used as a compact fingerprint in audit logs to correlate tool calls with
-// the prompts that triggered them.
+// promptContextHash produces a full SHA-256 hash of the tool arguments,
+// used as a fingerprint in audit logs to correlate tool calls with
+// the prompts that triggered them. Uses the full 32-byte hash to
+// eliminate collision risk in audit trails.
 func promptContextHash(args json.RawMessage) string {
 	if len(args) == 0 {
 		return ""
 	}
 	h := sha256.Sum256(args)
-	return fmt.Sprintf("%x", h[:16])
+	return fmt.Sprintf("%x", h)
 }
 
 // ─── SSE Helpers ─────────────────────────────────────────────────────────────

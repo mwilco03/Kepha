@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
+	"net"
 	"sync"
 	"time"
 )
@@ -258,15 +259,18 @@ func (d *AnomalyDetector) matchExclusion(srcIP, oldHash, newHash string) *Exclus
 	return nil
 }
 
-// matchCIDR checks if an IP is within a CIDR range.
+// matchCIDR checks if an IP is within a CIDR range using proper network parsing.
 func matchCIDR(ip, cidr string) bool {
-	// Simple prefix match for common cases.
-	// For production, use net.ParseCIDR + net.IP.Mask.
-	if len(cidr) > 0 && cidr[len(cidr)-1] == '*' {
-		prefix := cidr[:len(cidr)-1]
-		return len(ip) >= len(prefix) && ip[:len(prefix)] == prefix
+	_, ipnet, err := net.ParseCIDR(cidr)
+	if err != nil {
+		// Not a valid CIDR — fall back to exact match.
+		return ip == cidr
 	}
-	return ip == cidr
+	parsed := net.ParseIP(ip)
+	if parsed == nil {
+		return false
+	}
+	return ipnet.Contains(parsed)
 }
 
 // AddExclusion adds a new exclusion rule.

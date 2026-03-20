@@ -502,11 +502,11 @@ func TestPromptContextHash(t *testing.T) {
 			want:  "",
 		},
 		{
-			name:  "produces truncated SHA-256",
+			name:  "produces full SHA-256",
 			input: json.RawMessage(`{"zone":"lan"}`),
 			want: func() string {
 				h := sha256.Sum256([]byte(`{"zone":"lan"}`))
-				return fmt.Sprintf("%x", h[:16])
+				return fmt.Sprintf("%x", h)
 			}(),
 		},
 	}
@@ -531,9 +531,9 @@ func TestPromptContextHash_DeterministicAndLength(t *testing.T) {
 		t.Errorf("expected deterministic output, got %q != %q", h1, h2)
 	}
 
-	// 16 bytes in hex = 32 characters.
-	if len(h1) != 32 {
-		t.Errorf("expected 32-char hex string, got %d chars: %q", len(h1), h1)
+	// 32 bytes in hex = 64 characters.
+	if len(h1) != 64 {
+		t.Errorf("expected 64-char hex string, got %d chars: %q", len(h1), h1)
 	}
 }
 

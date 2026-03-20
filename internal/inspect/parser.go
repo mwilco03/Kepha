@@ -19,6 +19,9 @@ func ParseClientHello(data []byte) (*ClientHello, error) {
 	}
 
 	recordLen := int(binary.BigEndian.Uint16(data[3:5]))
+	if recordLen == 0 {
+		return nil, fmt.Errorf("zero-length TLS record")
+	}
 	payload := data[5:]
 	if len(payload) < recordLen {
 		return nil, fmt.Errorf("record truncated: have %d, need %d", len(payload), recordLen)
@@ -34,6 +37,9 @@ func ParseClientHello(data []byte) (*ClientHello, error) {
 		return nil, fmt.Errorf("not a ClientHello: handshake type 0x%02x", hsType)
 	}
 	hsLen := int(payload[1])<<16 | int(payload[2])<<8 | int(payload[3])
+	if hsLen == 0 {
+		return nil, fmt.Errorf("zero-length ClientHello")
+	}
 	payload = payload[4:]
 	if len(payload) < hsLen {
 		return nil, fmt.Errorf("ClientHello truncated: have %d, need %d", len(payload), hsLen)
@@ -224,6 +230,9 @@ func ParseServerHello(data []byte) (*ServerHello, error) {
 	}
 
 	recordLen := int(binary.BigEndian.Uint16(data[3:5]))
+	if recordLen == 0 {
+		return nil, fmt.Errorf("zero-length TLS record")
+	}
 	payload := data[5:]
 	if len(payload) < recordLen {
 		return nil, fmt.Errorf("record truncated")
@@ -234,6 +243,9 @@ func ParseServerHello(data []byte) (*ServerHello, error) {
 		return nil, fmt.Errorf("not a ServerHello")
 	}
 	hsLen := int(payload[1])<<16 | int(payload[2])<<8 | int(payload[3])
+	if hsLen == 0 {
+		return nil, fmt.Errorf("zero-length ServerHello")
+	}
 	payload = payload[4:]
 	if len(payload) < hsLen {
 		return nil, fmt.Errorf("ServerHello truncated")

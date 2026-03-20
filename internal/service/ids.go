@@ -13,6 +13,7 @@ import (
 	"github.com/google/nftables/expr"
 
 	"github.com/gatekeeper-firewall/gatekeeper/internal/backend"
+	"github.com/gatekeeper-firewall/gatekeeper/internal/validate"
 )
 
 // IDS provides Intrusion Detection and Prevention via Suricata.
@@ -94,6 +95,16 @@ func (i *IDS) Validate(cfg map[string]string) error {
 	if cfg["interfaces"] == "" {
 		return fmt.Errorf("interfaces is required")
 	}
+	// Validate each interface name to prevent command injection via Suricata CLI args.
+	for _, iface := range strings.Split(cfg["interfaces"], ",") {
+		iface = strings.TrimSpace(iface)
+		if iface == "" {
+			continue
+		}
+		if err := validate.Interface(iface); err != nil {
+			return fmt.Errorf("invalid interface name: %w", err)
+		}
+	}
 	return nil
 }
 
@@ -132,9 +143,14 @@ func (i *IDS) Start(cfg map[string]string) error {
 		// IDS mode: use AF_PACKET for passive monitoring.
 		for _, iface := range strings.Split(cfg["interfaces"], ",") {
 			iface = strings.TrimSpace(iface)
-			if iface != "" {
-				args = append(args, "--af-packet="+iface)
+			if iface == "" {
+				continue
 			}
+			// Defense-in-depth: re-validate at use site even though Validate() checks.
+			if err := validate.Interface(iface); err != nil {
+				return fmt.Errorf("invalid interface for af-packet: %w", err)
+			}
+			args = append(args, "--af-packet="+iface)
 		}
 	}
 

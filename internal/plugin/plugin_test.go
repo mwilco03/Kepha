@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -652,12 +653,13 @@ func TestDiagHandlerReturnsOutput(t *testing.T) {
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", rec.Code)
+	// Script execution is disabled for security — expect 403.
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 (script execution disabled), got %d", rec.Code)
 	}
 	body := rec.Body.String()
-	if body != "hello-from-diag\n" {
-		t.Errorf("expected %q, got %q", "hello-from-diag\n", body)
+	if !strings.Contains(body, "disabled") {
+		t.Errorf("expected disabled message, got %q", body)
 	}
 }
 

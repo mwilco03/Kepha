@@ -3,10 +3,12 @@ package inspect
 import (
 	"bufio"
 	"crypto/sha256"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -147,6 +149,9 @@ func NewFeedScheduler(engine *Engine, cacheDir string) *FeedScheduler {
 		cacheDir: cacheDir,
 		client: &http.Client{
 			Timeout: 30 * time.Second,
+			Transport: &http.Transport{
+				TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12},
+			},
 		},
 		stopCh: make(chan struct{}),
 	}
@@ -297,14 +302,14 @@ func (s *FeedScheduler) refreshAll() {
 
 // fetchFeed downloads and parses a single threat feed.
 func (s *FeedScheduler) fetchFeed(mf *ManagedFeed) {
-	slog.Info("fetching threat feed", "name", mf.Feed.Name, "url", mf.Feed.URL)
+	slog.Info("fetching threat feed", "name", mf.Feed.Name)
 
 	resp, err := s.client.Get(mf.Feed.URL)
 	if err != nil {
-		mf.LastError = fmt.Sprintf("download failed: %v", err)
+		mf.LastError = "download failed"
 		mf.RetryCount++
 		slog.Warn("threat feed download failed — keeping last-known-good",
-			"name", mf.Feed.Name, "error", err, "retries", mf.RetryCount)
+			"name", mf.Feed.Name, "retries", mf.RetryCount)
 		return
 	}
 	defer resp.Body.Close()
@@ -328,10 +333,10 @@ func (s *FeedScheduler) fetchFeed(mf *ManagedFeed) {
 	// Hash check for integrity / pinning.
 	hash := fmt.Sprintf("%x", sha256.Sum256(body))
 	if mf.PinHash != "" && hash != mf.PinHash {
-		mf.LastError = fmt.Sprintf("hash mismatch: got %s, pinned %s", hash[:12], mf.PinHash[:12])
+		mf.LastError = fmt.Sprintf("hash mismatch: got %s, pinned %s", hash, mf.PinHash)
 		mf.RetryCount++
 		slog.Error("threat feed hash pin violation — rejecting update",
-			"name", mf.Feed.Name, "got", hash[:12], "pinned", mf.PinHash[:12])
+			"name", mf.Feed.Name, "got", hash, "pinned", mf.PinHash)
 		return
 	}
 
@@ -375,6 +380,10 @@ func (s *FeedScheduler) fetchFeed(mf *ManagedFeed) {
 		"hash", hash[:12],
 	)
 }
+
+// maxFeedEntries caps the number of entries a single feed can contribute
+// to prevent memory exhaustion from a poisoned or oversized feed.
+const maxFeedEntries = 500000
 
 // parseFeed parses feed data based on format.
 func (s *FeedScheduler) parseFeed(format string, data []byte, feedName string) (map[string]ThreatEntry, error) {
@@ -427,6 +436,10 @@ func (s *FeedScheduler) parseCSV(data []byte, feedName string) (map[string]Threa
 		}
 
 		entries[hash] = entry
+		if len(entries) >= maxFeedEntries {
+			slog.Warn("feed entry limit reached, truncating", "name", feedName, "limit", maxFeedEntries)
+			break
+		}
 	}
 
 	return entries, scanner.Err()
@@ -473,6 +486,10 @@ func (s *FeedScheduler) parseJSON(data []byte, feedName string) (map[string]Thre
 			ThreatName: threatName,
 			Severity:   r.Severity,
 		}
+		if len(entries) >= maxFeedEntries {
+			slog.Warn("feed entry limit reached, truncating", "name", feedName, "limit", maxFeedEntries)
+			break
+		}
 	}
 
 	return entries, nil
@@ -498,15 +515,37 @@ func (s *FeedScheduler) parseLine(data []byte, feedName string) (map[string]Thre
 			continue
 		}
 
+		// Basic validation: skip entries that don't look like IPs or hashes.
+		if net.ParseIP(line) == nil && !isHexString(line) {
+			continue
+		}
+
 		entries[line] = ThreatEntry{
 			Hash:       line,
 			ThreatType: "blocklist",
 			ThreatName: feedName,
 			Severity:   "medium",
 		}
+		if len(entries) >= maxFeedEntries {
+			slog.Warn("feed entry limit reached, truncating", "name", feedName, "limit", maxFeedEntries)
+			break
+		}
 	}
 
 	return entries, scanner.Err()
+}
+
+// isHexString returns true if s looks like a hex-encoded hash (32-128 hex chars).
+func isHexString(s string) bool {
+	if len(s) < 32 || len(s) > 128 {
+		return false
+	}
+	for _, c := range s {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+			return false
+		}
+	}
+	return true
 }
 
 // syncToEngine pushes all enabled feeds into the engine.
@@ -574,6 +613,26 @@ func (s *FeedScheduler) loadAllFromCache() {
 			continue // No cache file — will be fetched.
 		}
 
+		// Read metadata first so we can verify cache integrity.
+		metaPath := filepath.Join(s.cacheDir, mf.Feed.Name+".meta.json")
+		var meta struct {
+			LastFetch time.Time `json:"last_fetch"`
+			LastHash  string    `json:"last_hash"`
+		}
+		if metaData, err := os.ReadFile(metaPath); err == nil {
+			json.Unmarshal(metaData, &meta)
+		}
+
+		// Verify cache integrity: if we have a stored hash, validate it.
+		if meta.LastHash != "" {
+			cacheHash := fmt.Sprintf("%x", sha256.Sum256(data))
+			if cacheHash != meta.LastHash {
+				slog.Warn("cached feed integrity check failed — discarding",
+					"name", mf.Feed.Name, "expected", meta.LastHash, "got", cacheHash)
+				continue
+			}
+		}
+
 		entries, err := s.parseFeed(mf.Feed.Format, data, mf.Feed.Name)
 		if err != nil {
 			slog.Warn("cached feed parse failed", "name", mf.Feed.Name, "error", err)
@@ -583,19 +642,8 @@ func (s *FeedScheduler) loadAllFromCache() {
 		mf.Feed.Hashes = entries
 		mf.Feed.EntryCount = len(entries)
 		mf.CachePath = path
-
-		// Read metadata.
-		metaPath := filepath.Join(s.cacheDir, mf.Feed.Name+".meta.json")
-		if metaData, err := os.ReadFile(metaPath); err == nil {
-			var meta struct {
-				LastFetch  time.Time `json:"last_fetch"`
-				LastHash   string    `json:"last_hash"`
-			}
-			if json.Unmarshal(metaData, &meta) == nil {
-				mf.LastFetch = meta.LastFetch
-				mf.LastHash = meta.LastHash
-			}
-		}
+		mf.LastFetch = meta.LastFetch
+		mf.LastHash = meta.LastHash
 
 		slog.Info("loaded threat feed from cache",
 			"name", mf.Feed.Name,

@@ -58,14 +58,23 @@ func ResolveAPIURL() string {
 func newHTTPClient() *http.Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 
-	if certPEM, err := os.ReadFile(defaultTLSCertPath); err == nil {
+	certPEM, err := os.ReadFile(defaultTLSCertPath)
+	if err != nil {
+		// Log that we couldn't read the cert — don't silently fall through.
+		if !os.IsNotExist(err) {
+			fmt.Fprintf(os.Stderr, "warning: failed to read TLS certificate %s: %v\n", defaultTLSCertPath, err)
+		}
+	} else {
 		pool, _ := x509.SystemCertPool()
 		if pool == nil {
 			pool = x509.NewCertPool()
 		}
-		pool.AppendCertsFromPEM(certPEM)
+		if !pool.AppendCertsFromPEM(certPEM) {
+			fmt.Fprintf(os.Stderr, "warning: TLS certificate %s contains no valid PEM data\n", defaultTLSCertPath)
+		}
 		transport.TLSClientConfig = &tls.Config{
 			RootCAs:    pool,
+			ServerName: "localhost",
 			MinVersion: tls.VersionTLS12,
 		}
 	}

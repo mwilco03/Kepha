@@ -54,6 +54,12 @@ const (
 	ActionServicesRead  = "services:read"
 	ActionServicesWrite = "services:write"
 	ActionMCPConnect    = "mcp:connect"
+
+	// Content filtering.
+	ActionContentFilterRead     = "content_filter:read"
+	ActionContentFilterWrite    = "content_filter:write"
+	ActionExceptionRequest      = "content_filter:exception_request"
+	ActionExceptionApprove      = "content_filter:exception_approve" // Admin-only: approve/deny/revoke exceptions.
 )
 
 // ValidRoles contains all recognized role names.
@@ -80,6 +86,8 @@ var rolePermissions = map[string]map[string]bool{
 		ActionAuditRead: true,
 		ActionServicesRead: true, ActionServicesWrite: true,
 		ActionMCPConnect: true,
+		ActionContentFilterRead: true, ActionContentFilterWrite: true,
+		ActionExceptionRequest: true, ActionExceptionApprove: true,
 	},
 	RoleOperator: {
 		ActionZonesRead: true, ActionZonesWrite: true,
@@ -93,6 +101,8 @@ var rolePermissions = map[string]map[string]bool{
 		ActionDiagRead: true, ActionDiagActive: true,
 		ActionAuditRead: true,
 		ActionServicesRead: true, ActionServicesWrite: true,
+		ActionContentFilterRead: true, ActionContentFilterWrite: true,
+		ActionExceptionRequest: true,
 	},
 	RoleAuditor: {
 		ActionZonesRead: true,
@@ -105,6 +115,7 @@ var rolePermissions = map[string]map[string]bool{
 		ActionDiagRead: true,
 		ActionAuditRead: true,
 		ActionServicesRead: true,
+		ActionContentFilterRead: true,
 	},
 	RoleDiagnostics: {
 		ActionZonesRead: true,
@@ -298,6 +309,18 @@ func splitScopes(s string) []string {
 func (e *Enforcer) CreateKey(name, role string, zoneScope, profileScope []string) (key string, id string, err error) {
 	if !ValidRoles[role] {
 		return "", "", ErrInvalidRole
+	}
+
+	// Reject scope values containing the delimiter to prevent parsing ambiguity.
+	for _, s := range zoneScope {
+		if strings.Contains(s, ",") {
+			return "", "", fmt.Errorf("rbac: zone scope %q contains invalid comma", s)
+		}
+	}
+	for _, s := range profileScope {
+		if strings.Contains(s, ",") {
+			return "", "", fmt.Errorf("rbac: profile scope %q contains invalid comma", s)
+		}
 	}
 
 	id, err = generateID()
@@ -647,6 +670,19 @@ func routeAction(method, path string) string {
 		}
 		return ActionServicesRead
 
+	// Content filtering.
+	case strings.HasPrefix(path, "/api/v1/content-filters/exceptions") && isWrite:
+		// Exception review (approve/deny/revoke) requires admin approval permission.
+		if strings.Contains(path, "/approve") || strings.Contains(path, "/deny") || strings.Contains(path, "/revoke") {
+			return ActionExceptionApprove
+		}
+		return ActionExceptionRequest
+	case strings.HasPrefix(path, "/api/v1/content-filters"):
+		if isWrite {
+			return ActionContentFilterWrite
+		}
+		return ActionContentFilterRead
+
 	// MCP websocket/SSE endpoint.
 	case strings.HasPrefix(path, "/api/v1/mcp"):
 		return ActionMCPConnect
@@ -683,14 +719,10 @@ func RBACMiddleware(enforcer *Enforcer) func(http.Handler) http.Handler {
 
 			ak, err := enforcer.ValidateKey(rawKey)
 			if err != nil {
-				status := http.StatusUnauthorized
-				msg := "invalid api key"
-				if errors.Is(err, ErrKeyInactive) {
-					msg = "api key has been revoked"
-				} else if errors.Is(err, ErrKeyExpired) {
-					msg = "api key has expired"
-				}
-				writeJSONError(w, status, msg)
+				// Log the specific reason server-side for debugging,
+				// but return a generic message to prevent key enumeration.
+				slog.Debug("rbac: authentication failed", "error", err, "remote", r.RemoteAddr)
+				writeJSONError(w, http.StatusUnauthorized, "invalid api key")
 				return
 			}
 

@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"syscall"
@@ -185,16 +186,27 @@ func (d *Dnsmasq) buildMainConfig(zones []model.Zone) string {
 	b.WriteString("log-queries\n")
 	b.WriteString("log-dhcp\n")
 	for _, srv := range d.UpstreamDNS {
+		// Validate upstream DNS to prevent config injection via newlines or special chars.
+		if validate.IP(srv) != nil {
+			slog.Warn("skipping invalid upstream DNS", "value", srv)
+			continue
+		}
 		b.WriteString(fmt.Sprintf("server=%s\n", srv))
 	}
-	b.WriteString(fmt.Sprintf("local=/%s/\n", d.LocalDomain))
-	b.WriteString(fmt.Sprintf("domain=%s\n", d.LocalDomain))
+	// Validate LocalDomain to prevent config injection via newlines or special chars.
+	localDomain := d.LocalDomain
+	if !isDNSLabel(localDomain) {
+		slog.Warn("invalid local domain, falling back to default", "value", localDomain)
+		localDomain = "gk.local"
+	}
+	b.WriteString(fmt.Sprintf("local=/%s/\n", localDomain))
+	b.WriteString(fmt.Sprintf("domain=%s\n", localDomain))
 	b.WriteString("expand-hosts\n")
 	b.WriteString(fmt.Sprintf("conf-file=%s\n", filepath.Join(d.confDir, "static-leases.conf")))
 	b.WriteString("\n")
 
 	// PXE boot support — chainload iPXE for BIOS and UEFI clients.
-	if d.PXEServer != "" {
+	if d.PXEServer != "" && validate.IP(d.PXEServer) == nil {
 		b.WriteString("# PXE boot\n")
 		b.WriteString("enable-tftp\n")
 		b.WriteString(fmt.Sprintf("dhcp-boot=tag:!ipxe,undionly.kpxe,pxeserver,%s\n", d.PXEServer))
@@ -255,6 +267,15 @@ func (d *Dnsmasq) buildStaticLeases(devices []model.DeviceAssignment) string {
 	}
 
 	return b.String()
+}
+
+// dnsLabelRe matches a valid DNS domain name (e.g., "gk.local", "home.lan").
+var dnsLabelRe = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9.-]{0,253}[a-zA-Z0-9])?$`)
+
+// isDNSLabel validates a domain name for use in dnsmasq config.
+// Rejects newlines, control characters, and other injection vectors.
+func isDNSLabel(s string) bool {
+	return s != "" && dnsLabelRe.MatchString(s) && !strings.Contains(s, "..")
 }
 
 // deriveDHCPRange generates a DHCP range from a CIDR.

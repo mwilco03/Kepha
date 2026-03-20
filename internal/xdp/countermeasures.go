@@ -1,9 +1,9 @@
 package xdp
 
 import (
+	"crypto/rand"
 	"fmt"
 	"log/slog"
-	"math/rand"
 	"sync"
 	"time"
 )
@@ -394,7 +394,12 @@ func (c *Countermeasures) GenerateNftRules() []string {
 
 			case TechniqueTTLRandomize:
 				// TTL manipulation via nftables mangle.
-				ttl := 32 + rand.Intn(96) // Random TTL between 32-128.
+				b := make([]byte, 1)
+				if _, err := rand.Read(b); err != nil {
+					slog.Error("crypto/rand failed for TTL randomization", "error", err)
+					continue
+				}
+				ttl := 32 + int(b[0])%96 // Random TTL between 32-127.
 				rules = append(rules,
 					fmt.Sprintf("ip daddr %s ip ttl set %d comment \"ttl-rand-%s\"",
 						p.Target, ttl, sanitizeForNft(p.Target)),

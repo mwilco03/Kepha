@@ -398,6 +398,10 @@ func (h *HAManager) Start(cfg map[string]string) error {
 		slog.Info("ha: starting in standalone mode")
 
 	case "active-passive", "active-active":
+		// SECURITY: warn that stub elector is in use — both nodes will claim master.
+		// A real elector (etcd) should be configured for production HA.
+		slog.Warn("ha: using stub leader elector in cluster mode — both nodes will become master; configure etcd for production",
+			"mode", h.haCfg.Mode)
 		// Generate and apply keepalived config.
 		if err := h.generateKeepalivedConfig(); err != nil {
 			return fmt.Errorf("generate keepalived config: %w", err)
@@ -564,6 +568,17 @@ func (h *HAManager) parseConfig(cfg map[string]string) error {
 // ---------------------------------------------------------------------------
 
 // generateKeepalivedConfig writes a keepalived.conf for VRRP failover.
+// keepalivedSafe returns true if s contains only safe characters for keepalived config values.
+// Prevents config injection via newlines, braces, or special characters.
+func keepalivedSafe(s string) bool {
+	for _, c := range s {
+		if c == '\n' || c == '\r' || c == '{' || c == '}' || c == ';' || c == '#' || c == '"' || c == '\'' {
+			return false
+		}
+	}
+	return true
+}
+
 func (h *HAManager) generateKeepalivedConfig() error {
 	if err := os.MkdirAll(h.haCfg.KeepalivedConfDir, 0o755); err != nil {
 		return fmt.Errorf("create keepalived conf dir: %w", err)
@@ -572,6 +587,19 @@ func (h *HAManager) generateKeepalivedConfig() error {
 	vip := h.haCfg.VirtualIP
 	iface := h.haCfg.VRRPInterface
 	priority := h.haCfg.VRRPPriority
+
+	// Validate config values to prevent keepalived config injection.
+	if !keepalivedSafe(h.haCfg.NodeID) || !keepalivedSafe(iface) || !keepalivedSafe(vip) {
+		return fmt.Errorf("keepalived config contains unsafe characters in node_id, interface, or vip")
+	}
+	if h.haCfg.VRRPAuthPass != "" && !keepalivedSafe(h.haCfg.VRRPAuthPass) {
+		return fmt.Errorf("keepalived auth_pass contains unsafe characters")
+	}
+	for _, peer := range h.haCfg.PeerNodes {
+		if !keepalivedSafe(peer) {
+			return fmt.Errorf("keepalived peer node address contains unsafe characters: %q", peer)
+		}
+	}
 
 	// Determine VRRP state: higher priority starts as MASTER.
 	vrrpState := "BACKUP"
@@ -648,7 +676,8 @@ func (h *HAManager) generateKeepalivedConfig() error {
 	b.WriteString("}\n")
 
 	confPath := filepath.Join(h.haCfg.KeepalivedConfDir, "keepalived.conf")
-	if err := os.WriteFile(confPath, []byte(b.String()), 0o644); err != nil {
+	// Restrict to owner-only: config contains VRRP auth password.
+	if err := os.WriteFile(confPath, []byte(b.String()), 0o600); err != nil {
 		return fmt.Errorf("write keepalived.conf: %w", err)
 	}
 

@@ -2,11 +2,16 @@ package compiler
 
 import (
 	"fmt"
+	"log/slog"
+	"regexp"
 	"strings"
 
 	"github.com/gatekeeper-firewall/gatekeeper/internal/model"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/validate"
 )
+
+// validIfaceName matches valid Linux interface names (alphanumeric, dash, underscore, dot; max 15 chars).
+var validIfaceName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,14}$`)
 
 // CompiledRuleset is the output of the compiler — a complete nftables ruleset.
 type CompiledRuleset struct {
@@ -81,10 +86,19 @@ func Compile(input *Input) (*CompiledRuleset, error) {
 		b.WriteString("\t}\n\n")
 	}
 
+	// Find WAN interface once for all chain builders.
+	var wanIface string
+	for _, z := range input.Zones {
+		if z.Name == "wan" {
+			wanIface = z.Interface
+			break
+		}
+	}
+
 	// Emit the base chains.
 	writeInputChain(&b, input)
-	writeForwardChain(&b, input, policyMap, aliasMap, zoneProfiles, profileDevices)
-	writeNATChain(&b, input)
+	writeForwardChain(&b, input, policyMap, aliasMap, zoneProfiles, profileDevices, wanIface)
+	writeNATChain(&b, wanIface)
 
 	b.WriteString("}\n")
 
@@ -130,22 +144,13 @@ func writeInputChain(b *strings.Builder, input *Input) {
 
 func writeForwardChain(b *strings.Builder, input *Input, policyMap map[string]*model.Policy,
 	aliasMap map[string]*model.Alias, zoneProfiles map[int64][]model.Profile,
-	profileDevices map[int64][]model.DeviceAssignment) {
+	profileDevices map[int64][]model.DeviceAssignment, wanIface string) {
 
 	b.WriteString("\tchain forward {\n")
 	b.WriteString("\t\ttype filter hook forward priority filter; policy drop;\n\n")
 	b.WriteString("\t\t# Allow established/related.\n")
 	b.WriteString("\t\tct state established,related accept\n")
 	b.WriteString("\t\tct state invalid drop\n\n")
-
-	// Find WAN zone for outbound rules.
-	var wanIface string
-	for _, z := range input.Zones {
-		if z.Name == "wan" {
-			wanIface = z.Interface
-			break
-		}
-	}
 
 	// Per-zone forwarding rules based on profiles and policies.
 	for _, zone := range input.Zones {
@@ -157,6 +162,8 @@ func writeForwardChain(b *strings.Builder, input *Input, policyMap map[string]*m
 		for _, profile := range profiles {
 			policy := policyMap[profile.PolicyName]
 			if policy == nil {
+				slog.Warn("profile references missing policy — skipping",
+					"profile", profile.Name, "zone", zone.Name, "policy", profile.PolicyName)
 				continue
 			}
 
@@ -190,15 +197,7 @@ func writeForwardChain(b *strings.Builder, input *Input, policyMap map[string]*m
 	b.WriteString("\t}\n\n")
 }
 
-func writeNATChain(b *strings.Builder, input *Input) {
-	var wanIface string
-	for _, z := range input.Zones {
-		if z.Name == "wan" {
-			wanIface = z.Interface
-			break
-		}
-	}
-
+func writeNATChain(b *strings.Builder, wanIface string) {
 	if wanIface == "" {
 		return
 	}
@@ -266,15 +265,28 @@ func compileRule(r model.Rule, srcIface, wanIface string, aliasMap map[string]*m
 	return strings.Join(parts, " ")
 }
 
+// maxAliasExpansion caps the total number of resolved members to prevent
+// exponential blowup from deeply nested aliases with many members.
+const maxAliasExpansion = 10000
+
 func resolveAliasMembers(a *model.Alias, aliasMap map[string]*model.Alias, depth int) []string {
+	seen := make(map[string]struct{})
+	return resolveAliasMembersDedup(a, aliasMap, depth, seen)
+}
+
+func resolveAliasMembersDedup(a *model.Alias, aliasMap map[string]*model.Alias, depth int, seen map[string]struct{}) []string {
 	if depth > 10 {
 		return nil // Prevent infinite recursion.
 	}
 
 	if a.Type != model.AliasTypeNested {
-		var safe []string
+		safe := make([]string, 0, len(a.Members))
 		for _, m := range a.Members {
+			if _, dup := seen[m]; dup {
+				continue
+			}
 			if validate.AliasMember(m, string(a.Type)) == nil {
+				seen[m] = struct{}{}
 				safe = append(safe, m)
 			}
 		}
@@ -287,7 +299,11 @@ func resolveAliasMembers(a *model.Alias, aliasMap map[string]*model.Alias, depth
 		if !ok {
 			continue
 		}
-		resolved = append(resolved, resolveAliasMembers(nested, aliasMap, depth+1)...)
+		resolved = append(resolved, resolveAliasMembersDedup(nested, aliasMap, depth+1, seen)...)
+		if len(resolved) > maxAliasExpansion {
+			resolved = resolved[:maxAliasExpansion]
+			return resolved
+		}
 	}
 	return resolved
 }
@@ -321,8 +337,20 @@ func modelActionToNFT(action model.RuleAction) string {
 	}
 }
 
+// sanitizeName produces a valid nftables identifier from a user-supplied name.
+// Only alphanumeric characters and underscores are kept.
 func sanitizeName(name string) string {
-	return strings.ReplaceAll(strings.ReplaceAll(name, "-", "_"), ".", "_")
+	var b strings.Builder
+	b.Grow(len(name))
+	for _, c := range name {
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9', c == '_':
+			b.WriteRune(c)
+		default:
+			b.WriteByte('_')
+		}
+	}
+	return b.String()
 }
 
 func validateInput(input *Input) error {
@@ -330,12 +358,14 @@ func validateInput(input *Input) error {
 		return fmt.Errorf("no zones defined")
 	}
 
-	// Check for WAN zone.
+	// Check for WAN zone and validate interface names.
 	hasWAN := false
 	for _, z := range input.Zones {
 		if z.Name == "wan" {
 			hasWAN = true
-			break
+		}
+		if z.Interface != "" && !validIfaceName.MatchString(z.Interface) {
+			return fmt.Errorf("zone %q has invalid interface name: %q", z.Name, z.Interface)
 		}
 	}
 	if !hasWAN {

@@ -544,6 +544,45 @@ func (v *VPNProvider) applyWGCtrlFromConfig(confText string) error {
 	return nil
 }
 
+// ovpnDangerousDirectives are OpenVPN config directives that can execute
+// arbitrary commands. Custom .ovpn files MUST be sanitized to strip these
+// before being passed to the openvpn process (prevents RCE via config injection).
+var ovpnDangerousDirectives = []string{
+	"up", "down", "script-security", "tls-verify", "ipchange",
+	"client-connect", "client-disconnect", "learn-address",
+	"auth-user-pass-verify", "route-up", "route-pre-down",
+	"plugin", "iproute",
+}
+
+// sanitizeOpenVPNConfig removes dangerous directives from an OpenVPN config
+// that could execute arbitrary shell commands. Returns the sanitized config.
+func sanitizeOpenVPNConfig(data []byte) []byte {
+	var safe strings.Builder
+	for _, line := range strings.Split(string(data), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || trimmed[0] == '#' || trimmed[0] == ';' {
+			safe.WriteString(line)
+			safe.WriteByte('\n')
+			continue
+		}
+		directive := strings.Fields(trimmed)[0]
+		dangerous := false
+		for _, d := range ovpnDangerousDirectives {
+			if strings.EqualFold(directive, d) {
+				dangerous = true
+				break
+			}
+		}
+		if dangerous {
+			safe.WriteString("# STRIPPED (security): " + line + "\n")
+		} else {
+			safe.WriteString(line)
+			safe.WriteByte('\n')
+		}
+	}
+	return []byte(safe.String())
+}
+
 // --- OpenVPN connection ---
 
 func (v *VPNProvider) startOpenVPN(cfg map[string]string) error {
@@ -551,7 +590,25 @@ func (v *VPNProvider) startOpenVPN(cfg map[string]string) error {
 
 	var confPath string
 	if provider == ProviderCustom {
-		confPath = cfg["custom_config"]
+		// Read and sanitize the user-provided .ovpn file to strip dangerous
+		// directives (up/down/plugin/script-security) that enable RCE.
+		rawData, err := os.ReadFile(cfg["custom_config"])
+		if err != nil {
+			return fmt.Errorf("read custom openvpn config: %w", err)
+		}
+		sanitized := sanitizeOpenVPNConfig(rawData)
+		tmpFile, err := os.CreateTemp("", "gk-vpn-safe-*.ovpn")
+		if err != nil {
+			return fmt.Errorf("create sanitized config: %w", err)
+		}
+		if _, err := tmpFile.Write(sanitized); err != nil {
+			tmpFile.Close()
+			os.Remove(tmpFile.Name())
+			return fmt.Errorf("write sanitized config: %w", err)
+		}
+		tmpFile.Close()
+		os.Chmod(tmpFile.Name(), 0o600)
+		confPath = tmpFile.Name()
 	} else {
 		var err error
 		confPath, err = v.generateOpenVPNConfig(cfg)
@@ -582,8 +639,11 @@ func (v *VPNProvider) startOpenVPN(cfg map[string]string) error {
 	}
 
 	// openvpn is a third-party daemon that must be managed via CLI.
+	// --script-security 0 prevents execution of any external scripts
+	// as defense-in-depth (config is already sanitized above).
 	cmd := exec.Command("openvpn",
 		"--config", confPath,
+		"--script-security", "0",
 		"--daemon",
 		"--log", "/var/log/gatekeeper/vpn-provider.log",
 		"--writepid", "/run/gatekeeper/vpn-provider.pid",
