@@ -21,11 +21,11 @@ Items marked `[x]` are verified complete. Items marked `[ ]` are open. Priority 
 ## HIGH
 
 ### Existing
-- [ ] **H1 — MCP server no cryptographic auth** `internal/mcp/server.go:387-389` — Principal is self-declared header. Route MCP through API auth middleware. *(Security Engineer)*
-- [ ] **H2 — XSS in WireGuard innerHTML** `internal/web/templates/wireguard.html:88-100` — Peer name/pubkey/allowed_ips unescaped in innerHTML. Use textContent or escapeHtml(). *(Frontend Developer)*
-- [ ] **H3 — htmx-to-API auth mismatch** `internal/web/templates/assign.html:11` — Web session cookie not accepted by API middleware. Forms silently 401. *(Frontend Developer)*
+- [x] **H1 — MCP server no cryptographic auth** — FIXED: MCP handler wrapped with API AuthMiddleware in main.go. *(Security Engineer)* `1cf0cb6`
+- [x] **H2 — XSS in WireGuard innerHTML** — FIXED: Replaced innerHTML with DOM construction (createElement/textContent). *(Frontend Developer)* `bcc48ff`
+- [x] **H3 — htmx-to-API auth mismatch** — FIXED: API middleware accepts gk_session cookie via shared SessionValidator. *(Frontend Developer)* `acf5d0b`
 - [ ] **H4 — Netlink multi-port uses first port only** `internal/driver/nftables_netlink.go:530-539` — "80,443" only matches 80. Implement anonymous nft sets. *(Network Engineer)*
-- [ ] **H5 — No anti-spoof rules on WAN** `internal/compiler/compiler.go` (absent) — No RFC1918/bogon ingress filtering. *(Network Engineer)*
+- [x] **H5 — No anti-spoof rules on WAN** — FIXED: Bogon nft set + anti-spoof drop rule on WAN forward chain. *(Network Engineer)* `2ec073c`
 - [ ] **H6 — ICMP accept-all includes WAN** `internal/compiler/compiler.go:118` — Restrict to types 0,3,8,11. Rate-limit on WAN. *(Network Engineer)*
 - [ ] **H7 — RBAC cache stores plaintext keys** `internal/rbac/rbac.go:240-241` — Use SHA-256 of key as cache key. *(Security Engineer)*
 - [ ] **H8 — No zone subnet overlap validation** `internal/config/zones.go:42-52` — CreateZone() allows overlapping CIDRs. *(Network Engineer)*
@@ -38,7 +38,7 @@ Items marked `[x]` are verified complete. Items marked `[ ]` are open. Priority 
 
 ### Backend Architecture
 - [ ] **H13 — driver/nftables.go + nftables_netlink.go are ~810 lines dead code** — Never instantiated by daemon. Will silently bitrot. *(Backend Architect)*
-- [ ] **H14 — NftablesBackend hardcodes API port 8080** `internal/backend/firewall_nftables.go:426` — Uses `binaryPort(8080)` not `input.APIPort`. Non-default ports get locked out. *(Backend Architect)*
+- [x] **H14 — NftablesBackend hardcodes API port 8080** — FIXED: Uses `input.APIPort`. *(Backend Architect)* `8e894ea`
 - [ ] **H15 — NftablesBackend never builds alias sets** `internal/backend/firewall_nftables.go` — Rules referencing SrcAlias/DstAlias silently ignored. *(Backend Architect)*
 - [ ] **H16 — ApplyWithConfirm timer races with Confirm()** `internal/backend/firewall.go:99-108` — Timer goroutine can rollback after Confirm() returns. *(Backend Architect)*
 
