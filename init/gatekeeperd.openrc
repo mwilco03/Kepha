@@ -6,7 +6,9 @@ description="Gatekeeper Firewall Daemon"
 
 command="/usr/local/bin/gatekeeperd"
 command_background="yes"
-pidfile="/run/gatekeeper/gatekeeperd.pid"
+# Use a separate PID file for OpenRC's start-stop-daemon so it doesn't
+# race with the daemon's own /run/gatekeeper/gatekeeperd.pid.
+pidfile="/run/gatekeeper/gatekeeperd-openrc.pid"
 
 GATEKEEPER_LISTEN="${GATEKEEPER_LISTEN:-:8080}"
 GATEKEEPER_DB="${GATEKEEPER_DB:-/var/lib/gatekeeper/gatekeeper.db}"
