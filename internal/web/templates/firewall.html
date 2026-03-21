@@ -92,16 +92,36 @@
 
 <script>
 function switchTab(name) {
-    document.querySelectorAll('.tab').forEach(function(t) { t.classList.remove('active'); });
+    document.querySelectorAll('.tab').forEach(function(t) {
+        t.classList.remove('active');
+        t.setAttribute('aria-selected', 'false');
+    });
     document.querySelectorAll('.tab-content').forEach(function(t) { t.classList.remove('active'); });
     document.getElementById('tab-' + name).classList.add('active');
-    // Activate the matching tab button.
     var tabs = document.querySelectorAll('.tab');
     var names = ['overview', 'rules', 'compiled'];
     for (var i = 0; i < tabs.length; i++) {
-        if (names[i] === name) tabs[i].classList.add('active');
+        if (names[i] === name) {
+            tabs[i].classList.add('active');
+            tabs[i].setAttribute('aria-selected', 'true');
+            tabs[i].focus();
+        }
     }
 }
+// Keyboard navigation: arrow keys move between tabs.
+document.querySelector('.tab-bar').addEventListener('keydown', function(e) {
+    var tabs = Array.from(document.querySelectorAll('.tab'));
+    var names = ['overview', 'rules', 'compiled'];
+    var idx = tabs.indexOf(document.activeElement);
+    if (idx < 0) return;
+    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+        e.preventDefault();
+        switchTab(names[(idx + 1) % names.length]);
+    } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        switchTab(names[(idx - 1 + names.length) % names.length]);
+    }
+});
 
 // Syntax highlight the compiled ruleset.
 (function() {
