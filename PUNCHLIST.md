@@ -1,7 +1,7 @@
 # Gatekeeper Punchlist
 
 **Goal:** Production-ready network firewall appliance deployment.
-**Status:** 5/5 Critical DONE, 25/26 High DONE. 1 High deferred (H17 CI — GitHub OAuth scope). 70+ Medium remaining.
+**Status:** 5/5 Critical, 25/26 High, ~40/70 Medium, ~12/26 Low DONE. Deployment verified at 192.168.7.131. 208 commits.
 **Updated:** 2026-03-21
 
 Items marked `[x]` are verified complete. Items marked `[ ]` are open. Priority order within each severity.
