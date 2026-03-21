@@ -155,7 +155,9 @@ gatekeeperd [flags]
 
   --listen          API listen address (default :8080)
   --db              SQLite database path
-  --api-key         API key for authentication
+  --api-key         API key for authentication (required unless --enable-rbac)
+  --api-key-file    File containing API key (avoids ps exposure)
+  --log-level       Log level: debug, info, warn, error (default info)
   --ruleset-dir     nftables ruleset output directory
   --dnsmasq-dir     dnsmasq config output directory
   --upstream-dns    Comma-separated upstream DNS servers
