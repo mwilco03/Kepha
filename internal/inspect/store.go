@@ -137,9 +137,31 @@ func (s *SQLiteStore) AssignProfile(hash, profileName string) error {
 	return nil
 }
 
-// ListThreatMatches returns all fingerprints flagged as threat matches.
+// ListThreatMatches returns only fingerprints flagged as threat matches.
 func (s *SQLiteStore) ListThreatMatches() ([]ObservedFingerprint, error) {
-	return s.ListFingerprints("", 1000) // Reuse with filter applied below.
+	rows, err := s.db.Query(`
+		SELECT id, type, hash, src_ip, dst_ip, sni, device_name, assigned_profile,
+		       first_seen, last_seen, count, threat_match
+		FROM fingerprints WHERE threat_match = 1 ORDER BY last_seen DESC LIMIT 1000
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []ObservedFingerprint
+	for rows.Next() {
+		var fp ObservedFingerprint
+		var threatMatch int
+		if err := rows.Scan(&fp.ID, &fp.Type, &fp.Hash, &fp.SrcIP, &fp.DstIP, &fp.SNI,
+			&fp.DeviceName, &fp.AssignedProfile, &fp.FirstSeen, &fp.LastSeen,
+			&fp.Count, &threatMatch); err != nil {
+			return nil, err
+		}
+		fp.ThreatMatch = threatMatch != 0
+		result = append(result, fp)
+	}
+	return result, rows.Err()
 }
 
 func boolToInt(b bool) int {
