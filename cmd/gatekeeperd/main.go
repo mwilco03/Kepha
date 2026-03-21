@@ -278,6 +278,9 @@ func main() {
 		slog.Info("RBAC enforcer enabled")
 	}
 
+	// Register the config store for DB-backed audit logging.
+	api.SetAuditStore(store)
+
 	apiHandler := api.NewRouterWithConfig(&api.RouterConfig{
 		Store:        store,
 		NFT:          fw,
