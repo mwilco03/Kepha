@@ -413,14 +413,20 @@ func (s *IOCStore) BulkAddIOCs(iocs []IOC) (added int, err error) {
 			}
 		}
 
-		s.index(ioc)
 		added++
 	}
 
+	// L18: Commit BEFORE indexing — if commit fails, in-memory index
+	// stays consistent with the database.
 	if tx != nil {
 		if err = tx.Commit(); err != nil {
 			return 0, fmt.Errorf("commit: %w", err)
 		}
+	}
+
+	// Index in memory only after successful commit.
+	for i := range iocs[:added] {
+		s.index(&iocs[i])
 	}
 
 	slog.Info("bulk iocs added", "count", added)
