@@ -1,7 +1,7 @@
 # Gatekeeper Punchlist
 
 **Goal:** Production-ready network firewall appliance deployment.
-**Status:** 5/5 Critical, 17/26 High RESOLVED. 9 High, 70+ Medium remaining.
+**Status:** 5/5 Critical, 22/26 High RESOLVED. 4 High remaining (H17 blocked, H22/H25/H26 in progress).
 **Updated:** 2026-03-21
 
 Items marked `[x]` are verified complete. Items marked `[ ]` are open. Priority order within each severity.
@@ -34,12 +34,12 @@ Items marked `[x]` are verified complete. Items marked `[ ]` are open. Priority 
 - [x] **H9 — XDP/eBPF is control-plane only** — FIXED: Marked as experimental stub with WARN logs. *(Threat Detection)* `64502b4`
 - [x] **H10 — matchCIDRSimple uses broken prefix matching** — FIXED: Replaced with net.ParseCIDR + Contains(). *(Threat Detection)* `1db9d0d`
 - [x] **H11 — GenerateNftRules builds shell-out strings** — FIXED: Replaced with structured rule descriptors. *(Threat Detection)* `d1e2403`
-- [ ] **H12 — Fingerprint RecordFingerprint upsert broken** `internal/inspect/store.go:49-65` — Erudite working on fix now. *(Threat Detection + Database Optimizer)*
+- [x] **H12 — Fingerprint RecordFingerprint upsert broken** — FIXED: ON CONFLICT(hash, src_ip) + unique index. *(Threat Detection)* `b988e4b`
 
 ### Backend Architecture
-- [ ] **H13 — driver/nftables.go + nftables_netlink.go are ~810 lines dead code** — Never instantiated by daemon. Will silently bitrot. *(Backend Architect)*
+- [x] **H13 — driver/nftables.go + nftables_netlink.go are ~810 lines dead code** — FIXED: Deleted. *(Backend Architect)* `a8208df`
 - [x] **H14 — NftablesBackend hardcodes API port 8080** — FIXED: Uses `input.APIPort`. *(Backend Architect)* `8e894ea`
-- [ ] **H15 — NftablesBackend never builds alias sets** `internal/backend/firewall_nftables.go` — Rules referencing SrcAlias/DstAlias silently ignored. *(Backend Architect)*
+- [x] **H15 — NftablesBackend never builds alias sets** — FIXED: buildAliasSets() + Lookup expressions. *(Backend Architect)* `0e0f50c`
 - [x] **H16 — ApplyWithConfirm timer races with Confirm()** — FIXED: confirmed flag + applyLocked(). *(Backend Architect)* `de20737`
 
 ### CI/CD
@@ -47,7 +47,7 @@ Items marked `[x]` are verified complete. Items marked `[ ]` are open. Priority 
 
 ### SRE
 - [x] **H18 — No log-level flag; stuck at INFO** — FIXED: --log-level flag (debug/info/warn/error). *(SRE)* `e3aef18`
-- [ ] **H19 — Audit middleware only logs to stdout, not DB** `internal/api/audit.go:19-33` — Handlers bypassing ops layer leave no DB audit record. *(SRE)*
+- [x] **H19 — Audit middleware only logs to stdout, not DB** — FIXED: Persists to DB via store.LogAudit(). *(SRE)* `83aa8c2`
 - [x] **H20 — No WAL checkpoint or VACUUM** — FIXED: Store.Maintenance() with daily goroutine. *(SRE)* `c301503`
 - [x] **H21 — Config revisions grow without bound** — FIXED: Pruned to last 100 in Maintenance(). *(SRE)* `c301503`
 - [ ] **H22 — No log rotation** `init/gatekeeperd.openrc:49-50` — Daemon log grows unbounded. *(SRE)*
