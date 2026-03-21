@@ -27,6 +27,7 @@ type Input struct {
 	Devices      []model.DeviceAssignment
 	WGListenPort int  // WireGuard listen port (0 = disabled).
 	MSSClampPMTU bool // Enable TCP MSS clamping to path MTU in forward chain.
+	APIPort      int  // Management API port (always allowed inbound; 0 = skip rule).
 }
 
 // Compile transforms the config model into an nftables ruleset.
@@ -116,12 +117,12 @@ func writeInputChain(b *strings.Builder, input *Input) {
 	b.WriteString("\t\t# Allow ICMP.\n")
 	b.WriteString("\t\tip protocol icmp accept\n\n")
 
-	// Allow API access from LAN zones.
-	for _, z := range input.Zones {
-		if z.TrustLevel == model.TrustFull && z.Interface != "" {
-			fmt.Fprintf(b, "\t\t# Allow API from %s.\n", z.Name)
-			fmt.Fprintf(b, "\t\tiifname %q tcp dport 8080 accept\n\n", z.Interface)
-		}
+	// Allow management API access from all interfaces.
+	// The API enforces its own authentication (API key / RBAC),
+	// so the firewall must not block the management plane.
+	if input.APIPort > 0 {
+		fmt.Fprintf(b, "\t\t# Allow management API.\n")
+		fmt.Fprintf(b, "\t\ttcp dport %d accept\n\n", input.APIPort)
 	}
 
 	// Allow WireGuard if configured.

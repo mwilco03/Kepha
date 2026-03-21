@@ -137,11 +137,11 @@ func addInputRules(conn *nft.Conn, table *nft.Table, chain *nft.Chain, input *co
 	// ip protocol icmp accept
 	addRule(nlRule(nlMatchIPProto(1), nlVerdictAccept())) // 1 = ICMP
 
-	// Allow API access from full-trust zones.
-	for _, z := range input.Zones {
-		if z.TrustLevel == model.TrustFull && z.Interface != "" {
-			addRule(nlRule(nlMatchIifname(z.Interface), nlMatchTCPDport(8080), nlVerdictAccept()))
-		}
+	// Allow management API access from all interfaces.
+	// The API enforces its own authentication (API key / RBAC),
+	// so the firewall must not block the management plane.
+	if input.APIPort > 0 {
+		addRule(nlRule(nlMatchTCPDport(uint16(input.APIPort)), nlVerdictAccept()))
 	}
 
 	// Allow WireGuard if configured.

@@ -402,19 +402,14 @@ func (b *NftablesBackend) buildInputChain(conn *nft.Conn, table *nft.Table, inpu
 		},
 	})
 
-	// Per-zone: allow API (8080), DHCP (67), DNS (53) on LAN interfaces.
-	for _, z := range input.Zones {
-		if z.Name == "wan" || z.Interface == "" {
-			continue
-		}
-
-		// Allow TCP 8080 (API) from this zone.
+	// Allow management API from all interfaces.
+	// The API enforces its own authentication (API key / RBAC),
+	// so the firewall must not block the management plane.
+	if input.APIPort > 0 {
 		conn.AddRule(&nft.Rule{
 			Table: table,
 			Chain: chain,
 			Exprs: []expr.Any{
-				&expr.Meta{Key: expr.MetaKeyIIFNAME, Register: 1},
-				&expr.Cmp{Op: expr.CmpOpEq, Register: 1, Data: ifname(z.Interface)},
 				&expr.Meta{Key: expr.MetaKeyL4PROTO, Register: 1},
 				&expr.Cmp{Op: expr.CmpOpEq, Register: 1, Data: []byte{6}}, // TCP
 				&expr.Payload{
@@ -423,10 +418,17 @@ func (b *NftablesBackend) buildInputChain(conn *nft.Conn, table *nft.Table, inpu
 					Offset:       2, // destination port
 					Len:          2,
 				},
-				&expr.Cmp{Op: expr.CmpOpEq, Register: 1, Data: binaryPort(8080)},
+				&expr.Cmp{Op: expr.CmpOpEq, Register: 1, Data: binaryPort(uint16(input.APIPort))},
 				&expr.Verdict{Kind: expr.VerdictAccept},
 			},
 		})
+	}
+
+	// Per-zone: allow DHCP (67), DNS (53) on LAN interfaces.
+	for _, z := range input.Zones {
+		if z.Name == "wan" || z.Interface == "" {
+			continue
+		}
 
 		// Allow UDP 53 (DNS) and 67 (DHCP).
 		for _, port := range []uint16{53, 67} {

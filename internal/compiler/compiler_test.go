@@ -30,6 +30,7 @@ func basicInput() *Input {
 		Profiles: []model.Profile{
 			{ID: 1, Name: "desktop", ZoneID: 2, PolicyName: "lan-outbound"},
 		},
+		APIPort: 8080,
 	}
 }
 
@@ -76,9 +77,15 @@ func TestCompileBasic(t *testing.T) {
 		t.Error("missing DHCP/DNS rule")
 	}
 
-	// Should allow API from LAN (trust=full).
+	// Should allow management API from all interfaces.
 	if !strings.Contains(text, "tcp dport 8080 accept") {
-		t.Error("missing API access rule")
+		t.Error("missing management API access rule")
+	}
+	// Rule must be unconditional (no iifname qualifier).
+	for _, line := range strings.Split(text, "\n") {
+		if strings.Contains(line, "tcp dport 8080") && strings.Contains(line, "iifname") {
+			t.Error("management API rule should not be interface-restricted")
+		}
 	}
 }
 
