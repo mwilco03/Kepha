@@ -563,9 +563,25 @@ func newSessionStore() *sessionStore {
 	return s
 }
 
+const maxSessions = 10000
+
 func (s *sessionStore) add(token string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// Evict oldest sessions if at capacity.
+	if len(s.sessions) >= maxSessions {
+		var oldestToken string
+		var oldestTime time.Time
+		for t, exp := range s.sessions {
+			if oldestToken == "" || exp.Before(oldestTime) {
+				oldestToken = t
+				oldestTime = exp
+			}
+		}
+		if oldestToken != "" {
+			delete(s.sessions, oldestToken)
+		}
+	}
 	s.sessions[token] = time.Now().Add(24 * time.Hour)
 }
 
