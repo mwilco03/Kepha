@@ -311,6 +311,9 @@ func (d *DNSFilter) fetchBlocklists() error {
 }
 
 func (d *DNSFilter) fetchHostsFile(url string) ([]string, error) {
+	if HTTP == nil {
+		return nil, fmt.Errorf("HTTP client not initialized")
+	}
 	// Fetch via native HTTP client (no exec.Command).
 	body, _, err := HTTP.Get(url, nil, 30)
 	if err != nil {
