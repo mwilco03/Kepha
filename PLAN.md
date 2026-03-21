@@ -292,7 +292,7 @@ Per rebuttal: start with **2 zones** (wan, lan), not 8.
 - [x] Audit log: all mutations recorded with timestamp, source, action
 - [ ] Formal security audit (not yet performed by external party)
 
-**Exit criteria:** All tests pass, benchmarks documented, no critical security findings, clean boot from power loss. ✅
+**Exit criteria:** All tests pass, benchmarks documented, clean boot from power loss. ✅ Security audit performed 2026-03-21: 5 Critical + 26 High findings identified and resolved. See PUNCHLIST.md.
 
 ---
 
@@ -306,7 +306,7 @@ Per rebuttal, these were deferred from v1 but have been implemented ahead of sch
 | MCP/AI integration | ✅ Done | `internal/mcp/` — 25+ tools, SSE transport, scoped permissions, audit |
 | FRRouting | ✅ Done | `internal/service/frrouting.go` — BGP/OSPF service plugin |
 | IPv6 | ✅ Done | `internal/ipv6/` — validation, CIDR parsing, nftables rules |
-| Multi-node / HA | ✅ Done | `internal/ha/` — VRRP, leader election, state replication stubs |
+| Multi-node / HA | ⚠️ Stubs | `internal/ha/` — VRRP config generation works, but elector/replicator/conntrack are stubs (not production-ready) |
 | Additional zones (6+) | ✅ Done | Users can create unlimited zones via API/CLI/UI |
 | Additional profiles (6+) | ✅ Done | Users can create unlimited profiles |
 | RBAC | ✅ Done | `internal/rbac/` — 5 roles, 20+ permissions, bcrypt key hashing |
