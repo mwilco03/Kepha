@@ -24,6 +24,7 @@ type NftablesBackend struct {
 	mu         sync.Mutex
 	rulesetDir string // Directory for human-readable ruleset dumps (for audit/debug).
 	lastApply  *Artifact
+	conn       *nft.Conn // Persistent netlink connection (M-BA7).
 }
 
 // NewNftablesBackend creates a new nftables backend.
@@ -31,6 +32,20 @@ func NewNftablesBackend(rulesetDir string) *NftablesBackend {
 	return &NftablesBackend{
 		rulesetDir: rulesetDir,
 	}
+}
+
+// getConn returns the persistent netlink connection, creating one if needed.
+// Caller must hold b.mu.
+func (b *NftablesBackend) getConn() (*nft.Conn, error) {
+	if b.conn != nil {
+		return b.conn, nil
+	}
+	conn, err := nft.New()
+	if err != nil {
+		return nil, fmt.Errorf("nftables netlink connection: %w", err)
+	}
+	b.conn = conn
+	return conn, nil
 }
 
 // Compile transforms the policy model into an nftables artifact.
@@ -66,11 +81,10 @@ func (b *NftablesBackend) Apply(artifact *Artifact) error {
 		}
 	}
 
-	conn, err := nft.New()
+	conn, err := b.getConn()
 	if err != nil {
-		return fmt.Errorf("nftables netlink connection: %w", err)
+		return err
 	}
-	defer conn.CloseLasting()
 
 	// Delete existing gatekeeper table if present.
 	// This is safe — we're about to recreate it atomically.
@@ -131,11 +145,10 @@ func (b *NftablesBackend) Verify(artifact *Artifact) (bool, []Drift, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	conn, err := nft.New()
+	conn, err := b.getConn()
 	if err != nil {
-		return false, nil, fmt.Errorf("netlink connection: %w", err)
+		return false, nil, err
 	}
-	defer conn.CloseLasting()
 
 	tables, err := conn.ListTables()
 	if err != nil {
@@ -235,11 +248,10 @@ func (b *NftablesBackend) AddToSet(setName string, member string) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	conn, err := nft.New()
+	conn, err := b.getConn()
 	if err != nil {
-		return fmt.Errorf("netlink: %w", err)
+		return err
 	}
-	defer conn.CloseLasting()
 
 	table := &nft.Table{Family: nft.TableFamilyINet, Name: "gatekeeper"}
 	set, err := conn.GetSetByName(table, setName)
@@ -264,11 +276,10 @@ func (b *NftablesBackend) RemoveFromSet(setName string, member string) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	conn, err := nft.New()
+	conn, err := b.getConn()
 	if err != nil {
-		return fmt.Errorf("netlink: %w", err)
+		return err
 	}
-	defer conn.CloseLasting()
 
 	table := &nft.Table{Family: nft.TableFamilyINet, Name: "gatekeeper"}
 	set, err := conn.GetSetByName(table, setName)
@@ -293,11 +304,10 @@ func (b *NftablesBackend) FlushSet(setName string) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	conn, err := nft.New()
+	conn, err := b.getConn()
 	if err != nil {
-		return fmt.Errorf("netlink: %w", err)
+		return err
 	}
-	defer conn.CloseLasting()
 
 	table := &nft.Table{Family: nft.TableFamilyINet, Name: "gatekeeper"}
 	set, err := conn.GetSetByName(table, setName)
