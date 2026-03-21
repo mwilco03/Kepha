@@ -1,6 +1,7 @@
 package driver
 
 import (
+	"bytes"
 	"fmt"
 	"log/slog"
 	"net"
@@ -243,6 +244,18 @@ func (d *Dnsmasq) buildStaticLeases(devices []model.DeviceAssignment) string {
 	b.WriteString("# Gatekeeper static DHCP leases\n")
 	b.WriteString("# DO NOT EDIT — managed by gatekeeperd\n\n")
 
+	// L5: Warn about static leases that fall within DHCP dynamic ranges.
+	// dnsmasq handles this gracefully (static wins), but it's a config smell.
+	for _, dev := range devices {
+		if dev.IP != "" {
+			ip := net.ParseIP(dev.IP)
+			if ip != nil && d.isInDHCPRange(ip) {
+				slog.Warn("static lease IP overlaps with DHCP dynamic range",
+					"ip", dev.IP, "mac", dev.MAC, "hostname", dev.Hostname)
+			}
+		}
+	}
+
 	for _, dev := range devices {
 		// Skip entries with invalid fields.
 		if validate.IP(dev.IP) != nil {
@@ -277,6 +290,36 @@ var dnsLabelRe = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9.-]{0,253}[a-zA-Z0-9
 // Rejects newlines, control characters, and other injection vectors.
 func isDNSLabel(s string) bool {
 	return s != "" && dnsLabelRe.MatchString(s) && !strings.Contains(s, "..")
+}
+
+// isInDHCPRange checks if an IP falls within any configured DHCP dynamic range.
+func (d *Dnsmasq) isInDHCPRange(ip net.IP) bool {
+	zones, err := d.store.ListZones()
+	if err != nil {
+		return false
+	}
+	for _, z := range zones {
+		if z.NetworkCIDR == "" || z.Interface == "" || z.Name == "wan" {
+			continue
+		}
+		dhcpRange := deriveDHCPRange(z.NetworkCIDR)
+		if dhcpRange == "" {
+			continue
+		}
+		parts := strings.Split(dhcpRange, ",")
+		if len(parts) != 2 {
+			continue
+		}
+		rangeStart := net.ParseIP(parts[0])
+		rangeEnd := net.ParseIP(parts[1])
+		if rangeStart == nil || rangeEnd == nil {
+			continue
+		}
+		if bytes.Compare(ip.To4(), rangeStart.To4()) >= 0 && bytes.Compare(ip.To4(), rangeEnd.To4()) <= 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // deriveDHCPRange generates a DHCP range from a CIDR, respecting prefix length.
