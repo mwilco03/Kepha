@@ -4,7 +4,7 @@ VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev
 CALVER ?= $(shell date +%Y.%m).0
 LDFLAGS := -ldflags "-X main.version=$(VERSION)"
 
-.PHONY: build test bench lint fmt run clean install lxc release
+.PHONY: build test cover bench lint fmt run clean install lxc release
 
 build:
 	CGO_ENABLED=0 go build $(LDFLAGS) -o bin/gatekeeperd ./cmd/gatekeeperd
@@ -12,6 +12,11 @@ build:
 
 test:
 	go test ./... -v -race -count=1
+
+cover:
+	go test ./... -coverprofile=coverage.out -covermode=atomic
+	go tool cover -func=coverage.out | tail -1
+	@echo "Full report: go tool cover -html=coverage.out"
 
 lint:
 	golangci-lint run ./...
