@@ -6,8 +6,8 @@ linters:
     - staticcheck
     - unused
     - ineffassign
-  disable:
     - errcheck
+    - gosec
 
 formatters:
   enable:
