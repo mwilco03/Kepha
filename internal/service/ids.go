@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
@@ -8,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	nft "github.com/google/nftables"
 	"github.com/google/nftables/expr"
@@ -308,7 +310,9 @@ func yamlQuote(s string) string {
 
 func (i *IDS) updateRules() error {
 	slog.Info("updating suricata rules")
-	cmd := exec.Command("suricata-update", "--no-test", "--no-reload")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "suricata-update", "--no-test", "--no-reload")
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("suricata-update: %s: %w", string(output), err)
 	}
