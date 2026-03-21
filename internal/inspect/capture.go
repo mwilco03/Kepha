@@ -174,25 +174,41 @@ func (c *Capturer) processPacket(pkt []byte, ifName string) {
 		payload = payload[4:]
 	}
 
-	if etherType != 0x0800 { // IPv4 only for now.
-		return
-	}
+	var protocol byte
+	var transportPayload []byte
 
-	// IPv4 header.
-	if len(payload) < 20 {
+	switch etherType {
+	case 0x0800: // IPv4
+		if len(payload) < 20 {
+			return
+		}
+		ihl := int(payload[0]&0x0f) * 4
+		if ihl < 20 || ihl > len(payload) {
+			return
+		}
+		protocol = payload[9]
+		transportPayload = payload[ihl:]
+	case 0x86DD: // IPv6
+		if len(payload) < 40 {
+			return
+		}
+		protocol = payload[6] // Next Header field
+		transportPayload = payload[40:]
+	default:
 		return
 	}
-	ihl := int(payload[0]&0x0f) * 4
-	if ihl < 20 || ihl > len(payload) {
-		return
-	}
-	protocol := payload[9]
 	if protocol != 6 { // TCP only.
 		return
 	}
-	srcIP := fmt.Sprintf("%d.%d.%d.%d", payload[12], payload[13], payload[14], payload[15])
-	dstIP := fmt.Sprintf("%d.%d.%d.%d", payload[16], payload[17], payload[18], payload[19])
-	tcpPayload := payload[ihl:]
+	var srcIP, dstIP string
+	if etherType == 0x0800 {
+		srcIP = fmt.Sprintf("%d.%d.%d.%d", payload[12], payload[13], payload[14], payload[15])
+		dstIP = fmt.Sprintf("%d.%d.%d.%d", payload[16], payload[17], payload[18], payload[19])
+	} else {
+		srcIP = net.IP(payload[8:24]).String()
+		dstIP = net.IP(payload[24:40]).String()
+	}
+	tcpPayload := transportPayload
 
 	// TCP header.
 	if len(tcpPayload) < 20 {
