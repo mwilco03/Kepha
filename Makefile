@@ -4,7 +4,7 @@ VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev
 CALVER ?= $(shell date +%Y.%m).0
 LDFLAGS := -ldflags "-X main.version=$(VERSION)"
 
-.PHONY: build test cover bench lint fmt run clean install lxc release
+.PHONY: build test cover bench lint fmt run clean install lxc release vuln
 
 build:
 	CGO_ENABLED=0 go build $(LDFLAGS) -o bin/gatekeeperd ./cmd/gatekeeperd
@@ -39,5 +39,9 @@ bench:
 release:
 	VERSION=$(CALVER) $(MAKE) build
 
+vuln:
+	@command -v govulncheck >/dev/null 2>&1 || go install golang.org/x/vuln/cmd/govulncheck@latest
+	govulncheck ./...
+
 clean:
-	rm -rf bin/ *.tar.zst
+	rm -rf bin/ *.tar.zst coverage.out
