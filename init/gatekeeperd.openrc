@@ -36,9 +36,9 @@ if [ -n "${GATEKEEPER_PXE_SERVER}" ]; then
     command_args="${command_args} --pxe-server=${GATEKEEPER_PXE_SERVER}"
 fi
 
-# Append API key if configured.
+# Append API key file if configured (avoids exposing key in ps output).
 if [ -f /etc/gatekeeper/api.key ]; then
-    command_args="${command_args} --api-key=$(cat /etc/gatekeeper/api.key)"
+    command_args="${command_args} --api-key-file=/etc/gatekeeper/api.key"
 fi
 
 # Append TLS if configured.

@@ -33,7 +33,8 @@ var (
 	version     = "dev"
 	listen      = flag.String("listen", ":8080", "API listen address")
 	dbPath      = flag.String("db", "/var/lib/gatekeeper/gatekeeper.db", "SQLite database path")
-	apiKey      = flag.String("api-key", "", "API key for authentication (empty = no auth)")
+	apiKey      = flag.String("api-key", "", "API key for authentication")
+	apiKeyFile  = flag.String("api-key-file", "", "File containing API key (avoids ps exposure)")
 	rulesetDir  = flag.String("ruleset-dir", "/var/lib/gatekeeper/rulesets", "Directory for nftables rulesets")
 	dnsmasqDir  = flag.String("dnsmasq-dir", "/etc/dnsmasq.d", "Directory for dnsmasq config")
 	wgInterface = flag.String("wg-interface", "", "WireGuard interface name (empty = disabled)")
@@ -69,6 +70,17 @@ func main() {
 	slog.SetDefault(logger)
 
 	slog.Info("starting gatekeeperd", "version", version, "listen", *listen)
+
+	// L14: Read API key from file to avoid command-line exposure in ps.
+	if *apiKeyFile != "" && *apiKey == "" {
+		data, err := os.ReadFile(*apiKeyFile)
+		if err != nil {
+			slog.Error("failed to read api-key-file", "path", *apiKeyFile, "error", err)
+			os.Exit(1)
+		}
+		key := strings.TrimSpace(string(data))
+		apiKey = &key
+	}
 
 	// C4: Authentication is mandatory. Refuse to start without credentials.
 	if *apiKey == "" && !*enableRBAC {
