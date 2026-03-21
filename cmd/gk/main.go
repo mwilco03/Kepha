@@ -1,6 +1,7 @@
 package main
 
 import (
+	"database/sql"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -1360,11 +1361,18 @@ func cmdXDP(args []string, outputFmt string) error {
 }
 
 func openFingerprintStore(dbPath string) (*inspect.SQLiteStore, error) {
-	store, err := config.NewStore(dbPath)
+	// L17: Use a separate SQLite database for fingerprints/IOCs to avoid
+	// competing for the write lock with the config store.
+	fpPath := strings.TrimSuffix(dbPath, ".db") + "-fingerprints.db"
+	db, err := sql.Open("sqlite", fpPath)
 	if err != nil {
-		return nil, fmt.Errorf("cannot open database: %w", err)
+		return nil, fmt.Errorf("open fingerprint database: %w", err)
 	}
-	return inspect.NewSQLiteStore(store.DB())
+	if _, wErr := db.Exec("PRAGMA journal_mode=WAL"); wErr != nil {
+		db.Close()
+		return nil, fmt.Errorf("enable WAL: %w", wErr)
+	}
+	return inspect.NewSQLiteStore(db)
 }
 
 func printJSON(v any) error {
