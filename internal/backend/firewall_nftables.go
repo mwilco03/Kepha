@@ -435,26 +435,23 @@ func (b *NftablesBackend) buildInputChain(conn *nft.Conn, table *nft.Table, inpu
 		},
 	})
 
-	// ip protocol icmp accept
-	conn.AddRule(&nft.Rule{
-		Table: table,
-		Chain: chain,
-		Exprs: []expr.Any{
-			&expr.Meta{Key: expr.MetaKeyNFPROTO, Register: 1},
-			&expr.Cmp{
-				Op:       expr.CmpOpEq,
-				Register: 1,
-				Data:     []byte{0x02}, // NFPROTO_IPV4
+	// Allow only safe ICMP types: echo-reply(0), dest-unreachable(3),
+	// echo-request(8), time-exceeded(11).
+	for _, icmpType := range []byte{0, 3, 8, 11} {
+		conn.AddRule(&nft.Rule{
+			Table: table,
+			Chain: chain,
+			Exprs: []expr.Any{
+				&expr.Meta{Key: expr.MetaKeyNFPROTO, Register: 1},
+				&expr.Cmp{Op: expr.CmpOpEq, Register: 1, Data: []byte{0x02}}, // NFPROTO_IPV4
+				&expr.Meta{Key: expr.MetaKeyL4PROTO, Register: 1},
+				&expr.Cmp{Op: expr.CmpOpEq, Register: 1, Data: []byte{1}}, // IPPROTO_ICMP
+				&expr.Payload{DestRegister: 1, Base: expr.PayloadBaseTransportHeader, Offset: 0, Len: 1}, // ICMP type field
+				&expr.Cmp{Op: expr.CmpOpEq, Register: 1, Data: []byte{icmpType}},
+				&expr.Verdict{Kind: expr.VerdictAccept},
 			},
-			&expr.Meta{Key: expr.MetaKeyL4PROTO, Register: 1},
-			&expr.Cmp{
-				Op:       expr.CmpOpEq,
-				Register: 1,
-				Data:     []byte{1}, // IPPROTO_ICMP
-			},
-			&expr.Verdict{Kind: expr.VerdictAccept},
-		},
-	})
+		})
+	}
 
 	// Allow management API from all interfaces.
 	// The API enforces its own authentication (API key / RBAC),

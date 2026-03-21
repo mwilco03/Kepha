@@ -134,8 +134,17 @@ func addInputRules(conn *nft.Conn, table *nft.Table, chain *nft.Chain, input *co
 	// iif lo accept
 	addRule(nlRule(nlMatchIifname("lo"), nlVerdictAccept()))
 
-	// ip protocol icmp accept
-	addRule(nlRule(nlMatchIPProto(1), nlVerdictAccept())) // 1 = ICMP
+	// Allow only safe ICMP types: echo-reply(0), dest-unreachable(3),
+	// echo-request(8), time-exceeded(11).
+	for _, icmpType := range []byte{0, 3, 8, 11} {
+		addRule([]expr.Any{
+			&expr.Payload{DestRegister: 1, Base: expr.PayloadBaseNetworkHeader, Offset: 9, Len: 1},
+			&expr.Cmp{Op: expr.CmpOpEq, Register: 1, Data: []byte{1}}, // ICMP
+			&expr.Payload{DestRegister: 1, Base: expr.PayloadBaseTransportHeader, Offset: 0, Len: 1},
+			&expr.Cmp{Op: expr.CmpOpEq, Register: 1, Data: []byte{icmpType}},
+			&expr.Verdict{Kind: expr.VerdictAccept},
+		})
+	}
 
 	// Allow management API access from all interfaces.
 	// The API enforces its own authentication (API key / RBAC),

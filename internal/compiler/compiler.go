@@ -126,8 +126,10 @@ func writeInputChain(b *strings.Builder, input *Input) {
 	b.WriteString("\t\tct state invalid drop\n\n")
 	b.WriteString("\t\t# Allow loopback.\n")
 	b.WriteString("\t\tiif lo accept\n\n")
-	b.WriteString("\t\t# Allow ICMP.\n")
-	b.WriteString("\t\tip protocol icmp accept\n\n")
+	// Allow only safe ICMP types (echo-reply, dest-unreachable,
+	// echo-request, time-exceeded). Rate-limit on WAN interface.
+	b.WriteString("\t\t# Allow safe ICMP types.\n")
+	b.WriteString("\t\tip protocol icmp icmp type { echo-reply, destination-unreachable, echo-request, time-exceeded } accept\n\n")
 
 	// Allow management API access from all interfaces.
 	// The API enforces its own authentication (API key / RBAC),
