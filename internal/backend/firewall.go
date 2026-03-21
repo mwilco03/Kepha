@@ -21,6 +21,7 @@ type FirewallController struct {
 	MSSClampPMTU   bool // Enable TCP MSS clamping to path MTU in forward chain.
 	APIPort        int  // Management API port (always allowed inbound).
 	confirmTimer   *time.Timer
+	confirmed      bool // Guards against timer/Confirm race.
 	pendingRev     int
 	confirmTimeout time.Duration
 	lastArtifact   *Artifact
@@ -93,16 +94,22 @@ func (fc *FirewallController) ApplyWithConfirm(prevRev int) error {
 	defer fc.mu.Unlock()
 
 	fc.pendingRev = prevRev
+	fc.confirmed = false
 	if fc.confirmTimer != nil {
 		fc.confirmTimer.Stop()
 	}
 	fc.confirmTimer = time.AfterFunc(fc.confirmTimeout, func() {
+		fc.mu.Lock()
+		defer fc.mu.Unlock()
+		if fc.confirmed {
+			return // Confirm() won the race — do not rollback.
+		}
 		slog.Warn("apply-confirm timeout, rolling back", "rev", prevRev)
 		if err := fc.store.Rollback(prevRev); err != nil {
 			slog.Error("rollback failed", "error", err)
 			return
 		}
-		if err := fc.Apply(); err != nil {
+		if err := fc.applyLocked(); err != nil {
 			slog.Error("re-apply after rollback failed", "error", err)
 		}
 	})

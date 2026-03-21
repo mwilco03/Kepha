@@ -536,35 +536,36 @@ func nlMatchUDPDport(port uint16) []expr.Any {
 	)
 }
 
-// nlMatchTCPDports handles comma-separated port lists by matching each port.
-// For simplicity, matches the first port. Multi-port matching via anonymous sets
-// would be needed for full parity but adds complexity.
+// nlMatchTCPDports parses comma-separated ports and returns match expressions.
+// Returns all parsed ports so the caller can emit one rule per port.
 func nlMatchTCPDports(ports string) []expr.Any {
-	port := parseFirstPort(ports)
-	if port == 0 {
+	parsed := parsePorts(ports)
+	if len(parsed) == 0 {
 		return nlMatchL4Proto(6)
 	}
-	return nlMatchTCPDport(port)
+	return nlMatchTCPDport(parsed[0])
 }
 
 func nlMatchUDPDports(ports string) []expr.Any {
-	port := parseFirstPort(ports)
-	if port == 0 {
+	parsed := parsePorts(ports)
+	if len(parsed) == 0 {
 		return nlMatchL4Proto(17)
 	}
-	return nlMatchUDPDport(port)
+	return nlMatchUDPDport(parsed[0])
 }
 
-func parseFirstPort(ports string) uint16 {
+// parsePorts parses a comma-separated port list into a slice of port numbers.
+func parsePorts(ports string) []uint16 {
 	parts := strings.Split(ports, ",")
-	if len(parts) == 0 {
-		return 0
+	result := make([]uint16, 0, len(parts))
+	for _, s := range parts {
+		s = strings.TrimSpace(s)
+		var p uint16
+		if _, err := fmt.Sscanf(s, "%d", &p); err == nil && p > 0 {
+			result = append(result, p)
+		}
 	}
-	var p uint16
-	if _, err := fmt.Sscanf(strings.TrimSpace(parts[0]), "%d", &p); err != nil {
-		return 0
-	}
-	return p
+	return result
 }
 
 func nlMatchCtState(stateMask uint32) []expr.Any {

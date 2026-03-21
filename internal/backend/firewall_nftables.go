@@ -654,10 +654,9 @@ func (b *NftablesBackend) buildForwardChain(conn *nft.Conn, table *nft.Table, in
 				continue
 			}
 
-			// Emit each rule in the policy.
+			// Emit each rule in the policy (multi-port rules expand to one nft rule per port).
 			for _, rule := range policy.Rules {
-				ruleExprs := b.compileRuleExprs(rule, zone.Interface, wanIface)
-				if len(ruleExprs) > 0 {
+				for _, ruleExprs := range b.compileRuleExprsList(rule, zone.Interface, wanIface) {
 					conn.AddRule(&nft.Rule{
 						Table: table,
 						Chain: chain,
@@ -728,96 +727,111 @@ func (b *NftablesBackend) buildPostroutingChain(conn *nft.Conn, table *nft.Table
 	return nil
 }
 
-// compileRuleExprs converts a model.Rule into nftables netlink expressions.
-// Mirrors the text compiler's compileRule() function.
-func (b *NftablesBackend) compileRuleExprs(r model.Rule, srcIface, wanIface string) []expr.Any {
-	var exprs []expr.Any
-
-	// Match source interface.
-	exprs = append(exprs,
+// compileRuleExprsList converts a model.Rule into one or more nftables netlink
+// expression slices. Multi-port rules (e.g. "80,443") expand to one nft rule
+// per port — this is the correct netlink approach without anonymous sets.
+func (b *NftablesBackend) compileRuleExprsList(r model.Rule, srcIface, wanIface string) [][]expr.Any {
+	// Build the common prefix: interface match + optional WAN output.
+	var prefix []expr.Any
+	prefix = append(prefix,
 		&expr.Meta{Key: expr.MetaKeyIIFNAME, Register: 1},
 		&expr.Cmp{Op: expr.CmpOpEq, Register: 1, Data: ifname(srcIface)},
 	)
-
-	// Match output interface (WAN) if available.
 	if wanIface != "" {
-		exprs = append(exprs,
+		prefix = append(prefix,
 			&expr.Meta{Key: expr.MetaKeyOIFNAME, Register: 1},
 			&expr.Cmp{Op: expr.CmpOpEq, Register: 1, Data: ifname(wanIface)},
 		)
 	}
 
-	// Protocol matching.
-	proto := strings.ToLower(r.Protocol)
-	switch proto {
-	case "tcp":
-		exprs = append(exprs,
-			&expr.Meta{Key: expr.MetaKeyL4PROTO, Register: 1},
-			&expr.Cmp{Op: expr.CmpOpEq, Register: 1, Data: []byte{6}},
-		)
-		if r.Ports != "" {
-			if portExprs := b.compilePortMatch(r.Ports); len(portExprs) > 0 {
-				exprs = append(exprs, portExprs...)
-			}
-		}
-	case "udp":
-		exprs = append(exprs,
-			&expr.Meta{Key: expr.MetaKeyL4PROTO, Register: 1},
-			&expr.Cmp{Op: expr.CmpOpEq, Register: 1, Data: []byte{17}},
-		)
-		if r.Ports != "" {
-			if portExprs := b.compilePortMatch(r.Ports); len(portExprs) > 0 {
-				exprs = append(exprs, portExprs...)
-			}
-		}
-	case "icmp":
-		exprs = append(exprs,
-			&expr.Meta{Key: expr.MetaKeyL4PROTO, Register: 1},
-			&expr.Cmp{Op: expr.CmpOpEq, Register: 1, Data: []byte{1}},
-		)
-	case "":
-		// No protocol filter — match all.
-	default:
-		return nil // Unsupported protocol, skip rule.
-	}
-
-	// Verdict.
+	// Build the verdict suffix.
 	if !model.ValidActions[r.Action] {
 		return nil
 	}
+	var verdict []expr.Any
 	switch r.Action {
 	case model.RuleActionAllow:
-		exprs = append(exprs, &expr.Verdict{Kind: expr.VerdictAccept})
+		verdict = []expr.Any{&expr.Verdict{Kind: expr.VerdictAccept}}
 	case model.RuleActionDeny:
-		exprs = append(exprs, &expr.Verdict{Kind: expr.VerdictDrop})
+		verdict = []expr.Any{&expr.Verdict{Kind: expr.VerdictDrop}}
 	case model.RuleActionReject:
-		exprs = append(exprs, &expr.Verdict{Kind: expr.VerdictDrop}) // netlink: drop as fallback
+		verdict = []expr.Any{&expr.Verdict{Kind: expr.VerdictDrop}}
 	case model.RuleActionLog:
-		exprs = append(exprs, &expr.Log{Key: 0}) // log and continue
+		verdict = []expr.Any{&expr.Log{Key: 0}}
 	}
 
-	return exprs
-}
-
-// compilePortMatch builds nftables expressions matching a destination port.
-// Supports single port or first port from comma-separated list.
-func (b *NftablesBackend) compilePortMatch(ports string) []expr.Any {
-	// Parse first port (multi-port requires anonymous sets — future enhancement).
-	portStr := strings.Split(ports, ",")[0]
-	portStr = strings.TrimSpace(portStr)
-	port, err := strconv.ParseUint(portStr, 10, 16)
-	if err != nil {
+	// Protocol and port matching.
+	proto := strings.ToLower(r.Protocol)
+	var protoByte byte
+	switch proto {
+	case "tcp":
+		protoByte = 6
+	case "udp":
+		protoByte = 17
+	case "icmp":
+		protoByte = 1
+	case "":
+		// No protocol — single rule, no port matching.
+		rule := make([]expr.Any, 0, len(prefix)+len(verdict))
+		rule = append(rule, prefix...)
+		rule = append(rule, verdict...)
+		return [][]expr.Any{rule}
+	default:
 		return nil
 	}
-	return []expr.Any{
-		&expr.Payload{
-			DestRegister: 1,
-			Base:         expr.PayloadBaseTransportHeader,
-			Offset:       2, // Destination port offset.
-			Len:          2,
-		},
-		&expr.Cmp{Op: expr.CmpOpEq, Register: 1, Data: binaryPort(uint16(port))},
+
+	protoMatch := []expr.Any{
+		&expr.Meta{Key: expr.MetaKeyL4PROTO, Register: 1},
+		&expr.Cmp{Op: expr.CmpOpEq, Register: 1, Data: []byte{protoByte}},
 	}
+
+	// If no ports or ICMP, emit a single rule.
+	if r.Ports == "" || proto == "icmp" {
+		rule := make([]expr.Any, 0, len(prefix)+len(protoMatch)+len(verdict))
+		rule = append(rule, prefix...)
+		rule = append(rule, protoMatch...)
+		rule = append(rule, verdict...)
+		return [][]expr.Any{rule}
+	}
+
+	// Multi-port: emit one rule per port.
+	ports := parsePortList(r.Ports)
+	if len(ports) == 0 {
+		rule := make([]expr.Any, 0, len(prefix)+len(protoMatch)+len(verdict))
+		rule = append(rule, prefix...)
+		rule = append(rule, protoMatch...)
+		rule = append(rule, verdict...)
+		return [][]expr.Any{rule}
+	}
+
+	rules := make([][]expr.Any, 0, len(ports))
+	for _, port := range ports {
+		portMatch := []expr.Any{
+			&expr.Payload{DestRegister: 1, Base: expr.PayloadBaseTransportHeader, Offset: 2, Len: 2},
+			&expr.Cmp{Op: expr.CmpOpEq, Register: 1, Data: binaryPort(port)},
+		}
+		rule := make([]expr.Any, 0, len(prefix)+len(protoMatch)+len(portMatch)+len(verdict))
+		rule = append(rule, prefix...)
+		rule = append(rule, protoMatch...)
+		rule = append(rule, portMatch...)
+		rule = append(rule, verdict...)
+		rules = append(rules, rule)
+	}
+	return rules
+}
+
+// parsePortList parses a comma-separated port string into port numbers.
+func parsePortList(ports string) []uint16 {
+	parts := strings.Split(ports, ",")
+	result := make([]uint16, 0, len(parts))
+	for _, s := range parts {
+		s = strings.TrimSpace(s)
+		port, err := strconv.ParseUint(s, 10, 16)
+		if err == nil && port > 0 {
+			result = append(result, uint16(port))
+		}
+	}
+	return result
 }
 
 // ifname converts a string interface name to the 16-byte padded format
