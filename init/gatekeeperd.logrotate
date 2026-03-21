@@ -1,0 +1,12 @@
+# Logrotate configuration for Gatekeeper Firewall Daemon.
+# Install to /etc/logrotate.d/gatekeeperd
+/var/log/gatekeeper/gatekeeperd.log {
+    daily
+    rotate 14
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+    maxsize 50M
+}

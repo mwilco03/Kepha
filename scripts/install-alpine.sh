@@ -63,6 +63,12 @@ cp init/gatekeeperd.openrc /etc/init.d/gatekeeperd 2>/dev/null \
     || true
 chmod +x /etc/init.d/gatekeeperd
 
+# Install logrotate config for daemon log rotation.
+apk add --no-cache logrotate >/dev/null 2>&1 || true
+cp init/gatekeeperd.logrotate /etc/logrotate.d/gatekeeperd 2>/dev/null \
+    || cp /root/gatekeeper/init/gatekeeperd.logrotate /etc/logrotate.d/gatekeeperd 2>/dev/null \
+    || true
+
 # Disable Alpine's default dnsmasq — gatekeeper manages its own config.
 rc-update del dnsmasq default 2>/dev/null || true
 rc-service dnsmasq stop 2>/dev/null || true
