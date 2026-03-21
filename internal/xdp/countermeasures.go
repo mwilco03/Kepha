@@ -4,6 +4,8 @@ import (
 	"crypto/rand"
 	"fmt"
 	"log/slog"
+	"net"
+	"strings"
 	"sync"
 	"time"
 )
@@ -473,42 +475,27 @@ func sanitizeForNft(s string) string {
 	return string(result)
 }
 
-// matchCIDRSimple checks if an IP matches a target (IP or CIDR prefix).
+// matchCIDRSimple checks if an IP matches a target (IP or CIDR).
+// Uses net.ParseCIDR for correct prefix-length matching.
 func matchCIDRSimple(ip, target string) bool {
-	// If target contains '/', it's a CIDR — check prefix.
-	if idx := len(target) - 1; idx > 0 {
-		for i := idx; i >= 0; i-- {
-			if target[i] == '/' {
-				prefix := target[:i]
-				// Simple dotted-quad prefix match.
-				parts := splitDots(prefix)
-				ipParts := splitDots(ip)
-				if len(parts) == 0 || len(ipParts) < len(parts) {
-					return false
-				}
-				for j, p := range parts {
-					if p != ipParts[j] {
-						return false
-					}
-				}
-				return true
-			}
-		}
+	parsedIP := net.ParseIP(ip)
+	if parsedIP == nil {
+		return false
 	}
-	return ip == target
-}
 
-func splitDots(s string) []string {
-	var parts []string
-	start := 0
-	for i := 0; i < len(s); i++ {
-		if s[i] == '.' {
-			parts = append(parts, s[start:i])
-			start = i + 1
+	// If target contains '/', it's a CIDR.
+	if strings.Contains(target, "/") {
+		_, ipnet, err := net.ParseCIDR(target)
+		if err != nil {
+			return false
 		}
+		return ipnet.Contains(parsedIP)
 	}
-	if start < len(s) {
-		parts = append(parts, s[start:])
+
+	// Exact IP match.
+	targetIP := net.ParseIP(target)
+	if targetIP == nil {
+		return false
 	}
-	return parts
+	return parsedIP.Equal(targetIP)
 }
