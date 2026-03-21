@@ -124,6 +124,13 @@ func (s *Store) ListZonesPaginated(p Pagination) ([]model.Zone, int, error) {
 }
 
 func (s *Store) DeleteZone(name string) error {
+	// M-N6: Check for profiles referencing this zone before deleting.
+	var profileCount int
+	if err := s.db.QueryRow(
+		"SELECT COUNT(*) FROM profiles WHERE zone_id = (SELECT id FROM zones WHERE name = ?)", name,
+	).Scan(&profileCount); err == nil && profileCount > 0 {
+		return fmt.Errorf("cannot delete zone %q: %d profile(s) still reference it", name, profileCount)
+	}
 	_, err := s.db.Exec("DELETE FROM zones WHERE name = ?", name)
 	return err
 }
