@@ -40,7 +40,11 @@ func NewFirewallController(backend FirewallBackend, store *config.Store) *Firewa
 func (fc *FirewallController) Apply() error {
 	fc.mu.Lock()
 	defer fc.mu.Unlock()
+	return fc.applyLocked()
+}
 
+// applyLocked performs the compile+apply cycle. Caller must hold fc.mu.
+func (fc *FirewallController) applyLocked() error {
 	input, err := fc.buildInput()
 	if err != nil {
 		return fmt.Errorf("build input: %w", err)
@@ -117,11 +121,13 @@ func (fc *FirewallController) ApplyWithConfirm(prevRev int) error {
 	return nil
 }
 
-// Confirm stops the auto-rollback timer.
+// Confirm stops the auto-rollback timer. Sets confirmed flag to prevent
+// a timer goroutine that already fired from rolling back after we return.
 func (fc *FirewallController) Confirm() {
 	fc.mu.Lock()
 	defer fc.mu.Unlock()
 
+	fc.confirmed = true
 	if fc.confirmTimer != nil {
 		fc.confirmTimer.Stop()
 		fc.confirmTimer = nil
