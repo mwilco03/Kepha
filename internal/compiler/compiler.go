@@ -25,9 +25,10 @@ type Input struct {
 	Policies     []model.Policy
 	Profiles     []model.Profile
 	Devices      []model.DeviceAssignment
-	WGListenPort int  // WireGuard listen port (0 = disabled).
-	MSSClampPMTU bool // Enable TCP MSS clamping to path MTU in forward chain.
-	APIPort      int  // Management API port (always allowed inbound; 0 = skip rule).
+	PortForwards []model.PortForward // M-N3: DNAT port forwarding rules.
+	WGListenPort int                 // WireGuard listen port (0 = disabled).
+	MSSClampPMTU bool                // Enable TCP MSS clamping to path MTU in forward chain.
+	APIPort      int                 // Management API port (always allowed inbound; 0 = skip rule).
 }
 
 // Compile transforms the config model into an nftables ruleset.
@@ -124,6 +125,7 @@ func Compile(input *Input) (*CompiledRuleset, error) {
 	writeInputChain(&b, input)
 	writeForwardChain(&b, input, policyMap, aliasMap, zoneProfiles, profileDevices, wanIface)
 	writeOutputChain(&b, input)
+	writePreroutingChain(&b, input, wanIface)
 	writeNATChain(&b, wanIface)
 
 	b.WriteString("}\n")
@@ -258,6 +260,38 @@ func writeOutputChain(b *strings.Builder, input *Input) {
 	b.WriteString("\t\tip protocol icmp accept\n\n")
 	b.WriteString("\t\t# Log and accept remaining (output is permissive by default for appliance).\n")
 	b.WriteString("\t\t# Change policy to 'drop' for strict output filtering.\n")
+	b.WriteString("\t}\n\n")
+}
+
+// writePreroutingChain emits DNAT rules for port forwarding.
+// M-N3: Allows hosting services behind the firewall accessible from WAN.
+func writePreroutingChain(b *strings.Builder, input *Input, wanIface string) {
+	if wanIface == "" || len(input.PortForwards) == 0 {
+		return
+	}
+
+	b.WriteString("\tchain prerouting {\n")
+	b.WriteString("\t\ttype nat hook prerouting priority dstnat; policy accept;\n\n")
+
+	for _, pf := range input.PortForwards {
+		if !pf.Enabled {
+			continue
+		}
+		proto := strings.ToLower(pf.Protocol)
+		if proto != "tcp" && proto != "udp" {
+			continue
+		}
+		internalPort := pf.InternalPort
+		if internalPort == 0 {
+			internalPort = pf.ExternalPort
+		}
+		if pf.Description != "" {
+			fmt.Fprintf(b, "\t\t# %s\n", pf.Description)
+		}
+		fmt.Fprintf(b, "\t\tiifname %q %s dport %d dnat to %s:%d\n",
+			wanIface, proto, pf.ExternalPort, pf.InternalIP, internalPort)
+	}
+
 	b.WriteString("\t}\n\n")
 }
 

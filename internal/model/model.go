@@ -197,6 +197,17 @@ type DeviceAssignment struct {
 	AssignedAt time.Time `json:"assigned_at"`
 }
 
+// PortForward defines a DNAT rule for port forwarding from WAN to an internal host.
+type PortForward struct {
+	ID          int64  `json:"id"`
+	Description string `json:"description,omitempty"`
+	Protocol    string `json:"protocol"`           // tcp, udp
+	ExternalPort int   `json:"external_port"`       // Port on WAN interface
+	InternalIP  string `json:"internal_ip"`          // Destination LAN IP
+	InternalPort int   `json:"internal_port"`        // Destination port (0 = same as external)
+	Enabled     bool   `json:"enabled"`
+}
+
 // --- Content Filtering ---
 
 // ContentCategory represents a filterable content category (e.g., "malware", "adult", "gambling").
