@@ -48,13 +48,13 @@
         <div class="empty">Loading peers...</div>
     </div>
 
-    <div id="qr-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.8); z-index:100; align-items:center; justify-content:center;">
+    <div id="qr-modal" role="dialog" aria-modal="true" aria-label="WireGuard QR Code" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.8); z-index:100; align-items:center; justify-content:center;">
         <div style="background:var(--bg2); border:1px solid var(--border); border-radius:0.5rem; padding:2rem; max-width:500px; width:90%; text-align:center;">
             <h2 id="qr-title" style="margin-bottom:1rem;"></h2>
             <div id="qr-canvas" style="background:white; display:inline-block; padding:1rem; border-radius:0.5rem; margin-bottom:1rem;"></div>
             <pre id="qr-config" style="text-align:left; font-size:0.75rem; max-height:200px; overflow:auto;"></pre>
             <br>
-            <button onclick="closeQR()">Close</button>
+            <button onclick="closeQR()" autofocus>Close</button>
         </div>
     </div>
 </div>
