@@ -162,6 +162,12 @@ func (d *AnomalyDetector) CheckFingerprint(srcIP, fpType, newHash, sni string) *
 		return nil // Same fingerprint — no change.
 	}
 
+	// Increment change count BEFORE assessing severity so the threshold
+	// check uses the current count, not the stale one (off-by-one fix).
+	h := d.history[histKey]
+	h.ChangeCount++
+	d.history[histKey] = h
+
 	// Fingerprint changed! Check exclusions before alerting.
 	alert := &AnomalyAlert{
 		Timestamp:   time.Now(),
@@ -170,7 +176,7 @@ func (d *AnomalyDetector) CheckFingerprint(srcIP, fpType, newHash, sni string) *
 		FPType:      fpType,
 		OldHash:     prev.LastHash,
 		NewHash:     newHash,
-		Severity:    d.assessSeverity(prev, newHash),
+		Severity:    d.assessSeverity(h, newHash),
 		Description: fmt.Sprintf("%s fingerprint changed for %s", fpType, srcIP),
 	}
 
@@ -181,11 +187,6 @@ func (d *AnomalyDetector) CheckFingerprint(srcIP, fpType, newHash, sni string) *
 		rule.HitCount++
 		d.updateExclusionHitCount(rule.ID, rule.HitCount)
 	}
-
-	// Update change count.
-	h := d.history[histKey]
-	h.ChangeCount++
-	d.history[histKey] = h
 
 	// Store alert.
 	d.storeAlert(alert)
