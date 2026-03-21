@@ -63,8 +63,10 @@ fi
 mkdir -p "$WORK"/{db,rulesets,dnsmasq}
 
 echo "Starting daemon on :$PORT (workdir $WORK)..."
+SMOKE_API_KEY="smoke-test-$(date +%s)"
 "$BINARY" \
     -listen ":$PORT" \
+    -api-key "$SMOKE_API_KEY" \
     -db "$WORK/db/gatekeeper.db" \
     -ruleset-dir "$WORK/rulesets" \
     -dnsmasq-dir "$WORK/dnsmasq" \
@@ -108,7 +110,7 @@ echo "$BODY" | grep -q '"status":"ok"' \
 # ================================================================
 echo "[2] Default zones"
 
-ZONES=$(curl -sf "$BASE/api/v1/zones")
+ZONES=$(curl -sf -H "X-API-Key: $SMOKE_API_KEY" "$BASE/api/v1/zones")
 echo "$ZONES" | grep -q '"name":"wan"' \
     && pass "wan zone exists" \
     || fail "wan zone not found"
@@ -171,7 +173,7 @@ fi
 # ================================================================
 echo "[5] PerformanceTuner sysctl"
 
-CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/v1/services/performance-tuner/enable")
+CODE=$(curl -s -o /dev/null -w '%{http_code}' -H "X-API-Key: $SMOKE_API_KEY" -X POST "$BASE/api/v1/services/performance-tuner/enable")
 if [ "$CODE" = "200" ] || [ "$CODE" = "204" ]; then
     pass "performance-tuner service enabled ($CODE)"
 else
