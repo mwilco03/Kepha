@@ -1,7 +1,6 @@
 package xdp
 
 import (
-	"crypto/rand"
 	"encoding/binary"
 	"fmt"
 	"log/slog"
@@ -398,22 +397,18 @@ func (e *Enforcer) rstChaosRule(saddr []expr.Any, global CountermeasureConfig) [
 	)
 }
 
-// ttlRandomRule rewrites the IP TTL to a random value between 32-128.
-// This confuses OS fingerprinting and traceroute tools.
+// ttlRandomRule rewrites the IP TTL to a per-packet random value between 32-127.
+// Uses nftables numgen with Offset for per-packet randomness instead of a
+// static value that was baked in at rule build time.
 func (e *Enforcer) ttlRandomRule(daddr []expr.Any) []expr.Any {
-	b := make([]byte, 1)
-	if _, err := rand.Read(b); err != nil {
-		slog.Error("crypto/rand failed for TTL randomization", "error", err)
-		b[0] = 64 // Safe fallback TTL.
-	}
-	ttl := byte(32 + int(b[0])%96)
-
 	return concat(daddr,
 		[]expr.Any{
-			// Load new TTL value into register 1.
-			&expr.Immediate{
+			// numgen random mod 96 offset 32 → per-packet value in [32, 127].
+			&expr.Numgen{
 				Register: 1,
-				Data:     []byte{ttl},
+				Type:     1,  // NFT_NG_RANDOM
+				Modulus:  96,
+				Offset:   32,
 			},
 			// Write register 1 to the IPv4 TTL field (offset 8, len 1).
 			&expr.Payload{
