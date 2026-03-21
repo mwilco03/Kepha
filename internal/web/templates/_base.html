@@ -57,19 +57,19 @@ document.addEventListener('htmx:configRequest', function(e) {
 {{end}}
 
 {{define "nav"}}
-<nav>
+<nav role="navigation" aria-label="Main navigation">
     <span class="logo">Gatekeeper</span>
-    <a href="/" {{if eq .Title "Dashboard"}}class="active"{{end}}>Dashboard</a>
-    <a href="/zones" {{if eq .Title "Zones"}}class="active"{{end}}>Zones</a>
-    <a href="/aliases" {{if eq .Title "Aliases"}}class="active"{{end}}>Aliases</a>
-    <a href="/devices" {{if eq .Title "Devices"}}class="active"{{end}}>Devices</a>
-    <a href="/policies" {{if eq .Title "Policies"}}class="active"{{end}}>Policies</a>
-    <a href="/firewall" {{if eq .Title "Firewall"}}class="active"{{end}}>Firewall</a>
-    <a href="/config" {{if eq .Title "Configuration"}}class="active"{{end}}>Config</a>
-    <a href="/assign" {{if eq .Title "Assign Device"}}class="active"{{end}}>Assign</a>
-    <a href="/leases" {{if eq .Title "DHCP Leases"}}class="active"{{end}}>Leases</a>
-    <a href="/wireguard" {{if eq .Title "WireGuard"}}class="active"{{end}}>WireGuard</a>
-    <a href="/services" {{if eq .Title "Services"}}class="active"{{end}}>Services</a>
+    <a href="/" {{if eq .Title "Dashboard"}}class="active" aria-current="page"{{end}}>Dashboard</a>
+    <a href="/zones" {{if eq .Title "Zones"}}class="active" aria-current="page"{{end}}>Zones</a>
+    <a href="/aliases" {{if eq .Title "Aliases"}}class="active" aria-current="page"{{end}}>Aliases</a>
+    <a href="/devices" {{if eq .Title "Devices"}}class="active" aria-current="page"{{end}}>Devices</a>
+    <a href="/policies" {{if eq .Title "Policies"}}class="active" aria-current="page"{{end}}>Policies</a>
+    <a href="/firewall" {{if eq .Title "Firewall"}}class="active" aria-current="page"{{end}}>Firewall</a>
+    <a href="/config" {{if eq .Title "Configuration"}}class="active" aria-current="page"{{end}}>Config</a>
+    <a href="/assign" {{if eq .Title "Assign Device"}}class="active" aria-current="page"{{end}}>Assign</a>
+    <a href="/leases" {{if eq .Title "DHCP Leases"}}class="active" aria-current="page"{{end}}>Leases</a>
+    <a href="/wireguard" {{if eq .Title "WireGuard"}}class="active" aria-current="page"{{end}}>WireGuard</a>
+    <a href="/services" {{if eq .Title "Services"}}class="active" aria-current="page"{{end}}>Services</a>
     <a href="/logout" style="margin-left:auto; color:var(--red);">Logout</a>
 </nav>
 {{end}}
