@@ -8,6 +8,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/gatekeeper-firewall/gatekeeper/internal/validate"
 )
 
 // IOCType identifies the kind of indicator of compromise.
@@ -899,16 +901,7 @@ func splitTags(s string) []string {
 	return tags
 }
 
-// matchCIDRNet checks if an IP is within a CIDR range.
+// matchCIDRNet delegates to the shared validate.MatchCIDR implementation.
 func matchCIDRNet(ip, cidr string) bool {
-	_, ipnet, err := net.ParseCIDR(cidr)
-	if err != nil {
-		// Not a valid CIDR — try exact match.
-		return ip == cidr
-	}
-	parsed := net.ParseIP(ip)
-	if parsed == nil {
-		return false
-	}
-	return ipnet.Contains(parsed)
+	return validate.MatchCIDR(ip, cidr)
 }

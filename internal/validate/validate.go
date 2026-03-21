@@ -61,6 +61,27 @@ func CIDR(cidr string) error {
 	return nil
 }
 
+// MatchCIDR checks if an IP is within a CIDR range, or matches exactly
+// if target is not a valid CIDR. Shared implementation for all packages.
+func MatchCIDR(ip, target string) bool {
+	parsedIP := net.ParseIP(ip)
+	if parsedIP == nil {
+		return false
+	}
+	if strings.Contains(target, "/") {
+		_, ipnet, err := net.ParseCIDR(target)
+		if err != nil {
+			return false
+		}
+		return ipnet.Contains(parsedIP)
+	}
+	targetIP := net.ParseIP(target)
+	if targetIP == nil {
+		return false
+	}
+	return parsedIP.Equal(targetIP)
+}
+
 // IP validates an IP address.
 func IP(ip string) error {
 	if net.ParseIP(ip) == nil {

@@ -4,10 +4,10 @@ import (
 	"crypto/rand"
 	"fmt"
 	"log/slog"
-	"net"
-	"strings"
 	"sync"
 	"time"
+
+	"github.com/gatekeeper-firewall/gatekeeper/internal/validate"
 )
 
 // Countermeasures implements active defense techniques that impose costs
@@ -511,27 +511,7 @@ func sanitizeForNft(s string) string {
 	return string(result)
 }
 
-// matchCIDRSimple checks if an IP matches a target (IP or CIDR).
-// Uses net.ParseCIDR for correct prefix-length matching.
+// matchCIDRSimple delegates to the shared validate.MatchCIDR implementation.
 func matchCIDRSimple(ip, target string) bool {
-	parsedIP := net.ParseIP(ip)
-	if parsedIP == nil {
-		return false
-	}
-
-	// If target contains '/', it's a CIDR.
-	if strings.Contains(target, "/") {
-		_, ipnet, err := net.ParseCIDR(target)
-		if err != nil {
-			return false
-		}
-		return ipnet.Contains(parsedIP)
-	}
-
-	// Exact IP match.
-	targetIP := net.ParseIP(target)
-	if targetIP == nil {
-		return false
-	}
-	return parsedIP.Equal(targetIP)
+	return validate.MatchCIDR(ip, target)
 }

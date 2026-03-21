@@ -4,9 +4,10 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
-	"net"
 	"sync"
 	"time"
+
+	"github.com/gatekeeper-firewall/gatekeeper/internal/validate"
 )
 
 // AnomalyDetector watches for fingerprint changes on known devices.
@@ -259,18 +260,9 @@ func (d *AnomalyDetector) matchExclusion(srcIP, oldHash, newHash string) *Exclus
 	return nil
 }
 
-// matchCIDR checks if an IP is within a CIDR range using proper network parsing.
+// matchCIDR delegates to the shared validate.MatchCIDR implementation.
 func matchCIDR(ip, cidr string) bool {
-	_, ipnet, err := net.ParseCIDR(cidr)
-	if err != nil {
-		// Not a valid CIDR — fall back to exact match.
-		return ip == cidr
-	}
-	parsed := net.ParseIP(ip)
-	if parsed == nil {
-		return false
-	}
-	return ipnet.Contains(parsed)
+	return validate.MatchCIDR(ip, cidr)
 }
 
 // AddExclusion adds a new exclusion rule.
