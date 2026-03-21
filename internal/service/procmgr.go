@@ -7,33 +7,42 @@ import (
 	"github.com/gatekeeper-firewall/gatekeeper/internal/backend"
 )
 
-// Proc is the package-level ProcessManager used by all services that need to
-// start/stop/reload system daemons. Set by the daemon at startup via SetProcessManager.
-// Falls back to a logging no-op if not set (safe for tests / standalone usage).
-var Proc backend.ProcessManager = &noopProcessManager{}
-
-// HTTP is the package-level HTTPClient used by services that need to fetch
-// URLs (DDNS updates, blocklist downloads, etc.). Set by the daemon at startup.
-// Falls back to a real Go HTTP client by default (safe without explicit init).
-var HTTP backend.HTTPClient = backend.NewHTTPClient()
-
-// Net is the package-level NetworkManager used by services that need
-// ping, conntrack, connections, etc. Falls back to LinuxNetworkManager.
-var Net backend.NetworkManager = backend.NewLinuxNetworkManager()
+// Package-level dependencies for service DI. These are write-once globals:
+// set by the daemon in main() BEFORE svcMgr.StartEnabled(), and read-only
+// thereafter. This ordering guarantee means no mutex is needed — all writes
+// happen-before any concurrent read (M-BA3).
+//
+// Callers MUST NOT call Set*() after services have started.
+var (
+	Proc backend.ProcessManager = &noopProcessManager{}
+	HTTP backend.HTTPClient     = backend.NewHTTPClient()
+	Net  backend.NetworkManager = backend.NewLinuxNetworkManager()
+)
 
 // SetProcessManager sets the package-level process manager.
-// Call this from the daemon before starting any services.
+// MUST be called before svcMgr.StartEnabled().
 func SetProcessManager(pm backend.ProcessManager) {
+	if pm == nil {
+		return
+	}
 	Proc = pm
 }
 
 // SetHTTPClient sets the package-level HTTP client.
+// MUST be called before svcMgr.StartEnabled().
 func SetHTTPClient(c backend.HTTPClient) {
+	if c == nil {
+		return
+	}
 	HTTP = c
 }
 
 // SetNetworkManager sets the package-level network manager.
+// MUST be called before svcMgr.StartEnabled().
 func SetNetworkManager(nm backend.NetworkManager) {
+	if nm == nil {
+		return
+	}
 	Net = nm
 }
 
