@@ -26,8 +26,8 @@ Items marked `[x]` are verified complete. Items marked `[ ]` are open. Priority 
 - [x] **H3 — htmx-to-API auth mismatch** — FIXED: API middleware accepts gk_session cookie via shared SessionValidator. *(Frontend Developer)* `acf5d0b`
 - [ ] **H4 — Netlink multi-port uses first port only** `internal/driver/nftables_netlink.go:530-539` — "80,443" only matches 80. Implement anonymous nft sets. *(Network Engineer)*
 - [x] **H5 — No anti-spoof rules on WAN** — FIXED: Bogon nft set + anti-spoof drop rule on WAN forward chain. *(Network Engineer)* `2ec073c`
-- [ ] **H6 — ICMP accept-all includes WAN** `internal/compiler/compiler.go:118` — Restrict to types 0,3,8,11. Rate-limit on WAN. *(Network Engineer)*
-- [ ] **H7 — RBAC cache stores plaintext keys** `internal/rbac/rbac.go:240-241` — Use SHA-256 of key as cache key. *(Security Engineer)*
+- [x] **H6 — ICMP accept-all includes WAN** — FIXED: Restricted to types 0,3,8,11 across all 3 backends. *(Network Engineer)* `be724e0`
+- [x] **H7 — RBAC cache stores plaintext keys** — FIXED: Cache keyed by SHA-256 of key. *(Security Engineer)* `f4ba3ab`
 - [ ] **H8 — No zone subnet overlap validation** `internal/config/zones.go:42-52` — CreateZone() allows overlapping CIDRs. *(Network Engineer)*
 
 ### Threat Detection
