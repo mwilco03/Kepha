@@ -18,11 +18,18 @@ import (
 	"github.com/gatekeeper-firewall/gatekeeper/internal/driver"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/model"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/ops"
+	"github.com/gatekeeper-firewall/gatekeeper/internal/rbac"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/service"
 )
 
-// apiActor identifies all API-originated mutations in the audit log.
-var apiActor = ops.Actor{Source: "api", User: "api"}
+// actorFromRequest extracts the RBAC key identity from the request context,
+// falling back to "api" if RBAC is not enabled.
+func actorFromRequest(r *http.Request) ops.Actor {
+	if ak := rbac.APIKeyFromContext(r.Context()); ak != nil {
+		return ops.Actor{Source: "api", User: ak.Name + "/" + ak.ID}
+	}
+	return ops.Actor{Source: "api", User: "api"}
+}
 
 type handlers struct {
 	ops     *ops.Ops
@@ -80,7 +87,7 @@ func (h *handlers) createZone(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"dry_run": true, "action": "create_zone", "data": z})
 		return
 	}
-	if err := h.ops.CreateZone(apiActor, &z); err != nil {
+	if err := h.ops.CreateZone(actorFromRequest(r), &z); err != nil {
 		if strings.Contains(err.Error(), "already exists") || strings.Contains(err.Error(), "UNIQUE constraint") {
 			writeError(w, http.StatusConflict, err.Error())
 		} else {
@@ -99,7 +106,7 @@ func (h *handlers) updateZone(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	z.Name = name
-	if err := h.ops.UpdateZone(apiActor, &z); err != nil {
+	if err := h.ops.UpdateZone(actorFromRequest(r), &z); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -108,7 +115,7 @@ func (h *handlers) updateZone(w http.ResponseWriter, r *http.Request) {
 
 func (h *handlers) deleteZone(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if err := h.ops.DeleteZone(apiActor, name); err != nil {
+	if err := h.ops.DeleteZone(actorFromRequest(r), name); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -162,7 +169,7 @@ func (h *handlers) createAlias(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := h.ops.CreateAlias(apiActor, &a); err != nil {
+	if err := h.ops.CreateAlias(actorFromRequest(r), &a); err != nil {
 		if strings.Contains(err.Error(), "already exists") || strings.Contains(err.Error(), "UNIQUE constraint") {
 			writeError(w, http.StatusConflict, err.Error())
 		} else {
@@ -181,7 +188,7 @@ func (h *handlers) updateAlias(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.Name = name
-	if err := h.ops.UpdateAlias(apiActor, &a); err != nil {
+	if err := h.ops.UpdateAlias(actorFromRequest(r), &a); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -190,7 +197,7 @@ func (h *handlers) updateAlias(w http.ResponseWriter, r *http.Request) {
 
 func (h *handlers) deleteAlias(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if err := h.ops.DeleteAlias(apiActor, name); err != nil {
+	if err := h.ops.DeleteAlias(actorFromRequest(r), name); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -206,7 +213,7 @@ func (h *handlers) addAliasMember(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "member is required")
 		return
 	}
-	if err := h.ops.AddAliasMember(apiActor, name, body.Member); err != nil {
+	if err := h.ops.AddAliasMember(actorFromRequest(r), name, body.Member); err != nil {
 		if strings.Contains(err.Error(), "not found") {
 			writeError(w, http.StatusNotFound, err.Error())
 		} else {
@@ -226,7 +233,7 @@ func (h *handlers) removeAliasMember(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "member is required")
 		return
 	}
-	if err := h.ops.RemoveAliasMember(apiActor, name, body.Member); err != nil {
+	if err := h.ops.RemoveAliasMember(actorFromRequest(r), name, body.Member); err != nil {
 		if strings.Contains(err.Error(), "not found") {
 			writeError(w, http.StatusNotFound, err.Error())
 		} else {
@@ -284,7 +291,7 @@ func (h *handlers) createProfile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := h.ops.CreateProfile(apiActor, &p); err != nil {
+	if err := h.ops.CreateProfile(actorFromRequest(r), &p); err != nil {
 		if strings.Contains(err.Error(), "already exists") || strings.Contains(err.Error(), "UNIQUE constraint") {
 			writeError(w, http.StatusConflict, err.Error())
 		} else {
@@ -303,7 +310,7 @@ func (h *handlers) updateProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p.Name = name
-	if err := h.ops.UpdateProfile(apiActor, &p); err != nil {
+	if err := h.ops.UpdateProfile(actorFromRequest(r), &p); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -312,7 +319,7 @@ func (h *handlers) updateProfile(w http.ResponseWriter, r *http.Request) {
 
 func (h *handlers) deleteProfile(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if err := h.ops.DeleteProfile(apiActor, name); err != nil {
+	if err := h.ops.DeleteProfile(actorFromRequest(r), name); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -366,7 +373,7 @@ func (h *handlers) createPolicy(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := h.ops.CreatePolicy(apiActor, &p); err != nil {
+	if err := h.ops.CreatePolicy(actorFromRequest(r), &p); err != nil {
 		if strings.Contains(err.Error(), "already exists") || strings.Contains(err.Error(), "UNIQUE constraint") {
 			writeError(w, http.StatusConflict, err.Error())
 		} else {
@@ -385,7 +392,7 @@ func (h *handlers) updatePolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p.Name = name
-	if err := h.ops.UpdatePolicy(apiActor, &p); err != nil {
+	if err := h.ops.UpdatePolicy(actorFromRequest(r), &p); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -394,7 +401,7 @@ func (h *handlers) updatePolicy(w http.ResponseWriter, r *http.Request) {
 
 func (h *handlers) deletePolicy(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if err := h.ops.DeletePolicy(apiActor, name); err != nil {
+	if err := h.ops.DeletePolicy(actorFromRequest(r), name); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -410,7 +417,7 @@ func (h *handlers) createRule(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := h.ops.CreateRule(apiActor, policyName, &rule); err != nil {
+	if err := h.ops.CreateRule(actorFromRequest(r), policyName, &rule); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -424,7 +431,7 @@ func (h *handlers) deleteRule(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid rule id")
 		return
 	}
-	if err := h.ops.DeleteRule(apiActor, id); err != nil {
+	if err := h.ops.DeleteRule(actorFromRequest(r), id); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -470,7 +477,7 @@ func (h *handlers) assignDevice(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	d, err := h.ops.AssignDevice(apiActor, body.IP, body.MAC, body.Hostname, body.Profile, body.ProfileID)
+	d, err := h.ops.AssignDevice(actorFromRequest(r), body.IP, body.MAC, body.Hostname, body.Profile, body.ProfileID)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -486,7 +493,7 @@ func (h *handlers) unassignDevice(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "ip is required")
 		return
 	}
-	if err := h.ops.UnassignDevice(apiActor, body.IP); err != nil {
+	if err := h.ops.UnassignDevice(actorFromRequest(r), body.IP); err != nil {
 		if strings.Contains(err.Error(), "not found") {
 			writeError(w, http.StatusNotFound, err.Error())
 		} else {
@@ -525,7 +532,7 @@ func (h *handlers) commitConfig(w http.ResponseWriter, r *http.Request) {
 		prevRev = revs[0].RevNumber
 	}
 
-	rev, err := h.ops.Commit(apiActor, body.Message)
+	rev, err := h.ops.Commit(actorFromRequest(r), body.Message)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -573,7 +580,7 @@ func (h *handlers) rollbackConfig(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid revision number")
 		return
 	}
-	if err := h.ops.Rollback(apiActor, rev); err != nil {
+	if err := h.ops.Rollback(actorFromRequest(r), rev); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -635,7 +642,7 @@ func (h *handlers) importConfig(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := h.ops.Import(apiActor, &snap); err != nil {
+	if err := h.ops.Import(actorFromRequest(r), &snap); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
