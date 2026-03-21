@@ -8,6 +8,7 @@ package rbac
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
 	"errors"
@@ -20,6 +21,14 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 )
+
+// cacheKey returns a SHA-256 hex digest of the plaintext API key.
+// The cache must never store raw keys — if memory is dumped, only
+// the irreversible hash is exposed.
+func cacheKey(plaintext string) string {
+	h := sha256.Sum256([]byte(plaintext))
+	return hex.EncodeToString(h[:])
+}
 
 // Predefined role names.
 const (
@@ -347,9 +356,9 @@ func (e *Enforcer) CreateKey(name, role string, zoneScope, profileScope []string
 		return "", "", fmt.Errorf("rbac: insert key: %w", err)
 	}
 
-	// Cache the key for fast validation.
+	// Cache the key for fast validation (keyed by SHA-256, not plaintext).
 	e.mu.Lock()
-	e.cache[key] = &APIKey{
+	e.cache[cacheKey(key)] = &APIKey{
 		ID:           id,
 		Name:         name,
 		KeyHash:      string(hash),
@@ -373,9 +382,10 @@ func (e *Enforcer) ValidateKey(key string) (*APIKey, error) {
 		return nil, ErrInvalidKey
 	}
 
-	// Fast path: check cache.
+	// Fast path: check cache (keyed by SHA-256 of plaintext).
+	ck := cacheKey(key)
 	e.mu.RLock()
-	if cached, ok := e.cache[key]; ok {
+	if cached, ok := e.cache[ck]; ok {
 		e.mu.RUnlock()
 		if !cached.Active {
 			return nil, ErrKeyInactive
@@ -409,7 +419,7 @@ func (e *Enforcer) ValidateKey(key string) (*APIKey, error) {
 		if bcrypt.CompareHashAndPassword([]byte(ak.KeyHash), []byte(key)) == nil {
 			// Found a match; cache it for future fast-path hits.
 			e.mu.Lock()
-			e.cache[key] = ak
+			e.cache[ck] = ak
 			e.mu.Unlock()
 
 			if !ak.Active {
@@ -472,10 +482,10 @@ func (e *Enforcer) RevokeKey(id string) error {
 
 	// Invalidate cache entries for this key.
 	e.mu.Lock()
-	for raw, ak := range e.cache {
+	for hash, ak := range e.cache {
 		if ak.ID == id {
 			ak.Active = false
-			e.cache[raw] = ak
+			e.cache[hash] = ak
 		}
 	}
 	e.mu.Unlock()
@@ -550,9 +560,9 @@ func (e *Enforcer) RotateKey(id string) (string, error) {
 
 	// Purge old cache entries for this key ID and reload from DB.
 	e.mu.Lock()
-	for raw, ak := range e.cache {
+	for hash, ak := range e.cache {
 		if ak.ID == id {
-			delete(e.cache, raw)
+			delete(e.cache, hash)
 		}
 	}
 	e.mu.Unlock()

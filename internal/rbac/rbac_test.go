@@ -727,7 +727,7 @@ func TestEnforcerValidateKey(t *testing.T) {
 		}
 		// Remove from cache to force DB fallback.
 		e.mu.Lock()
-		delete(e.cache, key)
+		delete(e.cache, cacheKey(key))
 		e.mu.Unlock()
 
 		ak, err := e.ValidateKey(key)
@@ -749,7 +749,7 @@ func TestEnforcerValidateKey(t *testing.T) {
 		}
 		// Remove from cache.
 		e.mu.Lock()
-		delete(e.cache, key)
+		delete(e.cache, cacheKey(key))
 		e.mu.Unlock()
 
 		// First validate goes through DB.
@@ -760,7 +760,7 @@ func TestEnforcerValidateKey(t *testing.T) {
 
 		// Second validate should hit cache (verify by checking cache).
 		e.mu.RLock()
-		_, inCache := e.cache[key]
+		_, inCache := e.cache[cacheKey(key)]
 		e.mu.RUnlock()
 		if !inCache {
 			t.Error("key should be in cache after DB fallback validation")
@@ -805,7 +805,7 @@ func TestEnforcerValidateKey(t *testing.T) {
 		}
 		// Clear cache to force DB path.
 		e.mu.Lock()
-		delete(e.cache, key)
+		delete(e.cache, cacheKey(key))
 		e.mu.Unlock()
 
 		_, err = e.ValidateKey(key)
@@ -822,7 +822,7 @@ func TestEnforcerValidateKey(t *testing.T) {
 		// Manually set expiration in the past in cache.
 		e.mu.Lock()
 		past := time.Now().Add(-1 * time.Hour)
-		e.cache[key].ExpiresAt = &past
+		e.cache[cacheKey(key)].ExpiresAt = &past
 		e.mu.Unlock()
 
 		_, err = e.ValidateKey(key)
@@ -839,7 +839,7 @@ func TestEnforcerValidateKey(t *testing.T) {
 		// Set expiration in the future.
 		e.mu.Lock()
 		future := time.Now().Add(24 * time.Hour)
-		e.cache[key].ExpiresAt = &future
+		e.cache[cacheKey(key)].ExpiresAt = &future
 		e.mu.Unlock()
 
 		ak, err := e.ValidateKey(key)
@@ -920,7 +920,7 @@ func TestEnforcerRevokeKey(t *testing.T) {
 		}
 		// Verify key is active in cache.
 		e.mu.RLock()
-		cached := e.cache[key]
+		cached := e.cache[cacheKey(key)]
 		e.mu.RUnlock()
 		if cached == nil || !cached.Active {
 			t.Fatal("key should be active in cache before revoke")
@@ -932,7 +932,7 @@ func TestEnforcerRevokeKey(t *testing.T) {
 
 		// Verify key is inactive in cache.
 		e.mu.RLock()
-		cached = e.cache[key]
+		cached = e.cache[cacheKey(key)]
 		e.mu.RUnlock()
 		if cached == nil {
 			t.Fatal("key should still be in cache after revoke")
@@ -1108,7 +1108,7 @@ func TestEnforcerRotateKey(t *testing.T) {
 
 		// Verify old key is in cache.
 		e.mu.RLock()
-		_, inCache := e.cache[oldKey]
+		_, inCache := e.cache[cacheKey(oldKey)]
 		e.mu.RUnlock()
 		if !inCache {
 			t.Fatal("old key should be in cache before rotation")
@@ -1121,7 +1121,7 @@ func TestEnforcerRotateKey(t *testing.T) {
 
 		// Verify old key is removed from cache.
 		e.mu.RLock()
-		_, inCache = e.cache[oldKey]
+		_, inCache = e.cache[cacheKey(oldKey)]
 		e.mu.RUnlock()
 		if inCache {
 			t.Error("old key should be removed from cache after rotation")
