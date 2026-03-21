@@ -1,6 +1,7 @@
 package model
 
 import (
+	"fmt"
 	"strings"
 	"time"
 )
@@ -69,6 +70,20 @@ type Zone struct {
 	MTU         int        `json:"mtu,omitempty"` // 0 = inherit from interface (no override)
 }
 
+// Validate checks that a Zone has a valid name and trust level.
+func (z *Zone) Validate() error {
+	if z.Name == "" {
+		return fmt.Errorf("zone name is required")
+	}
+	if len(z.Name) > 64 {
+		return fmt.Errorf("zone name too long (max 64)")
+	}
+	if z.TrustLevel != "" && !ValidTrustLevels[z.TrustLevel] {
+		return fmt.Errorf("invalid trust level %q", z.TrustLevel)
+	}
+	return nil
+}
+
 // AliasType defines the kind of alias.
 type AliasType string
 
@@ -88,6 +103,26 @@ type Alias struct {
 	Type        AliasType `json:"type"`
 	Description string    `json:"description,omitempty"`
 	Members     []string  `json:"members,omitempty"`
+}
+
+// ValidAliasTypes is the canonical set of allowed alias types.
+var ValidAliasTypes = map[AliasType]bool{
+	AliasTypeHost: true, AliasTypeNetwork: true, AliasTypePort: true,
+	AliasTypeMAC: true, AliasTypeNested: true, AliasTypeExternalURL: true,
+}
+
+// Validate checks that an Alias has a valid name and type.
+func (a *Alias) Validate() error {
+	if a.Name == "" {
+		return fmt.Errorf("alias name is required")
+	}
+	if len(a.Name) > 64 {
+		return fmt.Errorf("alias name too long (max 64)")
+	}
+	if !ValidAliasTypes[a.Type] {
+		return fmt.Errorf("invalid alias type %q", a.Type)
+	}
+	return nil
 }
 
 // Profile is a device template assigning zone and policy.
@@ -122,6 +157,20 @@ type Policy struct {
 	Description   string     `json:"description,omitempty"`
 	DefaultAction RuleAction `json:"default_action"`
 	Rules         []Rule     `json:"rules,omitempty"`
+}
+
+// Validate checks that a Policy has a valid name and default action.
+func (p *Policy) Validate() error {
+	if p.Name == "" {
+		return fmt.Errorf("policy name is required")
+	}
+	if len(p.Name) > 64 {
+		return fmt.Errorf("policy name too long (max 64)")
+	}
+	if p.DefaultAction != "" && !ValidActions[p.DefaultAction] {
+		return fmt.Errorf("invalid default action %q", p.DefaultAction)
+	}
+	return nil
 }
 
 // Rule is a single firewall rule within a policy.
