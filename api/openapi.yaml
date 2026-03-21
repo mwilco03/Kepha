@@ -721,3 +721,196 @@ paths:
             text/plain:
               schema:
                 type: string
+
+  # --- Health Probes ---
+
+  /api/v1/healthz:
+    get:
+      summary: Liveness probe
+      security: []
+      responses:
+        "200":
+          description: Daemon is alive
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+
+  /api/v1/readyz:
+    get:
+      summary: Readiness probe (DB + firewall)
+      security: []
+      responses:
+        "200":
+          description: All subsystems ready
+        "503":
+          description: One or more subsystems unavailable
+
+  # --- Services ---
+
+  /api/v1/services:
+    get:
+      summary: List available services
+      responses:
+        "200":
+          description: Service list with status
+
+  /api/v1/services/{name}:
+    get:
+      summary: Get service details
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Service configuration and status
+    put:
+      summary: Update service configuration
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Service updated
+
+  /api/v1/services/{name}/enable:
+    post:
+      summary: Enable a service
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Service enabled
+
+  /api/v1/services/{name}/disable:
+    post:
+      summary: Disable a service
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Service disabled
+
+  # --- Audit ---
+
+  /api/v1/audit:
+    get:
+      summary: Query audit log
+      responses:
+        "200":
+          description: Audit log entries
+
+  # --- RBAC Keys ---
+
+  /api/v1/keys:
+    get:
+      summary: List API keys (RBAC mode)
+      responses:
+        "200":
+          description: API key metadata (never returns the raw key)
+    post:
+      summary: Create a new API key
+      responses:
+        "201":
+          description: Key created (raw key shown once)
+
+  /api/v1/keys/{id}:
+    delete:
+      summary: Revoke an API key
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Key revoked
+
+  /api/v1/keys/{id}/rotate:
+    post:
+      summary: Rotate an API key
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Key rotated (new key shown once)
+
+  # --- Diagnostics ---
+
+  /api/v1/test:
+    post:
+      summary: Test packet path through firewall rules
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                src:
+                  type: string
+                dst:
+                  type: string
+                proto:
+                  type: string
+                port:
+                  type: integer
+      responses:
+        "200":
+          description: Path test result
+
+  /api/v1/explain:
+    post:
+      summary: Explain which rules match a packet path
+      responses:
+        "200":
+          description: Matching rules explanation
+
+  /api/v1/diag/connections:
+    get:
+      summary: Active network connections
+      responses:
+        "200":
+          description: Connection list
+
+  /api/v1/diag/links:
+    get:
+      summary: Network interface status
+      responses:
+        "200":
+          description: Interface list with status
+
+  /api/v1/diag/ping/{target}:
+    get:
+      summary: Ping a target host
+      parameters:
+        - name: target
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Ping result
