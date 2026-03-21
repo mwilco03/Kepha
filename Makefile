@@ -7,8 +7,8 @@ LDFLAGS := -ldflags "-X main.version=$(VERSION)"
 .PHONY: build test bench lint fmt run clean install lxc release
 
 build:
-	go build $(LDFLAGS) -o bin/gatekeeperd ./cmd/gatekeeperd
-	go build $(LDFLAGS) -o bin/gk ./cmd/gk
+	CGO_ENABLED=0 go build $(LDFLAGS) -o bin/gatekeeperd ./cmd/gatekeeperd
+	CGO_ENABLED=0 go build $(LDFLAGS) -o bin/gk ./cmd/gk
 
 test:
 	go test ./... -v -race -count=1
