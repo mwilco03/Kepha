@@ -88,7 +88,7 @@ func (h *handlers) createZone(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.ops.CreateZone(actorFromRequest(r), &z); err != nil {
-		if strings.Contains(err.Error(), "already exists") || strings.Contains(err.Error(), "UNIQUE constraint") {
+		if ops.IsConflict(err) {
 			writeError(w, http.StatusConflict, err.Error())
 		} else {
 			writeError(w, http.StatusBadRequest, err.Error())
@@ -170,7 +170,7 @@ func (h *handlers) createAlias(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.ops.CreateAlias(actorFromRequest(r), &a); err != nil {
-		if strings.Contains(err.Error(), "already exists") || strings.Contains(err.Error(), "UNIQUE constraint") {
+		if ops.IsConflict(err) {
 			writeError(w, http.StatusConflict, err.Error())
 		} else {
 			writeError(w, http.StatusBadRequest, err.Error())
@@ -292,7 +292,7 @@ func (h *handlers) createProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.ops.CreateProfile(actorFromRequest(r), &p); err != nil {
-		if strings.Contains(err.Error(), "already exists") || strings.Contains(err.Error(), "UNIQUE constraint") {
+		if ops.IsConflict(err) {
 			writeError(w, http.StatusConflict, err.Error())
 		} else {
 			writeError(w, http.StatusBadRequest, err.Error())
@@ -374,7 +374,7 @@ func (h *handlers) createPolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.ops.CreatePolicy(actorFromRequest(r), &p); err != nil {
-		if strings.Contains(err.Error(), "already exists") || strings.Contains(err.Error(), "UNIQUE constraint") {
+		if ops.IsConflict(err) {
 			writeError(w, http.StatusConflict, err.Error())
 		} else {
 			writeError(w, http.StatusBadRequest, err.Error())

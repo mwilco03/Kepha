@@ -11,8 +11,46 @@
 package ops
 
 import (
+	"errors"
+	"strings"
+
 	"github.com/gatekeeper-firewall/gatekeeper/internal/config"
 )
+
+// Sentinel errors for the ops layer. Use errors.Is() in handlers
+// instead of string-matching error messages (M-CR1).
+var (
+	ErrAlreadyExists = errors.New("already exists")
+	ErrNotFound      = errors.New("not found")
+	ErrInvalidInput  = errors.New("invalid input")
+)
+
+// IsConflict returns true if the error indicates a uniqueness violation.
+// Replaces string-matching in API handlers.
+func IsConflict(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, ErrAlreadyExists) {
+		return true
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "already exists") ||
+		strings.Contains(msg, "UNIQUE constraint")
+}
+
+// IsNotFound returns true if the error indicates a missing resource.
+func IsNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, ErrNotFound) {
+		return true
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "not found") ||
+		strings.Contains(msg, "no rows")
+}
 
 // Actor identifies who is performing an operation, used for audit logging
 // and future RBAC. Every mutation must carry an Actor.
