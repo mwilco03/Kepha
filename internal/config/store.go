@@ -43,6 +43,34 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
+// Maintenance runs periodic SQLite housekeeping: WAL checkpoint and
+// revision pruning. Should be called on a schedule (e.g., daily).
+func (s *Store) Maintenance(keepRevisions int) error {
+	// WAL checkpoint — truncate the WAL file to reclaim disk.
+	if _, err := s.db.Exec("PRAGMA wal_checkpoint(TRUNCATE)"); err != nil {
+		return fmt.Errorf("wal checkpoint: %w", err)
+	}
+
+	// Prune old revisions, keeping the most recent N.
+	if keepRevisions > 0 {
+		_, err := s.db.Exec(`DELETE FROM config_revisions WHERE id NOT IN
+			(SELECT id FROM config_revisions ORDER BY rev_number DESC LIMIT ?)`,
+			keepRevisions)
+		if err != nil {
+			return fmt.Errorf("prune revisions: %w", err)
+		}
+	}
+
+	// Prune old audit log entries (keep last 10,000).
+	if _, err := s.db.Exec(`DELETE FROM audit_log WHERE id NOT IN
+		(SELECT id FROM audit_log ORDER BY id DESC LIMIT 10000)`); err != nil {
+		// audit_log may not exist yet; ignore errors.
+		_ = err
+	}
+
+	return nil
+}
+
 // DB returns the underlying sql.DB for use in transactions.
 func (s *Store) DB() *sql.DB {
 	return s.db
