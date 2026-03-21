@@ -33,3 +33,22 @@ a **deliberate action** to enable:
 - Policies can be defined while disabled, but no rules are enforced until explicitly enabled
 - Enabling requires calling `Enable()` — there is no auto-enable path
 - This prevents accidental enforcement of aggressive network countermeasures
+
+## Punchlist — Read Before Every Session
+
+**Check `PUNCHLIST.md` at the start of every session.** It contains prioritized findings from a multi-agent review (Security Engineer, Network Engineer, Frontend Developer, UX Architect, Reality Checker). Work items top-down by severity: Critical first, then High, then Medium.
+
+Mark items `[x]` in PUNCHLIST.md as you complete them. Do not skip severity levels.
+
+## Security Is Non-Negotiable
+
+**NEVER remove, downgrade, bypass, or weaken security to make something work.**
+
+- If auth is broken, fix auth — don't disable it
+- If CSP blocks scripts, vendor the scripts — don't remove CSP
+- If TLS causes issues, fix the cert — don't fall back to HTTP
+- If rate limiting interferes with testing, fix the test — don't remove the limiter
+- If RBAC is in the way, configure it correctly — don't switch to a weaker auth model
+- Difficulty is not a reason to weaken security. Ever.
+
+Any commit that weakens security posture will be reverted.
