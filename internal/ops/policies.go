@@ -31,7 +31,7 @@ func (o *Ops) CreatePolicy(actor Actor, p *model.Policy) error {
 	if err := o.store.CreatePolicy(p); err != nil {
 		return err
 	}
-	_ = o.store.LogAudit(actor.Source, "create", "policy", p.Name, p)
+	o.audit(actor, "create", "policy", p.Name, p)
 	return nil
 }
 
@@ -42,7 +42,7 @@ func (o *Ops) UpdatePolicy(actor Actor, p *model.Policy) error {
 	if err := o.store.UpdatePolicy(p); err != nil {
 		return err
 	}
-	_ = o.store.LogAudit(actor.Source, "update", "policy", p.Name, p)
+	o.audit(actor, "update", "policy", p.Name, p)
 	return nil
 }
 
@@ -51,7 +51,7 @@ func (o *Ops) DeletePolicy(actor Actor, name string) error {
 	if err := o.store.DeletePolicy(name); err != nil {
 		return err
 	}
-	_ = o.store.LogAudit(actor.Source, "delete", "policy", name, nil)
+	o.audit(actor, "delete", "policy", name, nil)
 	return nil
 }
 
@@ -75,7 +75,7 @@ func (o *Ops) CreateRule(actor Actor, policyName string, rule *model.Rule) error
 	if err := o.store.CreateRule(policyName, rule); err != nil {
 		return err
 	}
-	_ = o.store.LogAudit(actor.Source, "create", "rule", policyName, rule)
+	o.audit(actor, "create", "rule", policyName, rule)
 	return nil
 }
 
@@ -84,6 +84,6 @@ func (o *Ops) DeleteRule(actor Actor, id int64) error {
 	if err := o.store.DeleteRule(id); err != nil {
 		return err
 	}
-	_ = o.store.LogAudit(actor.Source, "delete", "rule", fmt.Sprintf("%d", id), nil)
+	o.audit(actor, "delete", "rule", fmt.Sprintf("%d", id), nil)
 	return nil
 }

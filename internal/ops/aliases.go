@@ -43,7 +43,7 @@ func (o *Ops) CreateAlias(actor Actor, a *model.Alias) error {
 	if err := o.store.CreateAlias(a); err != nil {
 		return err
 	}
-	_ = o.store.LogAudit(actor.Source, "create", "alias", a.Name, a)
+	o.audit(actor, "create", "alias", a.Name, a)
 	// Check for nested alias cycles — rollback on detection.
 	if a.Type == model.AliasTypeNested {
 		if err := o.store.CheckAliasCycles(a.Name); err != nil {
@@ -65,7 +65,7 @@ func (o *Ops) UpdateAlias(actor Actor, a *model.Alias) error {
 	if err := o.store.UpdateAlias(a); err != nil {
 		return err
 	}
-	_ = o.store.LogAudit(actor.Source, "update", "alias", a.Name, a)
+	o.audit(actor, "update", "alias", a.Name, a)
 	return nil
 }
 
@@ -74,7 +74,7 @@ func (o *Ops) DeleteAlias(actor Actor, name string) error {
 	if err := o.store.DeleteAlias(name); err != nil {
 		return err
 	}
-	_ = o.store.LogAudit(actor.Source, "delete", "alias", name, nil)
+	o.audit(actor, "delete", "alias", name, nil)
 	return nil
 }
 
@@ -106,6 +106,6 @@ func (o *Ops) RemoveAliasMember(actor Actor, aliasName, member string) error {
 	if err := o.store.RemoveAliasMember(aliasName, member); err != nil {
 		return err
 	}
-	_ = o.store.LogAudit(actor.Source, "remove_member", "alias", aliasName, map[string]string{"member": member})
+	o.audit(actor, "remove_member", "alias", aliasName, map[string]string{"member": member})
 	return nil
 }

@@ -12,6 +12,7 @@ package ops
 
 import (
 	"errors"
+	"log/slog"
 	"strings"
 
 	"github.com/gatekeeper-firewall/gatekeeper/internal/config"
@@ -75,4 +76,12 @@ func New(store *config.Store) *Ops {
 // don't require validation or audit logging (e.g., list queries).
 func (o *Ops) Store() *config.Store {
 	return o.store
+}
+
+// audit logs a mutation. Failures are logged as warnings rather than
+// silently discarded (M-CR2).
+func (o *Ops) audit(actor Actor, action, resource, name string, data any) {
+	if err := o.store.LogAudit(actor.Source, action, resource, name, data); err != nil {
+		slog.Warn("audit log write failed", "action", action, "resource", resource, "name", name, "error", err)
+	}
 }

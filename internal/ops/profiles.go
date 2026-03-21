@@ -32,7 +32,7 @@ func (o *Ops) CreateProfile(actor Actor, p *model.Profile) error {
 	if err := o.store.CreateProfile(p); err != nil {
 		return err
 	}
-	_ = o.store.LogAudit(actor.Source, "create", "profile", p.Name, p)
+	o.audit(actor, "create", "profile", p.Name, p)
 	return nil
 }
 
@@ -44,7 +44,7 @@ func (o *Ops) UpdateProfile(actor Actor, p *model.Profile) error {
 	if err := o.store.UpdateProfile(p); err != nil {
 		return err
 	}
-	_ = o.store.LogAudit(actor.Source, "update", "profile", p.Name, p)
+	o.audit(actor, "update", "profile", p.Name, p)
 	return nil
 }
 
@@ -53,6 +53,6 @@ func (o *Ops) DeleteProfile(actor Actor, name string) error {
 	if err := o.store.DeleteProfile(name); err != nil {
 		return err
 	}
-	_ = o.store.LogAudit(actor.Source, "delete", "profile", name, nil)
+	o.audit(actor, "delete", "profile", name, nil)
 	return nil
 }

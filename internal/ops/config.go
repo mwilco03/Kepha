@@ -23,7 +23,7 @@ func (o *Ops) Commit(actor Actor, message string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	_ = o.store.LogAudit(actor.Source, "commit", "config", fmt.Sprintf("%d", rev), map[string]string{"message": message})
+	o.audit(actor, "commit", "config", fmt.Sprintf("%d", rev), map[string]string{"message": message})
 	return rev, nil
 }
 
@@ -33,7 +33,7 @@ func (o *Ops) Rollback(actor Actor, rev int) error {
 	if err := o.store.Rollback(rev); err != nil {
 		return err
 	}
-	_ = o.store.LogAudit(actor.Source, "rollback", "config", fmt.Sprintf("%d", rev), nil)
+	o.audit(actor, "rollback", "config", fmt.Sprintf("%d", rev), nil)
 	return nil
 }
 
@@ -65,7 +65,7 @@ func (o *Ops) Import(actor Actor, snap *config.ConfigSnapshot) error {
 	if err := o.store.Import(snap); err != nil {
 		return err
 	}
-	_ = o.store.LogAudit(actor.Source, "import", "config", "", nil)
+	o.audit(actor, "import", "config", "", nil)
 	return nil
 }
 

@@ -46,7 +46,7 @@ func (o *Ops) CreateZone(actor Actor, z *model.Zone) error {
 	if err := o.store.CreateZone(z); err != nil {
 		return err
 	}
-	_ = o.store.LogAudit(actor.Source, "create", "zone", z.Name, z)
+	o.audit(actor, "create", "zone", z.Name, z)
 	return nil
 }
 
@@ -71,7 +71,7 @@ func (o *Ops) UpdateZone(actor Actor, z *model.Zone) error {
 	if err := o.store.UpdateZone(z); err != nil {
 		return err
 	}
-	_ = o.store.LogAudit(actor.Source, "update", "zone", z.Name, z)
+	o.audit(actor, "update", "zone", z.Name, z)
 	return nil
 }
 
@@ -80,6 +80,6 @@ func (o *Ops) DeleteZone(actor Actor, name string) error {
 	if err := o.store.DeleteZone(name); err != nil {
 		return err
 	}
-	_ = o.store.LogAudit(actor.Source, "delete", "zone", name, nil)
+	o.audit(actor, "delete", "zone", name, nil)
 	return nil
 }

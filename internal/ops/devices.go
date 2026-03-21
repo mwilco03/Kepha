@@ -54,7 +54,7 @@ func (o *Ops) AssignDevice(actor Actor, ip, mac, hostname, profileName string, p
 	if err := o.store.AssignDevice(d); err != nil {
 		return nil, err
 	}
-	_ = o.store.LogAudit(actor.Source, "assign", "device", d.IP, d)
+	o.audit(actor, "assign", "device", d.IP, d)
 	return d, nil
 }
 
@@ -66,6 +66,6 @@ func (o *Ops) UnassignDevice(actor Actor, ip string) error {
 	if err := o.store.UnassignDevice(ip); err != nil {
 		return err
 	}
-	_ = o.store.LogAudit(actor.Source, "unassign", "device", ip, nil)
+	o.audit(actor, "unassign", "device", ip, nil)
 	return nil
 }
