@@ -223,15 +223,18 @@ func (b *NftablesBackend) DryRun(input *compiler.Input) (string, error) {
 
 // Capabilities reports nftables feature support.
 func (b *NftablesBackend) Capabilities() BackendCaps {
-	version := "unknown"
-	// Try to read kernel nftables version from /proc.
+	// L22: nftables is in-kernel — report kernel version with clear label.
+	kernelVersion := "unknown"
 	if data, err := os.ReadFile("/proc/version"); err == nil {
-		version = strings.Fields(string(data))[2] // kernel version
+		fields := strings.Fields(string(data))
+		if len(fields) >= 3 {
+			kernelVersion = fields[2]
+		}
 	}
 
 	return BackendCaps{
-		Name:            "nftables",
-		Version:         version,
+		Name:            "nftables (netlink)",
+		Version:         "kernel " + kernelVersion,
 		Sets:            true,
 		IncrementalSets: true,
 		Flowtables:      true,
