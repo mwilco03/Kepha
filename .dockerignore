@@ -1,0 +1,10 @@
+.git
+.github
+.agents
+bin
+*.tar.gz
+*.tar.zst
+*.log
+DEPLOYMENT-READINESS-REPORT.md
+DEPLOYMENT-PLAN.md
+PUNCHLIST.md
