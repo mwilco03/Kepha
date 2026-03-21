@@ -188,7 +188,31 @@ type rateLimiter struct {
 }
 
 func newRateLimiter() *rateLimiter {
-	return &rateLimiter{counts: make(map[string][]time.Time)}
+	rl := &rateLimiter{counts: make(map[string][]time.Time)}
+	// M-SRE2: Cleanup stale entries every 5 minutes.
+	go func() {
+		ticker := time.NewTicker(5 * time.Minute)
+		defer ticker.Stop()
+		for range ticker.C {
+			rl.mu.Lock()
+			cutoff := time.Now().Add(-5 * time.Minute)
+			for key, times := range rl.counts {
+				var recent []time.Time
+				for _, t := range times {
+					if t.After(cutoff) {
+						recent = append(recent, t)
+					}
+				}
+				if len(recent) == 0 {
+					delete(rl.counts, key)
+				} else {
+					rl.counts[key] = recent
+				}
+			}
+			rl.mu.Unlock()
+		}
+	}()
+	return rl
 }
 
 // allow checks and records a call. Returns true if within limit.
