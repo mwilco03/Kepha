@@ -332,7 +332,7 @@ func (b *NftablesBackend) buildAliasSets(conn *nft.Conn, table *nft.Table, input
 		if len(members) == 0 {
 			continue
 		}
-		setName := sanitizeSetName(a.Name)
+		setName := model.SanitizeName(a.Name)
 		set := &nft.Set{Table: table, Name: setName}
 		var elems []nft.SetElement
 
@@ -396,21 +396,6 @@ func resolveAliasMembers(a *model.Alias, aliasMap map[string]*model.Alias, depth
 		}
 	}
 	return resolved
-}
-
-// sanitizeSetName produces a valid nftables set name.
-func sanitizeSetName(name string) string {
-	var b strings.Builder
-	b.Grow(len(name))
-	for _, c := range name {
-		switch {
-		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9', c == '_':
-			b.WriteRune(c)
-		default:
-			b.WriteByte('_')
-		}
-	}
-	return b.String()
 }
 
 // buildBogonSet creates the anti-spoof set with RFC1918 and bogon CIDR ranges.

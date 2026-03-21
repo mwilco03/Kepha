@@ -90,7 +90,7 @@ func Compile(input *Input) (*CompiledRuleset, error) {
 		}
 		setType := inferSetType(a.Type)
 		needsInterval := a.Type == model.AliasTypeNetwork
-		b.WriteString(fmt.Sprintf("\tset %s {\n", sanitizeName(a.Name)))
+		b.WriteString(fmt.Sprintf("\tset %s {\n", model.SanitizeName(a.Name)))
 		b.WriteString(fmt.Sprintf("\t\ttype %s\n", setType))
 		if needsInterval {
 			b.WriteString("\t\tflags interval\n")
@@ -263,13 +263,13 @@ func compileRule(r model.Rule, srcIface, wanIface string, aliasMap map[string]*m
 
 	if r.SrcAlias != "" {
 		if a, ok := aliasMap[r.SrcAlias]; ok && a.Type != model.AliasTypePort {
-			parts = append(parts, fmt.Sprintf("ip saddr @%s", sanitizeName(r.SrcAlias)))
+			parts = append(parts, fmt.Sprintf("ip saddr @%s", model.SanitizeName(r.SrcAlias)))
 		}
 	}
 
 	if r.DstAlias != "" {
 		if a, ok := aliasMap[r.DstAlias]; ok && a.Type != model.AliasTypePort {
-			parts = append(parts, fmt.Sprintf("ip daddr @%s", sanitizeName(r.DstAlias)))
+			parts = append(parts, fmt.Sprintf("ip daddr @%s", model.SanitizeName(r.DstAlias)))
 		}
 	}
 
@@ -358,21 +358,6 @@ func modelActionToNFT(action model.RuleAction) string {
 	}
 }
 
-// sanitizeName produces a valid nftables identifier from a user-supplied name.
-// Only alphanumeric characters and underscores are kept.
-func sanitizeName(name string) string {
-	var b strings.Builder
-	b.Grow(len(name))
-	for _, c := range name {
-		switch {
-		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9', c == '_':
-			b.WriteRune(c)
-		default:
-			b.WriteByte('_')
-		}
-	}
-	return b.String()
-}
 
 func validateInput(input *Input) error {
 	if len(input.Zones) == 0 {

@@ -181,9 +181,9 @@ func TestSanitizeName(t *testing.T) {
 		{"a-b.c", "a_b_c"},
 	}
 	for _, tt := range tests {
-		got := sanitizeName(tt.input)
+		got := model.SanitizeName(tt.input)
 		if got != tt.want {
-			t.Errorf("sanitizeName(%q) = %q, want %q", tt.input, got, tt.want)
+			t.Errorf("model.SanitizeName(%q) = %q, want %q", tt.input, got, tt.want)
 		}
 	}
 }

@@ -1,6 +1,26 @@
 package model
 
-import "time"
+import (
+	"strings"
+	"time"
+)
+
+// SanitizeName produces a valid nftables identifier from a user-supplied name.
+// Only alphanumeric characters and underscores are kept; everything else
+// becomes an underscore. Shared by compiler and backend packages.
+func SanitizeName(name string) string {
+	var b strings.Builder
+	b.Grow(len(name))
+	for _, c := range name {
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9', c == '_':
+			b.WriteRune(c)
+		default:
+			b.WriteByte('_')
+		}
+	}
+	return b.String()
+}
 
 // TrustLevel classifies the trust assigned to a network zone.
 type TrustLevel string
