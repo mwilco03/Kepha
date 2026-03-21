@@ -59,6 +59,10 @@ func Handler(store *config.Store, svcMgrs ...*service.Manager) http.Handler {
 }
 
 // HandlerWithDeps creates the web UI with full dependency injection.
+// Note (M-SA5): The web UI reads directly from config.Store for list/get
+// operations rather than going through the ops layer. This is acceptable
+// for read-only queries — ops adds validation and audit for mutations only.
+// All mutations (assign, commit, rollback) go through the API endpoints.
 func HandlerWithDeps(store *config.Store, deps *WebDeps) http.Handler {
 	mux := http.NewServeMux()
 	sessions := newSessionStore()
