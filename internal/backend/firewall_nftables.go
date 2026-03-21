@@ -376,13 +376,26 @@ func (b *NftablesBackend) buildAliasSets(conn *nft.Conn, table *nft.Table, input
 	return sets
 }
 
-// resolveAliasMembers recursively resolves alias members with depth limit.
+// resolveAliasMembers recursively resolves alias members with depth limit,
+// deduplication, and 10K expansion cap. Mirrors the compiler's implementation.
 func resolveAliasMembers(a *model.Alias, aliasMap map[string]*model.Alias, depth int) []string {
+	seen := make(map[string]struct{})
+	return resolveAliasMembersDedup(a, aliasMap, depth, seen)
+}
+
+func resolveAliasMembersDedup(a *model.Alias, aliasMap map[string]*model.Alias, depth int, seen map[string]struct{}) []string {
 	if depth > 10 {
 		return nil
 	}
 	if a.Type != model.AliasTypeNested {
-		return a.Members
+		result := make([]string, 0, len(a.Members))
+		for _, m := range a.Members {
+			if _, dup := seen[m]; !dup {
+				seen[m] = struct{}{}
+				result = append(result, m)
+			}
+		}
+		return result
 	}
 	var resolved []string
 	for _, name := range a.Members {
@@ -390,7 +403,7 @@ func resolveAliasMembers(a *model.Alias, aliasMap map[string]*model.Alias, depth
 		if !ok {
 			continue
 		}
-		resolved = append(resolved, resolveAliasMembers(nested, aliasMap, depth+1)...)
+		resolved = append(resolved, resolveAliasMembersDedup(nested, aliasMap, depth+1, seen)...)
 		if len(resolved) > 10000 {
 			return resolved[:10000]
 		}
