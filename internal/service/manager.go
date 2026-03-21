@@ -326,26 +326,94 @@ func (m *Manager) StartEnabled() {
 	}
 }
 
-// StopAll stops all running services in reverse order.
+// StopAll stops all running services in dependency-safe reverse order.
+// Services that depend on others are stopped first (M-BA8).
 func (m *Manager) StopAll() {
 	m.mu.RLock()
 	services := make([]Service, 0, len(m.registry))
 	for _, svc := range m.registry {
 		services = append(services, svc)
 	}
+	states := make(map[string]State, len(m.states))
+	for k, v := range m.states {
+		states[k] = v
+	}
 	m.mu.RUnlock()
 
-	for i := len(services) - 1; i >= 0; i-- {
-		svc := services[i]
-		m.mu.RLock()
-		state := m.states[svc.Name()]
-		m.mu.RUnlock()
-		if state == StateRunning {
+	// Topological sort: services with no dependents stop first,
+	// services that others depend on stop last.
+	order := topoSortServices(services)
+
+	// Stop in reverse topological order (dependents before dependencies).
+	for i := len(order) - 1; i >= 0; i-- {
+		svc := order[i]
+		if states[svc.Name()] == StateRunning {
 			if err := m.stopService(svc); err != nil {
 				slog.Error("failed to stop service", "service", svc.Name(), "error", err)
 			}
 		}
 	}
+}
+
+// topoSortServices returns services in dependency order: dependencies before
+// dependents. Uses Kahn's algorithm. Services with no deps come first.
+func topoSortServices(services []Service) []Service {
+	byName := make(map[string]Service, len(services))
+	inDegree := make(map[string]int, len(services))
+	for _, svc := range services {
+		byName[svc.Name()] = svc
+		inDegree[svc.Name()] = 0
+	}
+	// Count incoming edges (how many things depend on me → not useful;
+	// we need: how many deps does each service have).
+	for _, svc := range services {
+		count := 0
+		for _, dep := range svc.Dependencies() {
+			if _, ok := byName[dep]; ok {
+				count++
+			}
+		}
+		inDegree[svc.Name()] = count
+	}
+
+	var queue []Service
+	for _, svc := range services {
+		if inDegree[svc.Name()] == 0 {
+			queue = append(queue, svc)
+		}
+	}
+
+	var result []Service
+	for len(queue) > 0 {
+		svc := queue[0]
+		queue = queue[1:]
+		result = append(result, svc)
+		// Reduce in-degree for services that depend on this one.
+		for _, other := range services {
+			for _, dep := range other.Dependencies() {
+				if dep == svc.Name() {
+					inDegree[other.Name()]--
+					if inDegree[other.Name()] == 0 {
+						queue = append(queue, other)
+					}
+				}
+			}
+		}
+	}
+
+	// Append any remaining (cyclic deps) at the end.
+	if len(result) < len(services) {
+		seen := make(map[string]bool, len(result))
+		for _, svc := range result {
+			seen[svc.Name()] = true
+		}
+		for _, svc := range services {
+			if !seen[svc.Name()] {
+				result = append(result, svc)
+			}
+		}
+	}
+	return result
 }
 
 func (m *Manager) startService(svc Service, cfg map[string]string) error {
