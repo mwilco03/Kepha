@@ -722,6 +722,237 @@ paths:
               schema:
                 type: string
 
+  # --- WireGuard extended ---
+  /api/v1/wg/client-config:
+    post:
+      summary: Generate WireGuard client configuration
+      tags: [wireguard]
+      responses: { "200": { description: Client config text } }
+  /api/v1/wg/prune:
+    post:
+      summary: Remove stale WireGuard peers
+      tags: [wireguard]
+      responses: { "200": { description: Pruned peer list } }
+
+  # --- Services extended ---
+  /api/v1/services/{name}/schema:
+    get:
+      summary: Get config schema for a service
+      tags: [services]
+      responses: { "200": { description: Config field definitions } }
+  /api/v1/services/{name}/config:
+    put:
+      summary: Update service configuration
+      tags: [services]
+      responses: { "200": { description: Updated config } }
+
+  # --- Content Filters ---
+  /api/v1/content-filters:
+    get:
+      summary: List content filters
+      tags: [content-filters]
+      responses: { "200": { description: Filter list } }
+    post:
+      summary: Create content filter
+      tags: [content-filters]
+      responses: { "201": { description: Created } }
+  /api/v1/content-filters/{name}:
+    get:
+      summary: Get content filter by name
+      tags: [content-filters]
+      responses: { "200": { description: Filter details } }
+    put:
+      summary: Update content filter
+      tags: [content-filters]
+      responses: { "200": { description: Updated } }
+    delete:
+      summary: Delete content filter
+      tags: [content-filters]
+      responses: { "204": { description: Deleted } }
+  /api/v1/content-filters/check:
+    get:
+      summary: Check domain against content filters
+      tags: [content-filters]
+      responses: { "200": { description: Check result } }
+  /api/v1/content-filters/stats:
+    get:
+      summary: Content filter statistics
+      tags: [content-filters]
+      responses: { "200": { description: Stats } }
+  /api/v1/content-filters/exceptions:
+    get:
+      summary: List filter exceptions
+      tags: [content-filters]
+      responses: { "200": { description: Exception list } }
+    post:
+      summary: Request a filter exception
+      tags: [content-filters]
+      responses: { "201": { description: Exception created } }
+  /api/v1/content-filters/exceptions/{id}:
+    get:
+      summary: Get exception details
+      tags: [content-filters]
+      responses: { "200": { description: Exception } }
+  /api/v1/content-filters/exceptions/{id}/approve:
+    post:
+      summary: Approve a filter exception
+      tags: [content-filters]
+      responses: { "200": { description: Approved } }
+  /api/v1/content-filters/exceptions/{id}/deny:
+    post:
+      summary: Deny a filter exception
+      tags: [content-filters]
+      responses: { "200": { description: Denied } }
+  /api/v1/content-filters/exceptions/{id}/revoke:
+    post:
+      summary: Revoke an approved exception
+      tags: [content-filters]
+      responses: { "200": { description: Revoked } }
+
+  # --- Fingerprints ---
+  /api/v1/fingerprints:
+    get:
+      summary: List observed TLS fingerprints
+      tags: [fingerprints]
+      responses: { "200": { description: Fingerprint list } }
+  /api/v1/fingerprints/{hash}:
+    get:
+      summary: Get fingerprint by hash
+      tags: [fingerprints]
+      responses: { "200": { description: Fingerprint details } }
+  /api/v1/fingerprints/{hash}/identify:
+    get:
+      summary: Identify device by fingerprint
+      tags: [fingerprints]
+      responses: { "200": { description: Device identification } }
+  /api/v1/fingerprints/{hash}/threat:
+    get:
+      summary: Check fingerprint against threat intelligence
+      tags: [fingerprints]
+      responses: { "200": { description: Threat assessment } }
+  /api/v1/fingerprints/{hash}/assign:
+    post:
+      summary: Assign device profile to fingerprint
+      tags: [fingerprints]
+      responses: { "200": { description: Profile assigned } }
+
+  # --- IOC (Indicators of Compromise) ---
+  /api/v1/iocs:
+    get:
+      summary: List indicators of compromise
+      tags: [iocs]
+      responses: { "200": { description: IOC list } }
+    post:
+      summary: Add an IOC
+      tags: [iocs]
+      responses: { "201": { description: IOC added } }
+  /api/v1/iocs/bulk:
+    post:
+      summary: Bulk add IOCs
+      tags: [iocs]
+      responses: { "200": { description: Bulk result } }
+  /api/v1/iocs/{type}/{value}:
+    delete:
+      summary: Remove an IOC
+      tags: [iocs]
+      responses: { "204": { description: Removed } }
+  /api/v1/iocs/match:
+    get:
+      summary: Check IP/domain against IOC store
+      tags: [iocs]
+      responses: { "200": { description: Match result } }
+  /api/v1/iocs/stats:
+    get:
+      summary: IOC store statistics
+      tags: [iocs]
+      responses: { "200": { description: Stats } }
+  /api/v1/iocs/templates:
+    get:
+      summary: List IOC feed templates
+      tags: [iocs]
+      responses: { "200": { description: Template list } }
+    post:
+      summary: Add IOC feed template
+      tags: [iocs]
+      responses: { "201": { description: Template added } }
+  /api/v1/iocs/templates/{name}:
+    delete:
+      summary: Remove IOC feed template
+      tags: [iocs]
+      responses: { "204": { description: Removed } }
+  /api/v1/iocs/mmdb:
+    get:
+      summary: MaxMind GeoIP database status
+      tags: [iocs]
+      responses: { "200": { description: MMDB status } }
+  /api/v1/iocs/mmdb/refresh:
+    post:
+      summary: Refresh MaxMind database
+      tags: [iocs]
+      responses: { "200": { description: Refresh started } }
+  /api/v1/iocs/mmdb/config:
+    post:
+      summary: Configure MaxMind auto-updater
+      tags: [iocs]
+      responses: { "200": { description: Config updated } }
+
+  # --- XDP Fast Path ---
+  /api/v1/xdp/status:
+    get:
+      summary: XDP subsystem status
+      tags: [xdp]
+      responses: { "200": { description: XDP status } }
+  /api/v1/xdp/capabilities:
+    get:
+      summary: XDP hardware capabilities
+      tags: [xdp]
+      responses: { "200": { description: Capabilities } }
+  /api/v1/xdp/stats:
+    get:
+      summary: XDP packet counters
+      tags: [xdp]
+      responses: { "200": { description: Stats } }
+  /api/v1/xdp/blocklist:
+    get:
+      summary: List XDP blocklist entries
+      tags: [xdp]
+      responses: { "200": { description: Blocklist } }
+    post:
+      summary: Add IP to XDP blocklist
+      tags: [xdp]
+      responses: { "201": { description: Added } }
+  /api/v1/xdp/blocklist/{ip}:
+    delete:
+      summary: Remove IP from XDP blocklist
+      tags: [xdp]
+      responses: { "204": { description: Removed } }
+  /api/v1/xdp/acls:
+    get:
+      summary: List XDP ACL rules
+      tags: [xdp]
+      responses: { "200": { description: ACL list } }
+    post:
+      summary: Add XDP ACL rule
+      tags: [xdp]
+      responses: { "201": { description: Rule added } }
+
+  # --- Diagnostics extended ---
+  /api/v1/diag/topology:
+    get:
+      summary: Auto-detect WAN/LAN network topology
+      tags: [diagnostics]
+      responses: { "200": { description: Topology map } }
+  /api/v1/mtu/status:
+    get:
+      summary: MTU status across zones
+      tags: [diagnostics]
+      responses: { "200": { description: MTU report } }
+  /api/v1/perf/nic:
+    get:
+      summary: NIC performance and offload status
+      tags: [diagnostics]
+      responses: { "200": { description: NIC info } }
+
   # --- Health Probes ---
 
   /api/v1/healthz:
