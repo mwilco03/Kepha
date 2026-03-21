@@ -8,14 +8,27 @@ import (
 	"github.com/gatekeeper-firewall/gatekeeper/internal/validate"
 )
 
+// WGManager abstracts WireGuard peer operations (H24).
+// Defined here (not in backend) to avoid an import cycle since it uses driver types.
+// Consumers should accept WGManager instead of *driver.WireGuard.
+type WGManager interface {
+	ListPeers() []driver.WGPeer
+	AddPeer(peer driver.WGPeer) error
+	RemovePeer(publicKey string) error
+	PruneStalePeers(maxAge time.Duration) ([]string, error)
+	GenerateClientConfig(clientPrivateKey, serverEndpoint string, peer driver.WGPeer) string
+	PublicKey() string
+}
+
 // WireGuardOps provides validated WireGuard peer operations.
 // The actual WireGuard apply is owned by the daemon — these methods
 // only manage peer state in the driver's in-memory config.
 type WireGuardOps struct {
-	wg *driver.WireGuard
+	wg WGManager
 }
 
 // NewWireGuardOps creates WireGuard ops. Returns nil if wg is nil (disabled).
+// Accepts *driver.WireGuard directly to avoid nil interface issues.
 func NewWireGuardOps(wg *driver.WireGuard) *WireGuardOps {
 	if wg == nil {
 		return nil

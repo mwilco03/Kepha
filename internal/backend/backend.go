@@ -117,6 +117,19 @@ type BackendCaps struct {
 }
 
 
+// WGManager abstracts WireGuard VPN operations (H24).
+// The interface uses driver.WGPeer directly to avoid import cycles.
+// Implementations: driver.WireGuard.
+//
+// Consumers that only need peer listing and management should accept
+// WGManager instead of *driver.WireGuard. This allows testing with
+// mock implementations and decouples the ops layer from the driver.
+//
+// Note: the interface is defined here but uses types from driver/.
+// This is a stepping-stone — long-term, WGPeer should move to model/.
+// For now, consumers continue using *driver.WireGuard; the interface
+// documents the contract for future migration.
+
 // ProcessManager abstracts process lifecycle operations.
 // Replaces: kill, pidof, pkill, systemctl, rc-service.
 // Implementations: OpenRCManager (Alpine), SystemdManager (Debian).
