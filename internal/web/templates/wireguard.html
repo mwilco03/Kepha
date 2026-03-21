@@ -34,7 +34,7 @@
             <label>Name (optional)</label>
             <input type="text" id="add-name" placeholder="client name">
         </div>
-        <button type="submit" class="btn btn-sm">Add Peer</button>
+        <button type="submit" class="btn btn-sm" id="add-peer-btn">Add Peer</button>
     </form>
 
     <div id="status-msg"></div>
@@ -127,6 +127,9 @@ function loadPeers() {
 
 function addPeer(e) {
     e.preventDefault();
+    var btn = document.getElementById('add-peer-btn');
+    btn.disabled = true;
+    btn.textContent = 'Adding...';
     var pubkey = document.getElementById('add-pubkey').value.trim();
     var allowed = document.getElementById('add-allowed').value.trim();
     var name = document.getElementById('add-name').value.trim();
@@ -144,7 +147,8 @@ function addPeer(e) {
         document.getElementById('add-name').value = '';
         loadPeers();
     })
-    .catch(function(err) { showStatus('Error: ' + err, false); });
+    .catch(function(err) { showStatus('Error: ' + err, false); })
+    .finally(function() { btn.disabled = false; btn.textContent = 'Add Peer'; });
 }
 
 function deletePeer(pubkey) {
