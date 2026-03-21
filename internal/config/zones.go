@@ -3,6 +3,7 @@ package config
 import (
 	"database/sql"
 	"fmt"
+	"net"
 
 	"github.com/gatekeeper-firewall/gatekeeper/internal/model"
 )
@@ -40,6 +41,13 @@ func (s *Store) GetZone(name string) (*model.Zone, error) {
 }
 
 func (s *Store) CreateZone(z *model.Zone) error {
+	// Validate CIDR overlap with existing zones.
+	if z.NetworkCIDR != "" {
+		if err := s.checkCIDROverlap(z.NetworkCIDR, ""); err != nil {
+			return err
+		}
+	}
+
 	res, err := s.db.Exec(
 		"INSERT INTO zones (name, interface, network_cidr, trust_level, description, mtu) VALUES (?, ?, ?, ?, ?, ?)",
 		z.Name, z.Interface, z.NetworkCIDR, z.TrustLevel, z.Description, z.MTU,
@@ -51,7 +59,42 @@ func (s *Store) CreateZone(z *model.Zone) error {
 	return nil
 }
 
+// checkCIDROverlap verifies that a new CIDR does not overlap with any existing
+// zone's subnet. excludeName is the zone being updated (empty for create).
+func (s *Store) checkCIDROverlap(cidr, excludeName string) error {
+	_, newNet, err := net.ParseCIDR(cidr)
+	if err != nil {
+		return fmt.Errorf("invalid CIDR %q: %w", cidr, err)
+	}
+
+	zones, err := s.ListZones()
+	if err != nil {
+		return fmt.Errorf("list zones for overlap check: %w", err)
+	}
+
+	for _, z := range zones {
+		if z.NetworkCIDR == "" || z.Name == excludeName {
+			continue
+		}
+		_, existingNet, err := net.ParseCIDR(z.NetworkCIDR)
+		if err != nil {
+			continue // Skip zones with unparseable CIDRs.
+		}
+		if newNet.Contains(existingNet.IP) || existingNet.Contains(newNet.IP) {
+			return fmt.Errorf("CIDR %s overlaps with zone %q (%s)", cidr, z.Name, z.NetworkCIDR)
+		}
+	}
+	return nil
+}
+
 func (s *Store) UpdateZone(z *model.Zone) error {
+	// Validate CIDR overlap (exclude self).
+	if z.NetworkCIDR != "" {
+		if err := s.checkCIDROverlap(z.NetworkCIDR, z.Name); err != nil {
+			return err
+		}
+	}
+
 	_, err := s.db.Exec(
 		"UPDATE zones SET interface = ?, network_cidr = ?, trust_level = ?, description = ?, mtu = ? WHERE name = ?",
 		z.Interface, z.NetworkCIDR, z.TrustLevel, z.Description, z.MTU, z.Name,
