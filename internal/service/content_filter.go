@@ -94,7 +94,16 @@ func (e *ContentFilterEngine) Reload() error {
 		slog.Info("content filter: expired exceptions", "count", n)
 	}
 
-	// Build new index.
+	// Snapshot categoryDomains under a single read lock to avoid
+	// RLock→Lock deadlock (Go RWMutex is not reentrant).
+	e.mu.RLock()
+	catDomains := make(map[model.ContentCategory]map[string]bool, len(e.categoryDomains))
+	for cat, domains := range e.categoryDomains {
+		catDomains[cat] = domains // Shallow copy of pointer — domains map is read-only.
+	}
+	e.mu.RUnlock()
+
+	// Build new index (no locks held during construction).
 	blocked := make(map[string]blockEntry)
 	allowed := make(map[string]bool)
 	excepted := make(map[string]bool)
@@ -121,12 +130,9 @@ func (e *ContentFilterEngine) Reload() error {
 			}
 		}
 
-		// Category-based blocking: add all domains from category feeds.
+		// Category-based blocking: use pre-snapshotted category domains.
 		for _, cat := range f.BlockedCategories {
-			e.mu.RLock()
-			domains := e.categoryDomains[cat]
-			e.mu.RUnlock()
-			for d := range domains {
+			for d := range catDomains[cat] {
 				nd := normalizeDomain(d)
 				if !allowed[nd] {
 					blocked[nd] = blockEntry{
