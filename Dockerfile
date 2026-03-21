@@ -25,8 +25,18 @@ RUN addgroup -S gatekeeper && adduser -S -G gatekeeper gatekeeper \
 
 USER gatekeeper
 
+LABEL org.opencontainers.image.title="Gatekeeper" \
+      org.opencontainers.image.description="Network firewall appliance for Alpine Linux LXC" \
+      org.opencontainers.image.source="https://github.com/mwilco03/Kepha" \
+      org.opencontainers.image.licenses="MIT"
+
 EXPOSE 8080
 VOLUME ["/var/lib/gatekeeper"]
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD wget -qO- http://127.0.0.1:8080/api/v1/healthz || exit 1
+
+STOPSIGNAL SIGTERM
 
 ENTRYPOINT ["/usr/local/bin/gatekeeperd"]
 CMD ["--listen=:8080", "--db=/var/lib/gatekeeper/gatekeeper.db"]
