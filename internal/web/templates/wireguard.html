@@ -85,19 +85,40 @@ function loadPeers() {
             el.innerHTML = '<div class="empty">No WireGuard peers configured.</div>';
             return;
         }
-        var html = '<table><thead><tr><th>Name</th><th>Public Key</th><th>Allowed IPs</th><th>Actions</th></tr></thead><tbody>';
+        var table = document.createElement('table');
+        var thead = table.createTHead();
+        var hrow = thead.insertRow();
+        ['Name','Public Key','Allowed IPs','Actions'].forEach(function(h) {
+            var th = document.createElement('th');
+            th.textContent = h;
+            hrow.appendChild(th);
+        });
+        var tbody = table.createTBody();
         peers.forEach(function(p) {
             var name = p.name || '-';
             var pk = p.public_key;
             var shortPk = pk.substring(0, 12) + '...';
-            html += '<tr><td>' + name + '</td><td title="' + pk + '">' + shortPk + '</td><td>' + p.allowed_ips + '</td>';
-            html += '<td class="actions">';
-            html += '<button onclick="showQR(\'' + pk + '\', \'' + name + '\')" class="btn btn-sm">QR</button>';
-            html += '<button onclick="deletePeer(\'' + pk + '\')" class="btn btn-sm btn-red">Delete</button>';
-            html += '</td></tr>';
+            var row = tbody.insertRow();
+            row.insertCell().textContent = name;
+            var pkCell = row.insertCell();
+            pkCell.textContent = shortPk;
+            pkCell.title = pk;
+            row.insertCell().textContent = p.allowed_ips;
+            var actCell = row.insertCell();
+            actCell.className = 'actions';
+            var qrBtn = document.createElement('button');
+            qrBtn.textContent = 'QR';
+            qrBtn.className = 'btn btn-sm';
+            qrBtn.addEventListener('click', (function(key, n) { return function() { showQR(key, n); }; })(pk, name));
+            actCell.appendChild(qrBtn);
+            var delBtn = document.createElement('button');
+            delBtn.textContent = 'Delete';
+            delBtn.className = 'btn btn-sm btn-red';
+            delBtn.addEventListener('click', (function(key) { return function() { deletePeer(key); }; })(pk));
+            actCell.appendChild(delBtn);
         });
-        html += '</tbody></table>';
-        el.innerHTML = html;
+        el.textContent = '';
+        el.appendChild(table);
     })
     .catch(function() {
         document.getElementById('peers-table').innerHTML = '<div class="empty">WireGuard not available. Enable with --wg-interface flag.</div>';
