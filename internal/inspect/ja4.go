@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -21,8 +22,8 @@ type Engine struct {
 	knownDevices []KnownDevice
 	// mergedThreats is the pre-computed union of all enabled feed hashes.
 	// Key: fingerprint hash → value: merged ThreatMatch with source feed info.
-	// Atomically swapped on feed updates so lookups never block.
-	mergedThreats map[string]ThreatMatch
+	// Swapped atomically via atomic.Value so lookups never block or race.
+	mergedThreats atomic.Value // stores map[string]ThreatMatch
 }
 
 // KnownDevice maps a fingerprint pattern to a device identity.
@@ -390,8 +391,9 @@ func (e *Engine) CheckThreat(fp string) (*ThreatMatch, error) {
 		return &ThreatMatch{Matched: false}, nil
 	}
 
-	// Single map lookup — O(1).
-	if match, ok := e.mergedThreats[fp]; ok {
+	// Single map lookup — O(1). Load atomically to avoid data race.
+	threats, _ := e.mergedThreats.Load().(map[string]ThreatMatch)
+	if match, ok := threats[fp]; ok {
 		return &match, nil
 	}
 
@@ -450,9 +452,9 @@ func (e *Engine) rebuildMergedIndex() {
 		}
 	}
 
-	// Atomic swap — in-flight CheckThreat calls see either old or new,
-	// never a partially-built map.
-	e.mergedThreats = merged
+	// Atomic swap via atomic.Value — in-flight CheckThreat calls see
+	// either old or new map, never a partially-built one.
+	e.mergedThreats.Store(merged)
 }
 
 // guessOS uses TTL and window size heuristics for OS fingerprinting.
