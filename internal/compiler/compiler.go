@@ -31,6 +31,17 @@ type Input struct {
 }
 
 // Compile transforms the config model into an nftables ruleset.
+//
+// TODO (L7): IPv6 rules are not yet emitted. The ipv6 package has RA config,
+// address parsing, and dual-stack zone validation, but the compiler only generates
+// IPv4 rules (ip saddr/daddr, ICMP type matching). To add IPv6:
+//   1. Add IPv6CIDRs to Zone model (dual-stack per zone)
+//   2. Emit ip6 saddr/daddr rules alongside ip rules in forward chain
+//   3. Add ICMPv6 types (router-solicitation=133, router-advertisement=134,
+//      neighbor-solicitation=135, neighbor-advertisement=136, echo-request=128,
+//      echo-reply=129) to input chain
+//   4. Add IPv6 bogon set (::1/128, fc00::/7, fe80::/10, etc.)
+//   5. Update the netlink backend (firewall_nftables.go) in parallel
 func Compile(input *Input) (*CompiledRuleset, error) {
 	if err := validateInput(input); err != nil {
 		return nil, fmt.Errorf("validation: %w", err)
