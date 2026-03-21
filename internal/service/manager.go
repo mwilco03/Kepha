@@ -185,31 +185,46 @@ func (m *Manager) Configure(name string, cfg map[string]string) error {
 }
 
 // List returns info for all registered services.
+// Snapshots the registry under the lock, then queries DB lock-free
+// to avoid holding RLock during SQLite I/O (M-BA4).
 func (m *Manager) List() []ServiceInfo {
+	// Snapshot under lock.
 	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	var result []ServiceInfo
+	type snapshot struct {
+		svc   Service
+		state State
+		err   string
+	}
+	snaps := make([]snapshot, 0, len(m.registry))
 	for _, svc := range m.registry {
-		name := svc.Name()
+		snaps = append(snaps, snapshot{
+			svc:   svc,
+			state: m.states[svc.Name()],
+			err:   m.errors[svc.Name()],
+		})
+	}
+	m.mu.RUnlock()
+
+	// Build result without holding the lock (DB queries happen here).
+	result := make([]ServiceInfo, 0, len(snaps))
+	for _, s := range snaps {
+		name := s.svc.Name()
 		enabled, _ := m.isEnabled(name)
 		cfg, _ := m.loadConfig(name)
 		if len(cfg) == 0 {
-			cfg = svc.DefaultConfig()
+			cfg = s.svc.DefaultConfig()
 		}
-
-		info := ServiceInfo{
+		result = append(result, ServiceInfo{
 			Name:        name,
-			DisplayName: svc.DisplayName(),
-			Description: svc.Description(),
-			Category:    svc.Category(),
+			DisplayName: s.svc.DisplayName(),
+			Description: s.svc.Description(),
+			Category:    s.svc.Category(),
 			Enabled:     enabled,
-			State:       m.states[name],
-			Error:       m.errors[name],
+			State:       s.state,
+			Error:       s.err,
 			Config:      cfg,
-			Deps:        svc.Dependencies(),
-		}
-		result = append(result, info)
+			Deps:        s.svc.Dependencies(),
+		})
 	}
 	return result
 }
