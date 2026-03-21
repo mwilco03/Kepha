@@ -112,6 +112,7 @@ func Compile(input *Input) (*CompiledRuleset, error) {
 	// Emit the base chains.
 	writeInputChain(&b, input)
 	writeForwardChain(&b, input, policyMap, aliasMap, zoneProfiles, profileDevices, wanIface)
+	writeOutputChain(&b, input)
 	writeNATChain(&b, wanIface)
 
 	b.WriteString("}\n")
@@ -216,6 +217,36 @@ func writeForwardChain(b *strings.Builder, input *Input, policyMap map[string]*m
 	}
 
 	b.WriteString("\t\t# Default deny (policy).\n")
+	b.WriteString("\t}\n\n")
+}
+
+// writeOutputChain restricts firewall-originated traffic.
+// M-N2: Without this, a compromised firewall can make unrestricted outbound connections.
+func writeOutputChain(b *strings.Builder, input *Input) {
+	b.WriteString("\tchain output {\n")
+	b.WriteString("\t\ttype filter hook output priority filter; policy accept;\n\n")
+	b.WriteString("\t\t# Allow established/related.\n")
+	b.WriteString("\t\tct state established,related accept\n\n")
+	b.WriteString("\t\t# Allow loopback.\n")
+	b.WriteString("\t\toif lo accept\n\n")
+	b.WriteString("\t\t# Allow DNS queries (upstream resolution).\n")
+	b.WriteString("\t\tudp dport 53 accept\n")
+	b.WriteString("\t\ttcp dport 53 accept\n\n")
+	b.WriteString("\t\t# Allow NTP.\n")
+	b.WriteString("\t\tudp dport 123 accept\n\n")
+	b.WriteString("\t\t# Allow DHCP server responses.\n")
+	b.WriteString("\t\tudp sport 67 udp dport 68 accept\n\n")
+
+	// Allow API port for health checks to self.
+	if input.APIPort > 0 {
+		fmt.Fprintf(b, "\t\t# Allow management API (health checks).\n")
+		fmt.Fprintf(b, "\t\ttcp dport %d accept\n\n", input.APIPort)
+	}
+
+	b.WriteString("\t\t# Allow ICMP (needed for PMTUD, ping).\n")
+	b.WriteString("\t\tip protocol icmp accept\n\n")
+	b.WriteString("\t\t# Log and accept remaining (output is permissive by default for appliance).\n")
+	b.WriteString("\t\t# Change policy to 'drop' for strict output filtering.\n")
 	b.WriteString("\t}\n\n")
 }
 
