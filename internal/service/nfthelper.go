@@ -10,6 +10,13 @@ import (
 
 // nftables netlink helpers for service-level rule management.
 // These replace exec.Command("nft", ...) calls with pure netlink operations.
+//
+// TODO (M-SA6): These helpers bypass the FirewallBackend interface, creating
+// separate netlink connections and managing their own tables/chains. This
+// means service-created rules are invisible to the compiler's DryRun output
+// and won't be restored after a full ruleset re-apply. Long-term, services
+// should register their rules with FirewallBackend so the compiler can
+// include them in the unified ruleset.
 
 // nftDeleteTable deletes an nftables table and all its chains/rules.
 // Silently succeeds if the table does not exist.
