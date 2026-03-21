@@ -246,7 +246,7 @@ func New(cfg MCPConfig) *Server {
 	}
 
 	if cfg.Permissions == nil {
-		slog.Warn("mcp: no principal permissions configured — all tools are accessible to any principal")
+		slog.Warn("mcp: no principal permissions configured — all tools DENIED by default")
 	}
 
 	s := &Server{
@@ -577,7 +577,7 @@ func (s *Server) handleToolsCall(ctx context.Context, principal string, req *JSO
 // isToolAllowed checks whether a principal has permission to call a tool.
 func (s *Server) isToolAllowed(principal, toolName string) bool {
 	if s.cfg.Permissions == nil {
-		return true // No restrictions configured.
+		return false // Default deny — no permissions configured.
 	}
 	allowed, ok := s.cfg.Permissions[principal]
 	if !ok {
