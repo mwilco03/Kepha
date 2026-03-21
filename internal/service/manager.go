@@ -102,6 +102,40 @@ func NewManager(db *sql.DB) (*Manager, error) {
 	return m, nil
 }
 
+// serviceFactory is a function that creates a service instance.
+type serviceFactory func() Service
+
+// registry holds all registered service factories for auto-registration.
+var (
+	factoryMu  sync.Mutex
+	factories  []serviceFactory
+)
+
+// RegisterFactory registers a service constructor for auto-registration.
+// Call this from init() in each service file. The Manager calls
+// RegisterAll() at startup to instantiate all registered services.
+func RegisterFactory(f serviceFactory) {
+	factoryMu.Lock()
+	defer factoryMu.Unlock()
+	factories = append(factories, f)
+}
+
+// RegisterAll instantiates and registers all services that called RegisterFactory().
+// This replaces 25+ hardcoded svcMgr.Register() calls in main.go.
+func (m *Manager) RegisterAll() {
+	factoryMu.Lock()
+	fns := make([]serviceFactory, len(factories))
+	copy(fns, factories)
+	factoryMu.Unlock()
+
+	for _, fn := range fns {
+		svc := fn()
+		if svc != nil {
+			m.Register(svc)
+		}
+	}
+}
+
 // Register adds a service to the manager. Does not start it.
 func (m *Manager) Register(svc Service) {
 	m.mu.Lock()
