@@ -197,12 +197,6 @@ type DeviceAssignment struct {
 	AssignedAt time.Time `json:"assigned_at"`
 }
 
-// ConfigRevision is an immutable snapshot of a commit.
-// Note: config/revisions.go uses an anonymous struct with string Timestamp
-// for JSON compatibility. This model type can be used when time.Time parsing
-// is acceptable. Currently unused — the anonymous struct is the active type.
-// TODO: migrate ListRevisions() to use this model type.
-
 // --- Content Filtering ---
 
 // ContentCategory represents a filterable content category (e.g., "malware", "adult", "gambling").
