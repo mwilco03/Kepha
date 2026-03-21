@@ -2,7 +2,9 @@ package backend
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -28,16 +30,19 @@ func NewOpenRCManager() *OpenRCManager {
 	}
 }
 
-// Start starts a service. For services managed by Gatekeeper's service plugins,
-// this is a no-op — the plugin's Start() method handles it. For system services
-// (dnsmasq, avahi, etc.), this reads the PID file after the plugin starts the
-// daemon directly.
-func (m *OpenRCManager) Start(service string) error {
-	// The actual daemon start is handled by the service plugin's Start() method.
-	// This method exists for the interface but OpenRC service start is not
-	// a simple signal — it requires running the init script's start function.
-	// For v2, we read init scripts and exec the daemon directly.
-	return fmt.Errorf("direct service start not yet implemented for OpenRC; use service plugin Start()")
+// Start starts a service by executing its OpenRC init script.
+func (m *OpenRCManager) Start(svc string) error {
+	// Try rc-service first (Alpine OpenRC).
+	initPath := filepath.Join("/etc/init.d", svc)
+	if _, err := os.Stat(initPath); err != nil {
+		return fmt.Errorf("init script not found: %s", initPath)
+	}
+	slog.Info("starting service via OpenRC", "service", svc)
+	cmd := exec.Command(initPath, "start")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("start %s: %s: %w", svc, string(output), err)
+	}
+	return nil
 }
 
 // Stop stops a service by finding its PID and sending SIGTERM.
@@ -218,8 +223,8 @@ func (m *OpenRCManager) processUptime(pid int) (time.Duration, error) {
 		return 0, err
 	}
 
-	// Clock ticks per second (typically 100 on Linux).
-	const clockTicksPerSec = 100
+	// Clock ticks per second — read from kernel config, default 100.
+	clockTicksPerSec := getClockTicks()
 	processStartSec := float64(startTicks) / clockTicksPerSec
 	processUptime := systemUptime - processStartSec
 
@@ -228,4 +233,16 @@ func (m *OpenRCManager) processUptime(pid int) (time.Duration, error) {
 	}
 
 	return time.Duration(processUptime * float64(time.Second)), nil
+}
+
+// getClockTicks returns the kernel's clock tick rate (USER_HZ).
+// Uses the C library sysconf(_SC_CLK_TCK) via getconf. Falls back to 100.
+func getClockTicks() float64 {
+	out, err := exec.Command("getconf", "CLK_TCK").Output()
+	if err == nil {
+		if v, err := strconv.Atoi(strings.TrimSpace(string(out))); err == nil && v > 0 {
+			return float64(v)
+		}
+	}
+	return 100 // Default for nearly all Linux systems.
 }
