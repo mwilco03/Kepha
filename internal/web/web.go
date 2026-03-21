@@ -555,12 +555,21 @@ func generateSessionToken(apiKey string) string {
 type sessionStore struct {
 	mu       sync.Mutex
 	sessions map[string]time.Time // token → expiry
+	stopCh   chan struct{}
 }
 
 func newSessionStore() *sessionStore {
-	s := &sessionStore{sessions: make(map[string]time.Time)}
+	s := &sessionStore{
+		sessions: make(map[string]time.Time),
+		stopCh:   make(chan struct{}),
+	}
 	go s.cleanupLoop()
 	return s
+}
+
+// Stop terminates the background cleanup goroutine (M-CR12/M-SRE7).
+func (s *sessionStore) Stop() {
+	close(s.stopCh)
 }
 
 const maxSessions = 10000
@@ -608,7 +617,12 @@ func (s *sessionStore) revoke(token string) {
 func (s *sessionStore) cleanupLoop() {
 	ticker := time.NewTicker(15 * time.Minute)
 	defer ticker.Stop()
-	for range ticker.C {
+	for {
+		select {
+		case <-ticker.C:
+		case <-s.stopCh:
+			return
+		}
 		s.mu.Lock()
 		now := time.Now()
 		for token, expiry := range s.sessions {
