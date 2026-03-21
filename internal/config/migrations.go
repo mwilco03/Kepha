@@ -157,6 +157,8 @@ CREATE INDEX IF NOT EXISTS idx_audit_log_id ON audit_log(id DESC);
 }
 
 // Migrate runs all pending schema migrations.
+// Refuses to start if the database has migrations newer than this binary
+// (downgrade guard — prevents silent data corruption).
 func (s *Store) Migrate() error {
 	// Ensure schema_migrations table exists first.
 	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -164,6 +166,29 @@ func (s *Store) Migrate() error {
 		applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 	)`); err != nil {
 		return fmt.Errorf("create migrations table: %w", err)
+	}
+
+	// Downgrade guard: check for migrations in DB that this binary doesn't know about.
+	knownNames := make(map[string]bool, len(migrations))
+	for _, m := range migrations {
+		knownNames[m.name] = true
+	}
+	rows, err := s.db.Query("SELECT name FROM schema_migrations")
+	if err != nil {
+		return fmt.Errorf("list applied migrations: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return fmt.Errorf("scan migration: %w", err)
+		}
+		if !knownNames[name] {
+			return fmt.Errorf("database has migration %q not known to this binary — refusing to start (possible downgrade)", name)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate migrations: %w", err)
 	}
 
 	for _, m := range migrations {
