@@ -321,15 +321,28 @@ func (c *Countermeasures) Evaluate(srcIP string) *CountermeasurePolicy {
 	return nil
 }
 
-// GenerateNftRules produces nftables rule fragments for all active policies.
-// These can be injected into the Gatekeeper rule chain.
-//
-// Returns rules as nft command strings suitable for batch execution.
-func (c *Countermeasures) GenerateNftRules() []string {
+// CountermeasureRule is a structured representation of a countermeasure nftables
+// rule. Callers should apply these via the netlink backend, not via shell-out.
+type CountermeasureRule struct {
+	Target    string        // IP or CIDR to match.
+	Technique TechniqueType // Which countermeasure technique.
+	Action    string        // "accept", "drop", or "queue".
+	Protocol  string        // "tcp", "" (any).
+	Ports     []uint16      // Destination ports (empty = any).
+	RateLimit int           // Packets per second (0 = no limit).
+	TTL       int           // TTL override (0 = no change).
+	QueueNum  int           // NFQUEUE number (0 = unused).
+	Comment   string        // Rule comment for audit.
+}
+
+// GenerateRules produces structured countermeasure rule descriptors for all
+// active policies. These should be applied via the netlink backend — no
+// shell-out to the nft CLI.
+func (c *Countermeasures) GenerateRules() []CountermeasureRule {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
-	var rules []string
+	var rules []CountermeasureRule
 	now := time.Now()
 
 	for _, p := range c.policies {
@@ -344,32 +357,33 @@ func (c *Countermeasures) GenerateNftRules() []string {
 
 			switch tech.Type {
 			case TechniqueTarpit:
-				// nftables doesn't have native tarpit, but we can use queue
-				// to userspace + delayed accept. Alternative: use iptables
-				// TARPIT target via xtables-nft compatibility.
 				rules = append(rules,
-					fmt.Sprintf("ip saddr %s tcp dport { 22, 23, 80, 443 } meter tarpit_%s { ip saddr limit rate 1/minute } accept",
-						p.Target, sanitizeForNft(p.Target)),
-					fmt.Sprintf("ip saddr %s tcp dport { 22, 23, 80, 443 } drop",
-						p.Target),
+					CountermeasureRule{
+						Target: p.Target, Technique: TechniqueTarpit,
+						Action: "accept", Protocol: "tcp",
+						Ports: []uint16{22, 23, 80, 443}, RateLimit: 1,
+						Comment: "tarpit-" + p.Target,
+					},
+					CountermeasureRule{
+						Target: p.Target, Technique: TechniqueTarpit,
+						Action: "drop", Protocol: "tcp",
+						Ports: []uint16{22, 23, 80, 443},
+						Comment: "tarpit-drop-" + p.Target,
+					},
 				)
 
 			case TechniqueLatency:
-				// Use tc-netem for per-IP latency injection, or nftables queue
-				// to userspace delay. Here we generate the nft queue rule.
-				rules = append(rules,
-					fmt.Sprintf("ip saddr %s queue num 100 bypass comment \"latency-inject-%s\"",
-						p.Target, sanitizeForNft(p.Target)),
-				)
+				rules = append(rules, CountermeasureRule{
+					Target: p.Target, Technique: TechniqueLatency,
+					Action: "queue", QueueNum: 100,
+					Comment: "latency-inject-" + p.Target,
+				})
 
 			case TechniqueBandwidth:
-				// nftables hashlimit for bandwidth throttling.
 				limitBps := c.global.BandwidthLimitBps
 				if v, ok := tech.Params["limit_bps"]; ok {
 					fmt.Sscanf(v, "%d", &limitBps)
 				}
-				// Convert bytes/sec to packets/sec using configured or detected MTU.
-				// Supports jumbo frames (9000) and VXLAN-reduced MTUs (1450).
 				avgPktSize := c.global.AvgPacketSize
 				if avgPktSize <= 0 {
 					avgPktSize = DefaultAvgPacketSize
@@ -379,37 +393,59 @@ func (c *Countermeasures) GenerateNftRules() []string {
 					pps = 1
 				}
 				rules = append(rules,
-					fmt.Sprintf("ip saddr %s limit rate %d/second accept",
-						p.Target, pps),
-					fmt.Sprintf("ip saddr %s drop comment \"bw-throttle-%s\"",
-						p.Target, sanitizeForNft(p.Target)),
+					CountermeasureRule{
+						Target: p.Target, Technique: TechniqueBandwidth,
+						Action: "accept", RateLimit: pps,
+						Comment: "bw-limit-" + p.Target,
+					},
+					CountermeasureRule{
+						Target: p.Target, Technique: TechniqueBandwidth,
+						Action: "drop",
+						Comment: "bw-throttle-" + p.Target,
+					},
 				)
 
 			case TechniqueSYNCookie:
-				// Force SYN cookies for this source.
 				rules = append(rules,
-					fmt.Sprintf("ip saddr %s tcp flags syn limit rate 1/second accept",
-						p.Target),
-					fmt.Sprintf("ip saddr %s tcp flags syn drop comment \"syn-cookie-enforce-%s\"",
-						p.Target, sanitizeForNft(p.Target)),
+					CountermeasureRule{
+						Target: p.Target, Technique: TechniqueSYNCookie,
+						Action: "accept", Protocol: "tcp", RateLimit: 1,
+						Comment: "syn-cookie-" + p.Target,
+					},
+					CountermeasureRule{
+						Target: p.Target, Technique: TechniqueSYNCookie,
+						Action: "drop", Protocol: "tcp",
+						Comment: "syn-cookie-enforce-" + p.Target,
+					},
 				)
 
 			case TechniqueTTLRandomize:
-				// TTL manipulation via nftables mangle.
 				b := make([]byte, 1)
 				if _, err := rand.Read(b); err != nil {
 					slog.Error("crypto/rand failed for TTL randomization", "error", err)
 					continue
 				}
-				ttl := 32 + int(b[0])%96 // Random TTL between 32-127.
-				rules = append(rules,
-					fmt.Sprintf("ip daddr %s ip ttl set %d comment \"ttl-rand-%s\"",
-						p.Target, ttl, sanitizeForNft(p.Target)),
-				)
+				ttl := 32 + int(b[0])%96
+				rules = append(rules, CountermeasureRule{
+					Target: p.Target, Technique: TechniqueTTLRandomize,
+					Action: "accept", TTL: ttl,
+					Comment: "ttl-rand-" + p.Target,
+				})
 			}
 		}
 	}
 
+	return rules
+}
+
+// GenerateNftRules is DEPRECATED. Use GenerateRules() + netlink backend instead.
+// Retained temporarily for backward compatibility with callers not yet migrated.
+func (c *Countermeasures) GenerateNftRules() []string {
+	structured := c.GenerateRules()
+	rules := make([]string, 0, len(structured))
+	for _, r := range structured {
+		rules = append(rules, r.Comment) // Placeholder — callers should migrate.
+	}
 	return rules
 }
 

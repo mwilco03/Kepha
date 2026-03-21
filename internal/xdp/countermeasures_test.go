@@ -115,7 +115,7 @@ func TestCountermeasures_RemovePolicy(t *testing.T) {
 	}
 }
 
-func TestCountermeasures_GenerateNftRules(t *testing.T) {
+func TestCountermeasures_GenerateRules(t *testing.T) {
 	cm := NewCountermeasures()
 
 	_ = cm.AddPolicy(CountermeasurePolicy{
@@ -129,15 +129,15 @@ func TestCountermeasures_GenerateNftRules(t *testing.T) {
 		Active: true,
 	})
 
-	rules := cm.GenerateNftRules()
+	rules := cm.GenerateRules()
 	if len(rules) == 0 {
-		t.Fatal("expected nft rules to be generated")
+		t.Fatal("expected structured rules to be generated")
 	}
 
-	// Should contain the target IP.
+	// All rules should reference the target IP.
 	found := false
 	for _, r := range rules {
-		if len(r) > 0 {
+		if r.Target == "192.168.1.100" {
 			found = true
 		}
 	}
