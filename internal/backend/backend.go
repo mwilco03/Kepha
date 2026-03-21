@@ -166,108 +166,71 @@ const (
 	SigUSR2 ProcessSignal = 12
 )
 
-// NetworkManager abstracts network interface operations.
-// Replaces: ip link, ip addr, ip route, ip rule, bridge, sysctl.
-type NetworkManager interface {
-	// LinkList enumerates all network interfaces with their basic attributes.
-	LinkList() ([]LinkInfo, error)
+// --- Network sub-interfaces (M-SA4) ---
+// Split from the monolithic 31-method NetworkManager into focused interfaces.
+// Consumers should depend on the narrowest interface they need.
 
-	// SysctlSet writes a sysctl value via /proc/sys.
+// SysctlManager abstracts /proc/sys read/write operations.
+type SysctlManager interface {
 	SysctlSet(key string, value string) error
-
-	// SysctlGet reads a sysctl value from /proc/sys.
 	SysctlGet(key string) (string, error)
+}
 
-	// LinkAdd creates a network interface.
+// LinkManager abstracts network interface (link + address) operations.
+type LinkManager interface {
+	LinkList() ([]LinkInfo, error)
 	LinkAdd(name string, kind string) error
-
-	// LinkDel deletes a network interface.
 	LinkDel(name string) error
-
-	// LinkSetMTU sets the MTU on a network interface via netlink.
 	LinkSetMTU(name string, mtu int) error
-
-	// LinkGetMTU reads the current MTU of a network interface via netlink.
 	LinkGetMTU(name string) (int, error)
-
-	// LinkSetUp brings an interface up.
 	LinkSetUp(name string) error
-
-	// LinkSetDown brings an interface down.
 	LinkSetDown(name string) error
-
-	// LinkSetMaster sets an interface's master (e.g., bridge port).
 	LinkSetMaster(name string, master string) error
-
-	// AddrAdd adds an IP address to an interface.
 	AddrAdd(name string, cidr string) error
-
-	// AddrFlush removes all addresses from an interface.
 	AddrFlush(name string) error
+}
 
-	// RouteAdd adds a route.
+// RouteManager abstracts routing table and policy rule operations.
+type RouteManager interface {
 	RouteAdd(dst string, via string, dev string) error
-
-	// RouteDel removes a route.
 	RouteDel(dst string, via string, dev string) error
-
-	// BridgeVlanAdd adds a VLAN to a bridge.
-	BridgeVlanAdd(bridge string, vid int) error
-
-	// BridgeSetSTP enables or disables STP on a bridge.
-	BridgeSetSTP(name string, enabled bool) error
-
-	// BridgeSetForwardDelay sets the forward delay on a bridge (jiffies).
-	BridgeSetForwardDelay(name string, delay int) error
-
-	// BridgeSetVlanFiltering enables or disables VLAN filtering on a bridge.
-	BridgeSetVlanFiltering(name string, enabled bool) error
-
-	// RouteAddTable adds a route in a specific routing table (0 = main table).
 	RouteAddTable(dst string, via string, dev string, table int) error
-
-	// RouteFlushTable removes all routes from a routing table.
 	RouteFlushTable(table int) error
-
-	// RuleAdd adds a policy routing rule.
-	RuleAdd(oif string, table int, priority int) error
-
-	// RuleAddSrc adds a source-IP-based policy routing rule.
-	RuleAddSrc(src string, table int, priority int) error
-
-	// RuleAddFwmark adds a fwmark-based policy routing rule.
-	RuleAddFwmark(mark uint32, table int, priority int) error
-
-	// RuleDel removes all policy routing rules for a table.
-	RuleDel(table int) error
-
-	// RouteAddMetric adds a route via device with a specific metric.
 	RouteAddMetric(dst string, dev string, metric int) error
-
-	// RouteReplace atomically replaces the default route.
 	RouteReplace(via string, dev string) error
+	RuleAdd(oif string, table int, priority int) error
+	RuleAddSrc(src string, table int, priority int) error
+	RuleAddFwmark(mark uint32, table int, priority int) error
+	RuleDel(table int) error
+}
 
-	// Ping sends ICMP echo requests and returns results.
-	// If iface is non-empty, binds to that interface for source routing.
+// BridgeManager abstracts bridge-specific operations (VLAN, STP).
+type BridgeManager interface {
+	BridgeVlanAdd(bridge string, vid int) error
+	BridgeSetSTP(name string, enabled bool) error
+	BridgeSetForwardDelay(name string, delay int) error
+	BridgeSetVlanFiltering(name string, enabled bool) error
+}
+
+// DiagManager abstracts diagnostic operations (ping, connections, NIC info).
+type DiagManager interface {
 	Ping(target string, count int, timeoutSec int, iface string) (PingResult, error)
-
-	// Connections returns active network connections (replaces ss/netstat).
 	Connections() ([]Connection, error)
-
-	// ConntrackList returns connection tracking entries.
 	ConntrackList(proto string) ([]ConntrackEntry, error)
-
-	// NICInfo returns hardware details, queue count, offload status, and IRQs
-	// for a network interface. Data comes from sysfs, /proc, and ethtool ioctls.
 	NICInfo(iface string) (*NICInfo, error)
-
-	// SetIRQAffinity pins an IRQ to specific CPUs by writing
-	// /proc/irq/<irq>/smp_affinity_list.
 	SetIRQAffinity(irq int, cpuList string) error
-
-	// NICSetOffload enables or disables a NIC offload feature via ethtool ioctl.
-	// Supported features: tso, gro, gso, rx_checksum, tx_checksum.
 	NICSetOffload(iface string, feature string, enabled bool) error
+}
+
+// NetworkManager is the composite interface embedding all sub-interfaces.
+// Existing code can continue using NetworkManager; new code should depend
+// on the narrowest sub-interface needed (e.g., SysctlManager for sysctl-only).
+type NetworkManager interface {
+	SysctlManager
+	LinkManager
+	RouteManager
+	BridgeManager
+	DiagManager
 }
 
 // PingResult holds the result of a ping operation.

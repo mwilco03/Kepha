@@ -25,7 +25,7 @@ type RouterConfig struct {
 	// ServiceMgr is the pluggable service manager (optional).
 	ServiceMgr *service.Manager
 
-	// Net is the network manager for ping, connections, conntrack (optional).
+	// Net is the network manager for diagnostics and link info (optional).
 	Net backend.NetworkManager
 
 	// RBACEnforcer enables role-based access control when set.

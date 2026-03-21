@@ -57,12 +57,19 @@ func actorFromRequest(r *http.Request) ops.Actor {
 	return ops.Actor{Source: "api", User: "api"}
 }
 
+// apiNetManager is the subset of NetworkManager the API handlers actually need.
+// Narrowed from the 31-method god interface per M-SA4.
+type apiNetManager interface {
+	backend.LinkManager
+	backend.DiagManager
+}
+
 type handlers struct {
 	ops     *ops.Ops
 	wgOps   *ops.WireGuardOps
 	nft     backend.Firewall       // Was *driver.NFTables; now any Firewall implementation.
 	dnsmasq *driver.Dnsmasq        // Only used for lease parsing (daemon-owned)
-	net     backend.NetworkManager // For ping, connections, conntrack (no exec.Command).
+	net     apiNetManager // Narrowed from 31-method NetworkManager (M-SA4).
 }
 
 // --- Zones ---
