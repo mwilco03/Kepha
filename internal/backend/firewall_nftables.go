@@ -95,6 +95,11 @@ func (b *NftablesBackend) Apply(artifact *Artifact) error {
 		return fmt.Errorf("artifact data is not *compiler.Input")
 	}
 
+	// Anti-spoof set: RFC1918 + bogon ranges.
+	if err := b.buildBogonSet(conn, table); err != nil {
+		slog.Warn("failed to build bogon set", "error", err)
+	}
+
 	// Build the chains and rules.
 	if err := b.buildInputChain(conn, table, input); err != nil {
 		return fmt.Errorf("build input chain: %w", err)
@@ -308,6 +313,55 @@ func (b *NftablesBackend) writeRulesetFile(artifact *Artifact) error {
 	}
 	path := filepath.Join(b.rulesetDir, "gatekeeper.nft")
 	return os.WriteFile(path, []byte(artifact.Text), 0o640)
+}
+
+// buildBogonSet creates the anti-spoof set with RFC1918 and bogon CIDR ranges.
+func (b *NftablesBackend) buildBogonSet(conn *nft.Conn, table *nft.Table) error {
+	bogons := []string{
+		"0.0.0.0/8", "10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8",
+		"169.254.0.0/16", "172.16.0.0/12", "192.0.0.0/24",
+		"192.0.2.0/24", "192.168.0.0/16", "198.18.0.0/15",
+		"198.51.100.0/24", "203.0.113.0/24", "224.0.0.0/4",
+		"240.0.0.0/4",
+	}
+
+	set := &nft.Set{
+		Table:    table,
+		Name:     "bogons",
+		KeyType:  nft.TypeIPAddr,
+		Interval: true,
+	}
+	elems := make([]nft.SetElement, 0, len(bogons)*2)
+	for _, cidr := range bogons {
+		_, ipnet, err := net.ParseCIDR(cidr)
+		if err != nil {
+			continue
+		}
+		start := ipnet.IP.To4()
+		end := cidrEnd(ipnet)
+		elems = append(elems,
+			nft.SetElement{Key: start},
+			nft.SetElement{Key: end, IntervalEnd: true},
+		)
+	}
+	return conn.AddSet(set, elems)
+}
+
+// cidrEnd computes the first address past the CIDR range (exclusive end for interval set).
+func cidrEnd(ipnet *net.IPNet) []byte {
+	ip := ipnet.IP.To4()
+	mask := ipnet.Mask
+	end := make([]byte, 4)
+	for i := range ip {
+		end[i] = ip[i] | ^mask[i]
+	}
+	for i := 3; i >= 0; i-- {
+		end[i]++
+		if end[i] != 0 {
+			break
+		}
+	}
+	return end
 }
 
 // buildInputChain creates the input chain with standard Gatekeeper rules.
@@ -572,6 +626,21 @@ func (b *NftablesBackend) buildForwardChain(conn *nft.Conn, table *nft.Table, in
 			wanIface = z.Interface
 			break
 		}
+	}
+
+	// Anti-spoof: drop packets from WAN with bogon source addresses.
+	if wanIface != "" {
+		conn.AddRule(&nft.Rule{
+			Table: table,
+			Chain: chain,
+			Exprs: []expr.Any{
+				&expr.Meta{Key: expr.MetaKeyIIFNAME, Register: 1},
+				&expr.Cmp{Op: expr.CmpOpEq, Register: 1, Data: ifname(wanIface)},
+				&expr.Payload{DestRegister: 1, Base: expr.PayloadBaseNetworkHeader, Offset: 12, Len: 4},
+				&expr.Lookup{SourceRegister: 1, SetName: "bogons"},
+				&expr.Verdict{Kind: expr.VerdictDrop},
+			},
+		})
 	}
 
 	for _, zone := range input.Zones {

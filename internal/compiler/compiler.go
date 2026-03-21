@@ -70,6 +70,18 @@ func Compile(input *Input) (*CompiledRuleset, error) {
 		policyMap[input.Policies[i].Name] = &input.Policies[i]
 	}
 
+	// Anti-spoof set: RFC1918 + bogon ranges that must never appear as
+	// source addresses on ingress from the WAN interface.
+	b.WriteString("\tset bogons {\n")
+	b.WriteString("\t\ttype ipv4_addr\n")
+	b.WriteString("\t\tflags interval\n")
+	b.WriteString("\t\telements = { 0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8,\n")
+	b.WriteString("\t\t             169.254.0.0/16, 172.16.0.0/12, 192.0.0.0/24,\n")
+	b.WriteString("\t\t             192.0.2.0/24, 192.168.0.0/16, 198.18.0.0/15,\n")
+	b.WriteString("\t\t             198.51.100.0/24, 203.0.113.0/24, 224.0.0.0/4,\n")
+	b.WriteString("\t\t             240.0.0.0/4 }\n")
+	b.WriteString("\t}\n\n")
+
 	// Emit sets for each alias.
 	for _, a := range input.Aliases {
 		members := resolveAliasMembers(&a, aliasMap, 0)
@@ -152,6 +164,12 @@ func writeForwardChain(b *strings.Builder, input *Input, policyMap map[string]*m
 	b.WriteString("\t\t# Allow established/related.\n")
 	b.WriteString("\t\tct state established,related accept\n")
 	b.WriteString("\t\tct state invalid drop\n\n")
+
+	// Anti-spoof: drop packets from WAN with RFC1918/bogon source addresses.
+	if wanIface != "" {
+		fmt.Fprintf(b, "\t\t# Anti-spoof: drop bogon sources on WAN ingress.\n")
+		fmt.Fprintf(b, "\t\tiifname %q ip saddr @bogons drop\n\n", wanIface)
+	}
 
 	// Per-zone forwarding rules based on profiles and policies.
 	for _, zone := range input.Zones {
