@@ -76,6 +76,7 @@ type RateLimiter struct {
 	clients map[string]*bucket
 	rate    int
 	burst   int
+	stopCh  chan struct{}
 }
 
 type bucket struct {
@@ -90,9 +91,15 @@ func NewRateLimiter(rate, burst int) *RateLimiter {
 		clients: make(map[string]*bucket),
 		rate:    rate,
 		burst:   burst,
+		stopCh:  make(chan struct{}),
 	}
 	go rl.cleanup()
 	return rl
+}
+
+// Stop terminates the background cleanup goroutine (M-CR11).
+func (rl *RateLimiter) Stop() {
+	close(rl.stopCh)
 }
 
 // cleanup periodically removes stale client entries that haven't been
@@ -101,15 +108,20 @@ func NewRateLimiter(rate, burst int) *RateLimiter {
 func (rl *RateLimiter) cleanup() {
 	ticker := time.NewTicker(5 * time.Minute)
 	defer ticker.Stop()
-	for range ticker.C {
-		rl.mu.Lock()
-		cutoff := time.Now().Add(-5 * time.Minute)
-		for key, b := range rl.clients {
-			if b.lastCheck.Before(cutoff) {
-				delete(rl.clients, key)
+	for {
+		select {
+		case <-ticker.C:
+			rl.mu.Lock()
+			cutoff := time.Now().Add(-5 * time.Minute)
+			for key, b := range rl.clients {
+				if b.lastCheck.Before(cutoff) {
+					delete(rl.clients, key)
+				}
 			}
+			rl.mu.Unlock()
+		case <-rl.stopCh:
+			return
 		}
-		rl.mu.Unlock()
 	}
 }
 
