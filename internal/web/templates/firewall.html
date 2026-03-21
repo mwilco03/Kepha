@@ -23,10 +23,10 @@
 <div class="container">
     <h1>Firewall</h1>
 
-    <div class="tab-bar">
-        <div class="tab active" onclick="switchTab('overview')">Zone Policies</div>
-        <div class="tab" onclick="switchTab('rules')">Policy Rules</div>
-        <div class="tab" onclick="switchTab('compiled')">Compiled Ruleset</div>
+    <div class="tab-bar" role="tablist">
+        <button class="tab active" role="tab" aria-selected="true" tabindex="0" onclick="switchTab('overview')">Zone Policies</button>
+        <button class="tab" role="tab" aria-selected="false" tabindex="0" onclick="switchTab('rules')">Policy Rules</button>
+        <button class="tab" role="tab" aria-selected="false" tabindex="0" onclick="switchTab('compiled')">Compiled Ruleset</button>
     </div>
 
     <div id="tab-overview" class="tab-content active" style="padding-top:1rem;">
