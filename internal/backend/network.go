@@ -29,6 +29,16 @@ func NewLinuxNetworkManager() *LinuxNetworkManager {
 func (m *LinuxNetworkManager) SysctlSet(key string, value string) error {
 	// Convert dot notation to path: net.ipv4.ip_forward → /proc/sys/net/ipv4/ip_forward
 	path := filepath.Join("/proc/sys", strings.ReplaceAll(key, ".", "/"))
+	// Validate resolved path is under /proc/sys/ to prevent path traversal.
+	resolved, err := filepath.EvalSymlinks(filepath.Dir(path))
+	if err == nil {
+		resolved = filepath.Join(resolved, filepath.Base(path))
+	} else {
+		resolved = filepath.Clean(path)
+	}
+	if !strings.HasPrefix(resolved, "/proc/sys/") {
+		return fmt.Errorf("sysctl path %q resolves outside /proc/sys/", key)
+	}
 	if err := os.WriteFile(path, []byte(value), 0o644); err != nil {
 		return fmt.Errorf("sysctl set %s=%s: %w", key, value, err)
 	}
@@ -38,6 +48,11 @@ func (m *LinuxNetworkManager) SysctlSet(key string, value string) error {
 // SysctlGet reads a sysctl value from /proc/sys.
 func (m *LinuxNetworkManager) SysctlGet(key string) (string, error) {
 	path := filepath.Join("/proc/sys", strings.ReplaceAll(key, ".", "/"))
+	// Validate resolved path is under /proc/sys/ to prevent path traversal.
+	resolved := filepath.Clean(path)
+	if !strings.HasPrefix(resolved, "/proc/sys/") {
+		return "", fmt.Errorf("sysctl path %q resolves outside /proc/sys/", key)
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return "", fmt.Errorf("sysctl get %s: %w", key, err)
