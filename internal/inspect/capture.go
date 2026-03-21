@@ -192,8 +192,26 @@ func (c *Capturer) processPacket(pkt []byte, ifName string) {
 		if len(payload) < 40 {
 			return
 		}
+		// M-TD9: Walk extension headers to find TCP.
 		protocol = payload[6] // Next Header field
-		transportPayload = payload[40:]
+		offset := 40
+		for i := 0; i < 8; i++ { // Max 8 extension headers to prevent loops.
+			switch protocol {
+			case 6, 17: // TCP or UDP — we're done.
+				goto foundTransport
+			case 0, 43, 44, 51, 60: // Hop-by-hop, Routing, Fragment, AH, Dest Options
+				if offset+2 > len(payload) {
+					return
+				}
+				extLen := int(payload[offset+1]+1) * 8
+				protocol = payload[offset] // Next header of this extension
+				offset += extLen
+			default:
+				goto foundTransport // Unknown header — try anyway.
+			}
+		}
+	foundTransport:
+		transportPayload = payload[offset:]
 	default:
 		return
 	}
