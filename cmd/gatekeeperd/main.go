@@ -286,6 +286,12 @@ func main() {
 		APIKey:     *apiKey,
 	})
 
+	// Bridge web session validation into the API auth middleware so that
+	// htmx forms in the web UI can call /api/v1/* endpoints via session cookie.
+	if web.SessionValidator != nil {
+		api.SetSessionValidator(web.SessionValidator)
+	}
+
 	// MCP server (optional).
 	var mcpHandler http.Handler
 	if *enableMCP {
@@ -301,7 +307,12 @@ func main() {
 			Dnsmasq:      dnsmasq,
 			ServiceMgr:   svcMgr,
 		})
+		// Route MCP through the same auth middleware as the API.
+		// The MCP server must not be accessible without authentication.
 		mcpHandler = mcpSrv.Handler()
+		if *apiKey != "" {
+			mcpHandler = api.AuthMiddleware(*apiKey, mcpHandler)
+		}
 		slog.Info("MCP server enabled")
 	}
 
