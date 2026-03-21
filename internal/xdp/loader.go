@@ -127,7 +127,13 @@ func newBlocklistMap() *BlocklistMap {
 }
 
 // Load initializes the BPF programs and maps.
-// In a full implementation, this would:
+//
+// EXPERIMENTAL: XDP/eBPF support is a control-plane stub. Load() and Attach()
+// validate configuration and track state, but no BPF programs are actually
+// loaded or attached to interfaces. Real attachment requires the cilium/ebpf
+// dependency and compiled BPF ELF objects, which are not yet included.
+//
+// A full implementation would:
 //  1. Load compiled BPF ELF via cilium/ebpf
 //  2. Pin maps to /sys/fs/bpf/gatekeeper/
 //  3. Set up the prog_array for tail calls
@@ -139,7 +145,7 @@ func (l *EBPFLoader) Load() error {
 		return nil
 	}
 
-	slog.Info("loading XDP programs",
+	slog.Warn("XDP loader is EXPERIMENTAL: no BPF programs are attached (control-plane stub only)",
 		"preferred_mode", l.preferred.String(),
 	)
 
@@ -211,23 +217,16 @@ func (l *EBPFLoader) Attach(ifName string, ifIndex int, mode AttachMode) error {
 }
 
 // tryAttach attempts to attach the XDP program in a specific mode.
-// In a real implementation, this would call link.AttachXDP().
+//
+// EXPERIMENTAL: This is a stub. No BPF programs are actually attached.
+// Real attachment requires cilium/ebpf link.AttachXDP(). This stub validates
+// parameters and records state so the rest of the control plane works correctly.
 func (l *EBPFLoader) tryAttach(ifName string, ifIndex int, mode AttachMode) error {
-	// Validate the interface exists and supports XDP.
-	// In the real implementation, this calls netlink to set XDP program fd.
-	//
-	// For native mode, we'd use:
-	//   link, err := link.AttachXDP(link.XDPOptions{
-	//       Program:   l.entryProg,
-	//       Interface: ifIndex,
-	//       Flags:     link.XDPDriverMode,  // or link.XDPGenericMode
-	//   })
-	//
-	// The actual attachment is done when cilium/ebpf is in the build.
-	// This implementation validates and records state.
 	if ifIndex <= 0 {
 		return fmt.Errorf("invalid interface index: %d", ifIndex)
 	}
+	slog.Warn("XDP tryAttach is a stub — no BPF program attached",
+		"interface", ifName, "index", ifIndex, "mode", mode.String())
 	return nil
 }
 
