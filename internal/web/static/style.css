@@ -3,8 +3,15 @@
 
 /* Responsive adjustments */
 @media (max-width: 768px) {
-    nav { flex-wrap: wrap; gap: 0.5rem; }
+    nav { flex-wrap: wrap; gap: 0.5rem; padding: 0.5rem 1rem; font-size: 0.85rem; }
+    nav a { padding: 0.25rem 0.5rem; }
     .grid { grid-template-columns: 1fr; }
     table { font-size: 0.8rem; }
     th, td { padding: 0.5rem; }
+    .container { padding: 0.75rem; }
+}
+
+@media (max-width: 480px) {
+    nav { gap: 0.25rem; font-size: 0.8rem; }
+    nav .logo { width: 100%; margin-bottom: 0.25rem; }
 }
