@@ -251,3 +251,62 @@ func TestDiagEndpoints(t *testing.T) {
 		t.Fatalf("interfaces: expected 200, got %d", rec.Code)
 	}
 }
+
+// --- M-CR9: Tests for invalid/malicious API input ---
+
+func TestInvalidInput(t *testing.T) {
+	router, _ := newTestRouter(t)
+
+	t.Run("oversized_body", func(t *testing.T) {
+		// Send a 2MB body to a zone creation endpoint.
+		bigBody := bytes.Repeat([]byte("A"), 2*1024*1024)
+		req := httptest.NewRequest("POST", "/api/v1/zones", bytes.NewReader(bigBody))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		// Should reject — either 400 (bad JSON) or 413 (too large).
+		if rec.Code == 200 || rec.Code == 201 {
+			t.Errorf("expected rejection for 2MB body, got %d", rec.Code)
+		}
+	})
+
+	t.Run("invalid_json", func(t *testing.T) {
+		req := httptest.NewRequest("POST", "/api/v1/zones", bytes.NewBufferString("{not valid json"))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		if rec.Code == 200 || rec.Code == 201 {
+			t.Error("expected error for invalid JSON")
+		}
+	})
+
+	t.Run("empty_zone_name", func(t *testing.T) {
+		rec := doJSON(t, router, "POST", "/api/v1/zones", map[string]string{
+			"name":      "",
+			"interface": "eth0",
+		})
+		if rec.Code == 200 || rec.Code == 201 {
+			t.Error("expected rejection for empty zone name")
+		}
+	})
+
+	t.Run("xss_in_zone_name", func(t *testing.T) {
+		rec := doJSON(t, router, "POST", "/api/v1/zones", map[string]string{
+			"name":        "<script>alert(1)</script>",
+			"interface":   "eth0",
+			"trust_level": "none",
+		})
+		// Should either reject or sanitize — must not return 201.
+		if rec.Code == 201 {
+			t.Error("should not accept HTML/script in zone name")
+		}
+	})
+
+	t.Run("sql_injection_attempt", func(t *testing.T) {
+		rec := doJSON(t, router, "GET", "/api/v1/zones/'+OR+1%3D1--", nil)
+		// Should return 404 (zone not found), not crash or drop the table.
+		if rec.Code == 500 {
+			t.Error("SQL injection attempt caused server error")
+		}
+	})
+}
