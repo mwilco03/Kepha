@@ -8,30 +8,46 @@ import (
 )
 
 func (s *Store) ListAliases() ([]model.Alias, error) {
-	rows, err := s.db.Query("SELECT id, name, type, description FROM aliases ORDER BY name")
+	// Single query with LEFT JOIN to avoid N+1: one row per alias×member.
+	rows, err := s.db.Query(`
+		SELECT a.id, a.name, a.type, a.description, m.value
+		FROM aliases a
+		LEFT JOIN alias_members m ON m.alias_id = a.id
+		ORDER BY a.name, m.id
+	`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	var aliases []model.Alias
+	aliasMap := make(map[int64]*model.Alias)
+	var order []int64 // Preserve insertion order.
 	for rows.Next() {
-		var a model.Alias
-		if err := rows.Scan(&a.ID, &a.Name, &a.Type, &a.Description); err != nil {
+		var id int64
+		var name string
+		var aType model.AliasType
+		var desc string
+		var memberVal sql.NullString
+		if err := rows.Scan(&id, &name, &aType, &desc, &memberVal); err != nil {
 			return nil, err
 		}
-		aliases = append(aliases, a)
+		a, ok := aliasMap[id]
+		if !ok {
+			a = &model.Alias{ID: id, Name: name, Type: aType, Description: desc}
+			aliasMap[id] = a
+			order = append(order, id)
+		}
+		if memberVal.Valid {
+			a.Members = append(a.Members, memberVal.String)
+		}
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 
-	for i := range aliases {
-		members, err := s.getAliasMembers(aliases[i].ID)
-		if err != nil {
-			return nil, err
-		}
-		aliases[i].Members = members
+	aliases := make([]model.Alias, 0, len(order))
+	for _, id := range order {
+		aliases = append(aliases, *aliasMap[id])
 	}
 	return aliases, nil
 }
