@@ -1,7 +1,7 @@
 # Gatekeeper Punchlist
 
 **Goal:** Production-ready network firewall appliance deployment.
-**Status:** NOT READY — 5 Critical, 20+ High, 40+ Medium findings from 13-agent review.
+**Status:** ALL CRITICAL RESOLVED — 0 Critical (5/5 fixed), 26 High, 70+ Medium remaining.
 **Updated:** 2026-03-21
 
 Items marked `[x]` are verified complete. Items marked `[ ]` are open. Priority order within each severity.
@@ -14,7 +14,7 @@ Items marked `[x]` are verified complete. Items marked `[ ]` are open. Priority 
 - [x] **C2 — Multi-WAN recovery never triggers** `internal/service/multiwan.go` — FIXED: Dedicated recovery counters that increment on success, reset on failure. *(Network Engineer)*
 - [x] **C3 — CSP blocks own scripts** — FIXED: Vendored htmx.min.js + qrcode.js to /static/, updated template refs, CSP now allows 'unsafe-inline' for scripts. *(Frontend Developer)*
 - [x] **C4 — Default deployment has zero auth** `cmd/gatekeeperd/main.go:59-66` — FIXED: Daemon now refuses to start without `--api-key` or `--enable-rbac`. *(Security Engineer)*
-- [ ] **C5 — mergedThreats map swapped without synchronization** `internal/inspect/ja4.go:455` — Data race between `CheckThreat()` reads and `rebuildMergedIndex()` writes. Use atomic.Value or RWMutex. *(Threat Detection Engineer)*
+- [x] **C5 — mergedThreats map swapped without synchronization** — FIXED: Now uses sync/atomic.Value for load/store. *(Threat Detection Engineer)*
 
 ---
 
