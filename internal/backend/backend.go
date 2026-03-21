@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/gatekeeper-firewall/gatekeeper/internal/compiler"
-	"github.com/gatekeeper-firewall/gatekeeper/internal/model"
 )
 
 // Firewall is the consumer-facing interface used by the API, web UI, MCP,
@@ -117,83 +116,6 @@ type BackendCaps struct {
 	HardwareOffload  bool   // Supports NIC hardware offload.
 }
 
-// VPNBackend abstracts VPN tunnel management.
-// Implementations: WireGuardBackend (wgctrl), OpenVPNBackend (future).
-type VPNBackend interface {
-	// Init initializes the VPN subsystem (generate keys, create interface).
-	Init() error
-
-	// AddPeer adds a VPN peer.
-	AddPeer(peer VPNPeer) error
-
-	// RemovePeer removes a VPN peer by public key.
-	RemovePeer(publicKey string) error
-
-	// ListPeers returns all configured peers with their current status.
-	ListPeers() ([]VPNPeer, error)
-
-	// PeerStatus returns handshake timestamps and transfer stats.
-	PeerStatus() ([]PeerStats, error)
-
-	// PruneStalePeers removes peers with no handshake within maxAge.
-	PruneStalePeers(maxAge time.Duration) ([]string, error)
-
-	// GenerateKeyPair creates a new private/public key pair.
-	GenerateKeyPair() (privateKey, publicKey string, err error)
-
-	// GenerateClientConfig builds a client config for the given peer.
-	GenerateClientConfig(clientPrivateKey, serverEndpoint string, peer VPNPeer) string
-
-	// PublicKey returns the server's public key.
-	PublicKey() string
-
-	// Apply writes config and brings up the VPN interface.
-	Apply() error
-}
-
-// VPNPeer is a VPN peer (backend-agnostic).
-type VPNPeer struct {
-	PublicKey  string `json:"public_key"`
-	AllowedIPs string `json:"allowed_ips"`
-	Endpoint   string `json:"endpoint,omitempty"`
-	Name       string `json:"name,omitempty"`
-}
-
-// PeerStats holds runtime statistics for a VPN peer.
-type PeerStats struct {
-	PublicKey         string    `json:"public_key"`
-	LastHandshake     time.Time `json:"last_handshake"`
-	TransferRx        int64     `json:"transfer_rx"`
-	TransferTx        int64     `json:"transfer_tx"`
-	PersistentKeepalive int    `json:"persistent_keepalive"`
-}
-
-// DHCPBackend abstracts DHCP/DNS server management.
-// Implementations: DnsmasqBackend, KeeaDHCPBackend (future).
-type DHCPBackend interface {
-	// GenerateConfig writes DHCP/DNS config from zones and devices.
-	GenerateConfig(zones []model.Zone, devices []model.DeviceAssignment) error
-
-	// Validate checks config syntax without applying.
-	Validate() error
-
-	// Reload signals the DHCP/DNS daemon to re-read config.
-	Reload() error
-
-	// Apply generates, validates, and reloads in one step.
-	Apply(zones []model.Zone, devices []model.DeviceAssignment) error
-
-	// Leases returns current DHCP leases.
-	Leases() ([]DHCPLease, error)
-}
-
-// DHCPLease represents a DHCP lease (backend-agnostic).
-type DHCPLease struct {
-	Expiry   string `json:"expiry"`
-	MAC      string `json:"mac"`
-	IP       string `json:"ip"`
-	Hostname string `json:"hostname"`
-}
 
 // ProcessManager abstracts process lifecycle operations.
 // Replaces: kill, pidof, pkill, systemctl, rc-service.
