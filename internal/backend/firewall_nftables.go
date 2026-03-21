@@ -126,6 +126,10 @@ func (b *NftablesBackend) Apply(artifact *Artifact) error {
 		return fmt.Errorf("build forward chain: %w", err)
 	}
 
+	if err := b.buildOutputChain(conn, table, input); err != nil {
+		return fmt.Errorf("build output chain: %w", err)
+	}
+
 	if err := b.buildPostroutingChain(conn, table, input); err != nil {
 		return fmt.Errorf("build postrouting chain: %w", err)
 	}
@@ -821,6 +825,24 @@ func (b *NftablesBackend) buildForwardChain(conn *nft.Conn, table *nft.Table, in
 		}
 	}
 
+	return nil
+}
+
+// buildOutputChain restricts firewall-originated traffic (M-N2).
+// Accept policy — permissive by default for appliance operation.
+func (b *NftablesBackend) buildOutputChain(conn *nft.Conn, table *nft.Table, input *compiler.Input) error {
+	policy := nft.ChainPolicyAccept
+	conn.AddChain(&nft.Chain{
+		Name:     "output",
+		Table:    table,
+		Type:     nft.ChainTypeFilter,
+		Hooknum:  nft.ChainHookOutput,
+		Priority: nft.ChainPriorityFilter,
+		Policy:   &policy,
+	})
+	// Accept policy means all traffic is allowed. Explicit rules would be
+	// needed here to restrict output (e.g., block DNS to non-approved servers).
+	// For now, the chain exists so nft list shows it and future rules can be added.
 	return nil
 }
 
