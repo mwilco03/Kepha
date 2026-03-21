@@ -235,13 +235,13 @@ func (i *IDS) generateConfig() error {
 		homeNet = "[" + homeNet + "]"
 	}
 	b.WriteString("vars:\n")
-	b.WriteString(fmt.Sprintf("  address-groups:\n    HOME_NET: \"%s\"\n    EXTERNAL_NET: \"!$HOME_NET\"\n", homeNet))
+	b.WriteString(fmt.Sprintf("  address-groups:\n    HOME_NET: %s\n    EXTERNAL_NET: \"!$HOME_NET\"\n", yamlQuote(homeNet)))
 	b.WriteString("    HTTP_SERVERS: \"$HOME_NET\"\n")
 	b.WriteString("    DNS_SERVERS: \"$HOME_NET\"\n")
 	b.WriteString("  port-groups:\n    HTTP_PORTS: \"80\"\n    SHELLCODE_PORTS: \"!80\"\n")
 
 	// Default log directory.
-	b.WriteString(fmt.Sprintf("\ndefault-log-dir: %s\n", i.logDir))
+	b.WriteString(fmt.Sprintf("\ndefault-log-dir: %s\n", yamlQuote(i.logDir)))
 
 	// Outputs.
 	b.WriteString("\noutputs:\n")
@@ -257,18 +257,18 @@ func (i *IDS) generateConfig() error {
 	b.WriteString("\ndetect-engine:\n  - profile: medium\n  - sgh-mpm-context: auto\n")
 
 	// Stream engine.
-	b.WriteString(fmt.Sprintf("\nstream:\n  reassembly:\n    depth: %s\n", cfg["stream_depth"]))
-	b.WriteString(fmt.Sprintf("\nmax-pending-packets: %s\n", cfg["max_pending_packets"]))
+	b.WriteString(fmt.Sprintf("\nstream:\n  reassembly:\n    depth: %s\n", yamlQuote(cfg["stream_depth"])))
+	b.WriteString(fmt.Sprintf("\nmax-pending-packets: %s\n", yamlQuote(cfg["max_pending_packets"])))
 
 	// Threading.
 	b.WriteString("\nthreading:\n  set-cpu-affinity: no\n  detect-thread-ratio: 1.0\n")
 
 	// Rules.
 	rulePath := cfg["default_rule_path"]
-	b.WriteString(fmt.Sprintf("\ndefault-rule-path: %s\n", rulePath))
+	b.WriteString(fmt.Sprintf("\ndefault-rule-path: %s\n", yamlQuote(rulePath)))
 	b.WriteString("rule-files:\n  - suricata.rules\n")
 	if custom := cfg["custom_rules"]; custom != "" {
-		b.WriteString(fmt.Sprintf("  - %s/*.rules\n", custom))
+		b.WriteString(fmt.Sprintf("  - %s\n", yamlQuote(custom+"/*.rules")))
 	}
 
 	// IPS mode config.
@@ -282,7 +282,7 @@ func (i *IDS) generateConfig() error {
 		for _, iface := range strings.Split(cfg["interfaces"], ",") {
 			iface = strings.TrimSpace(iface)
 			if iface != "" {
-				b.WriteString(fmt.Sprintf("  - interface: %s\n    cluster-id: 99\n    cluster-type: cluster_flow\n    defrag: yes\n", iface))
+				b.WriteString(fmt.Sprintf("  - interface: %s\n    cluster-id: 99\n    cluster-type: cluster_flow\n    defrag: yes\n", yamlQuote(iface)))
 			}
 		}
 	}
@@ -294,6 +294,16 @@ func (i *IDS) generateConfig() error {
 
 	slog.Info("suricata config generated", "path", confPath)
 	return nil
+}
+
+// yamlQuote wraps a value in double quotes with YAML escaping.
+// Prevents injection of YAML directives, anchors, or multiline values.
+func yamlQuote(s string) string {
+	s = strings.ReplaceAll(s, "\\", "\\\\")
+	s = strings.ReplaceAll(s, "\"", "\\\"")
+	s = strings.ReplaceAll(s, "\n", "\\n")
+	s = strings.ReplaceAll(s, "\r", "\\r")
+	return "\"" + s + "\""
 }
 
 func (i *IDS) updateRules() error {
