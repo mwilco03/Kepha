@@ -319,6 +319,26 @@ func (b *NftablesBackend) FlushSet(setName string) error {
 	return conn.Flush()
 }
 
+// EmergencyFlush deletes the entire gatekeeper table from nftables.
+// This is a last resort when rollback + re-apply both fail, to prevent
+// lockout with broken rules. The system enters a permissive state.
+func (b *NftablesBackend) EmergencyFlush() error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	conn, err := b.getConn()
+	if err != nil {
+		return fmt.Errorf("emergency flush: connect: %w", err)
+	}
+
+	conn.DelTable(&nft.Table{Family: nft.TableFamilyINet, Name: "gatekeeper"})
+	if err := conn.Flush(); err != nil {
+		return fmt.Errorf("emergency flush: %w", err)
+	}
+	slog.Warn("emergency flush: deleted inet gatekeeper table")
+	return nil
+}
+
 // writeRulesetFile writes the human-readable ruleset to disk for audit.
 func (b *NftablesBackend) writeRulesetFile(artifact *Artifact) error {
 	if err := os.MkdirAll(b.rulesetDir, 0o750); err != nil {

@@ -115,6 +115,16 @@ func (fc *FirewallController) ApplyWithConfirm(prevRev int) error {
 		}
 		if err := fc.applyLocked(); err != nil {
 			slog.Error("re-apply after rollback failed", "error", err)
+			// M-N5: Last resort — if the backend supports emergency flush,
+			// clear all rules to prevent lockout with broken rules.
+			// The daemon will re-apply on next SIGHUP or restart.
+			if flusher, ok := fc.backend.(interface{ EmergencyFlush() error }); ok {
+				if fErr := flusher.EmergencyFlush(); fErr != nil {
+					slog.Error("emergency flush also failed — manual intervention required", "error", fErr)
+				} else {
+					slog.Warn("emergency flush succeeded — firewall in permissive state until re-apply")
+				}
+			}
 		}
 	})
 
