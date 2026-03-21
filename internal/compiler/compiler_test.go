@@ -236,3 +236,94 @@ func TestMSSClampPMTUDisabled(t *testing.T) {
 		t.Error("MSS clamping rule should NOT be present when MSSClampPMTU=false")
 	}
 }
+
+// --- Structural tests (M-CR10) ---
+
+func TestCompileChainOrdering(t *testing.T) {
+	result, err := Compile(basicInput())
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	text := result.Text
+
+	// Input chain must appear before forward chain, forward before postrouting.
+	inputIdx := strings.Index(text, "chain input")
+	forwardIdx := strings.Index(text, "chain forward")
+	postIdx := strings.Index(text, "chain postrouting")
+
+	if inputIdx < 0 || forwardIdx < 0 || postIdx < 0 {
+		t.Fatal("missing one or more chains")
+	}
+	if inputIdx >= forwardIdx {
+		t.Error("input chain must appear before forward chain")
+	}
+	if forwardIdx >= postIdx {
+		t.Error("forward chain must appear before postrouting chain")
+	}
+}
+
+func TestCompileAntiSpoofPresent(t *testing.T) {
+	result, err := Compile(basicInput())
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	text := result.Text
+
+	if !strings.Contains(text, "set bogons") {
+		t.Error("bogon set not present in compiled ruleset")
+	}
+	if !strings.Contains(text, "@bogons drop") {
+		t.Error("anti-spoof drop rule not present in forward chain")
+	}
+	// Anti-spoof rule must be in forward chain, before per-zone rules.
+	forwardStart := strings.Index(text, "chain forward")
+	antiSpoof := strings.Index(text, "@bogons drop")
+	if antiSpoof < forwardStart {
+		t.Error("anti-spoof rule should be inside forward chain")
+	}
+}
+
+func TestCompileICMPRestricted(t *testing.T) {
+	result, err := Compile(basicInput())
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	text := result.Text
+
+	// Should have restricted ICMP types, not blanket accept.
+	if strings.Contains(text, "ip protocol icmp accept") {
+		t.Error("blanket ICMP accept should not be present")
+	}
+	for _, icmpType := range []string{"echo-reply", "destination-unreachable", "echo-request", "time-exceeded"} {
+		if !strings.Contains(text, icmpType) {
+			t.Errorf("missing restricted ICMP type: %s", icmpType)
+		}
+	}
+}
+
+func TestCompileDropPolicyDefault(t *testing.T) {
+	result, err := Compile(basicInput())
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	text := result.Text
+
+	// Both input and forward chains must have policy drop.
+	lines := strings.Split(text, "\n")
+	var inputPolicyDrop, forwardPolicyDrop bool
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.Contains(trimmed, "hook input") && strings.Contains(trimmed, "policy drop") {
+			inputPolicyDrop = true
+		}
+		if strings.Contains(trimmed, "hook forward") && strings.Contains(trimmed, "policy drop") {
+			forwardPolicyDrop = true
+		}
+	}
+	if !inputPolicyDrop {
+		t.Error("input chain missing policy drop")
+	}
+	if !forwardPolicyDrop {
+		t.Error("forward chain missing policy drop")
+	}
+}
