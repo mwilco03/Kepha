@@ -17,7 +17,10 @@ fi
 
 # Install build and runtime dependencies.
 echo "Installing packages..."
-apk add --no-cache go make nftables dnsmasq iproute2 openssl wireguard-tools bash >/dev/null 2>&1 || true
+apk add --no-cache go make nftables dnsmasq iproute2 openssl wireguard-tools bash || {
+    echo "ERROR: Failed to install packages. Check network connectivity." >&2
+    exit 1
+}
 
 # Create directories.
 mkdir -p \
