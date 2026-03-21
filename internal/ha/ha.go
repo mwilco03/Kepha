@@ -39,6 +39,10 @@ func SetProcessManager(pm backend.ProcessManager) {
 }
 
 // State represents the runtime state of a service.
+// State and ConfigField are duplicated across ha, ipv6, and service packages.
+// Consolidation into a shared package would require breaking the import cycle
+// (service → ha → service). For now, kept in sync by convention (M-SA1).
+// TODO: move to internal/model when the ha_wrapper.go coupling is resolved.
 type State string
 
 const (
@@ -49,7 +53,6 @@ const (
 	StateStopping State = "stopping"
 )
 
-// ConfigField describes a single configuration parameter.
 type ConfigField struct {
 	Description string `json:"description"`
 	Default     string `json:"default"`
