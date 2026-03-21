@@ -2,6 +2,7 @@ package backend
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -53,16 +54,17 @@ func (c *GoHTTPClient) do(method, url string, body []byte, headers map[string]st
 		req.Header.Set(k, v)
 	}
 
-	// Use per-request timeout if specified.
-	client := c.client
+	// Use per-request timeout via context instead of creating a new
+	// http.Client per request (L21 — avoids connection pool fragmentation).
+	ctx := req.Context()
 	if timeoutSec > 0 {
-		client = &http.Client{
-			Timeout:   time.Duration(timeoutSec) * time.Second,
-			Transport: c.client.Transport,
-		}
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, time.Duration(timeoutSec)*time.Second)
+		defer cancel()
 	}
+	req = req.WithContext(ctx)
 
-	resp, err := client.Do(req)
+	resp, err := c.client.Do(req)
 	if err != nil {
 		return nil, 0, fmt.Errorf("%s %s: %w", method, url, err)
 	}
