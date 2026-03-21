@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gatekeeper-firewall/gatekeeper/internal/api"
 	"github.com/gatekeeper-firewall/gatekeeper/internal/config"
@@ -57,7 +58,9 @@ func doReq(t *testing.T, srv *httptest.Server, method, path, body string) (int, 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-API-Key", "test-key")
 
-	resp, err := http.DefaultClient.Do(req)
+	client := srv.Client()
+	client.Timeout = 10 * time.Second
+	resp, err := client.Do(req)
 	if err != nil {
 		t.Fatalf("Do: %v", err)
 	}
@@ -76,7 +79,9 @@ func doReqArray(t *testing.T, srv *httptest.Server, method, path string) (int, [
 	}
 	req.Header.Set("X-API-Key", "test-key")
 
-	resp, err := http.DefaultClient.Do(req)
+	client := srv.Client()
+	client.Timeout = 10 * time.Second
+	resp, err := client.Do(req)
 	if err != nil {
 		t.Fatalf("Do: %v", err)
 	}
@@ -92,7 +97,9 @@ func TestStatusEndpoint(t *testing.T) {
 	srv, _ := setup(t)
 
 	req, _ := http.NewRequest("GET", srv.URL+"/api/v1/status", nil)
-	resp, err := http.DefaultClient.Do(req)
+	client := srv.Client()
+	client.Timeout = 10 * time.Second
+	resp, err := client.Do(req)
 	if err != nil {
 		t.Fatalf("Do: %v", err)
 	}
@@ -113,7 +120,9 @@ func TestAuthRequired(t *testing.T) {
 	srv, _ := setup(t)
 
 	req, _ := http.NewRequest("GET", srv.URL+"/api/v1/zones", nil)
-	resp, err := http.DefaultClient.Do(req)
+	client := srv.Client()
+	client.Timeout = 10 * time.Second
+	resp, err := client.Do(req)
 	if err != nil {
 		t.Fatalf("Do: %v", err)
 	}
@@ -418,7 +427,9 @@ func TestMetricsEndpoint(t *testing.T) {
 	doReqArray(t, srv, "GET", "/api/v1/zones")
 
 	req, _ := http.NewRequest("GET", srv.URL+"/api/v1/metrics", nil)
-	resp, err := http.DefaultClient.Do(req)
+	client := srv.Client()
+	client.Timeout = 10 * time.Second
+	resp, err := client.Do(req)
 	if err != nil {
 		t.Fatalf("Do: %v", err)
 	}
