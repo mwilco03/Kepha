@@ -100,12 +100,15 @@ func (b *NftablesBackend) Apply(artifact *Artifact) error {
 		slog.Warn("failed to build bogon set", "error", err)
 	}
 
+	// Build alias sets so rules referencing SrcAlias/DstAlias can match.
+	aliasSets := b.buildAliasSets(conn, table, input)
+
 	// Build the chains and rules.
 	if err := b.buildInputChain(conn, table, input); err != nil {
 		return fmt.Errorf("build input chain: %w", err)
 	}
 
-	if err := b.buildForwardChain(conn, table, input); err != nil {
+	if err := b.buildForwardChain(conn, table, input, aliasSets); err != nil {
 		return fmt.Errorf("build forward chain: %w", err)
 	}
 
@@ -313,6 +316,101 @@ func (b *NftablesBackend) writeRulesetFile(artifact *Artifact) error {
 	}
 	path := filepath.Join(b.rulesetDir, "gatekeeper.nft")
 	return os.WriteFile(path, []byte(artifact.Text), 0o640)
+}
+
+// buildAliasSets creates nftables sets for each alias in the input.
+// Returns a map from alias name to the created *nft.Set for use in rules.
+func (b *NftablesBackend) buildAliasSets(conn *nft.Conn, table *nft.Table, input *compiler.Input) map[string]*nft.Set {
+	aliasMap := make(map[string]*model.Alias, len(input.Aliases))
+	for i := range input.Aliases {
+		aliasMap[input.Aliases[i].Name] = &input.Aliases[i]
+	}
+
+	sets := make(map[string]*nft.Set)
+	for _, a := range input.Aliases {
+		members := resolveAliasMembers(&a, aliasMap, 0)
+		if len(members) == 0 {
+			continue
+		}
+		setName := sanitizeSetName(a.Name)
+		set := &nft.Set{Table: table, Name: setName}
+		var elems []nft.SetElement
+
+		switch a.Type {
+		case model.AliasTypeHost:
+			set.KeyType = nft.TypeIPAddr
+			for _, m := range members {
+				ip := net.ParseIP(m)
+				if ip != nil {
+					elems = append(elems, nft.SetElement{Key: ip.To4()})
+				}
+			}
+		case model.AliasTypeNetwork:
+			set.KeyType = nft.TypeIPAddr
+			set.Interval = true
+			for _, m := range members {
+				_, ipnet, err := net.ParseCIDR(m)
+				if err != nil {
+					continue
+				}
+				start := ipnet.IP.To4()
+				end := cidrEnd(ipnet)
+				elems = append(elems,
+					nft.SetElement{Key: start},
+					nft.SetElement{Key: end, IntervalEnd: true},
+				)
+			}
+		default:
+			continue // Port/MAC aliases not used in forward chain src/dst matching.
+		}
+
+		if len(elems) == 0 {
+			continue
+		}
+		if err := conn.AddSet(set, elems); err != nil {
+			slog.Warn("failed to add alias set", "name", setName, "error", err)
+			continue
+		}
+		sets[a.Name] = set
+	}
+	return sets
+}
+
+// resolveAliasMembers recursively resolves alias members with depth limit.
+func resolveAliasMembers(a *model.Alias, aliasMap map[string]*model.Alias, depth int) []string {
+	if depth > 10 {
+		return nil
+	}
+	if a.Type != model.AliasTypeNested {
+		return a.Members
+	}
+	var resolved []string
+	for _, name := range a.Members {
+		nested, ok := aliasMap[name]
+		if !ok {
+			continue
+		}
+		resolved = append(resolved, resolveAliasMembers(nested, aliasMap, depth+1)...)
+		if len(resolved) > 10000 {
+			return resolved[:10000]
+		}
+	}
+	return resolved
+}
+
+// sanitizeSetName produces a valid nftables set name.
+func sanitizeSetName(name string) string {
+	var b strings.Builder
+	b.Grow(len(name))
+	for _, c := range name {
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9', c == '_':
+			b.WriteRune(c)
+		default:
+			b.WriteByte('_')
+		}
+	}
+	return b.String()
 }
 
 // buildBogonSet creates the anti-spoof set with RFC1918 and bogon CIDR ranges.
@@ -548,7 +646,7 @@ func (b *NftablesBackend) buildInputChain(conn *nft.Conn, table *nft.Table, inpu
 }
 
 // buildForwardChain creates the forward chain with zone policy rules.
-func (b *NftablesBackend) buildForwardChain(conn *nft.Conn, table *nft.Table, input *compiler.Input) error {
+func (b *NftablesBackend) buildForwardChain(conn *nft.Conn, table *nft.Table, input *compiler.Input, aliasSets map[string]*nft.Set) error {
 	policy := nft.ChainPolicyDrop
 	chain := conn.AddChain(&nft.Chain{
 		Name:     "forward",
@@ -656,7 +754,7 @@ func (b *NftablesBackend) buildForwardChain(conn *nft.Conn, table *nft.Table, in
 
 			// Emit each rule in the policy (multi-port rules expand to one nft rule per port).
 			for _, rule := range policy.Rules {
-				for _, ruleExprs := range b.compileRuleExprsList(rule, zone.Interface, wanIface) {
+				for _, ruleExprs := range b.compileRuleExprsList(rule, zone.Interface, wanIface, aliasSets) {
 					conn.AddRule(&nft.Rule{
 						Table: table,
 						Chain: chain,
@@ -730,7 +828,7 @@ func (b *NftablesBackend) buildPostroutingChain(conn *nft.Conn, table *nft.Table
 // compileRuleExprsList converts a model.Rule into one or more nftables netlink
 // expression slices. Multi-port rules (e.g. "80,443") expand to one nft rule
 // per port — this is the correct netlink approach without anonymous sets.
-func (b *NftablesBackend) compileRuleExprsList(r model.Rule, srcIface, wanIface string) [][]expr.Any {
+func (b *NftablesBackend) compileRuleExprsList(r model.Rule, srcIface, wanIface string, aliasSets map[string]*nft.Set) [][]expr.Any {
 	// Build the common prefix: interface match + optional WAN output.
 	var prefix []expr.Any
 	prefix = append(prefix,
@@ -742,6 +840,25 @@ func (b *NftablesBackend) compileRuleExprsList(r model.Rule, srcIface, wanIface 
 			&expr.Meta{Key: expr.MetaKeyOIFNAME, Register: 1},
 			&expr.Cmp{Op: expr.CmpOpEq, Register: 1, Data: ifname(wanIface)},
 		)
+	}
+
+	// Source alias set lookup.
+	if r.SrcAlias != "" {
+		if set, ok := aliasSets[r.SrcAlias]; ok {
+			prefix = append(prefix,
+				&expr.Payload{DestRegister: 1, Base: expr.PayloadBaseNetworkHeader, Offset: 12, Len: 4},
+				&expr.Lookup{SourceRegister: 1, SetName: set.Name, SetID: set.ID},
+			)
+		}
+	}
+	// Destination alias set lookup.
+	if r.DstAlias != "" {
+		if set, ok := aliasSets[r.DstAlias]; ok {
+			prefix = append(prefix,
+				&expr.Payload{DestRegister: 1, Base: expr.PayloadBaseNetworkHeader, Offset: 16, Len: 4},
+				&expr.Lookup{SourceRegister: 1, SetName: set.Name, SetID: set.ID},
+			)
+		}
 	}
 
 	// Build the verdict suffix.
