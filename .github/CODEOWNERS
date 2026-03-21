@@ -1,0 +1,20 @@
+# Gatekeeper CODEOWNERS
+# These owners are automatically requested for review on PRs.
+
+# Default owner for everything
+* @mwilco03
+
+# Firewall compiler and backend
+internal/compiler/ @mwilco03
+internal/backend/ @mwilco03
+
+# Security-sensitive: auth, RBAC, crypto
+internal/rbac/ @mwilco03
+internal/api/middleware.go @mwilco03
+internal/web/web.go @mwilco03
+
+# nftables and network
+internal/driver/ @mwilco03
+
+# CI/CD
+.github/ @mwilco03
