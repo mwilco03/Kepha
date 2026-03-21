@@ -15,6 +15,8 @@ import (
 	"log/slog"
 	"sync"
 	"time"
+
+	"github.com/gatekeeper-firewall/gatekeeper/internal/backend"
 )
 
 // State represents the runtime state of a service.
@@ -79,6 +81,16 @@ type ConfigField struct {
 	Type        string `json:"type"` // "string", "bool", "int", "cidr", "path"
 }
 
+// ManagerDeps holds injected dependencies for the service manager.
+// When provided via NewManagerWithDeps, these take precedence over the
+// package-level globals (M-SA2). Services can access them via the
+// manager rather than importing package globals directly.
+type ManagerDeps struct {
+	Proc backend.ProcessManager
+	HTTP backend.HTTPClient
+	Net  backend.NetworkManager
+}
+
 // Manager coordinates service lifecycle and persists state.
 type Manager struct {
 	mu       sync.RWMutex
@@ -86,20 +98,43 @@ type Manager struct {
 	registry map[string]Service
 	states   map[string]State
 	errors   map[string]string
+	deps     ManagerDeps // Injected dependencies (M-SA2).
 }
 
 // NewManager creates a service manager backed by the given database.
+// Uses package-level globals for ProcessManager/HTTPClient/NetworkManager.
 func NewManager(db *sql.DB) (*Manager, error) {
+	return NewManagerWithDeps(db, ManagerDeps{})
+}
+
+// NewManagerWithDeps creates a service manager with explicit dependency injection.
+// Zero-value deps fall back to the package-level globals.
+func NewManagerWithDeps(db *sql.DB, deps ManagerDeps) (*Manager, error) {
+	if deps.Proc == nil {
+		deps.Proc = Proc
+	}
+	if deps.HTTP == nil {
+		deps.HTTP = HTTP
+	}
+	if deps.Net == nil {
+		deps.Net = Net
+	}
 	m := &Manager{
 		db:       db,
 		registry: make(map[string]Service),
 		states:   make(map[string]State),
 		errors:   make(map[string]string),
+		deps:     deps,
 	}
 	if err := m.migrate(); err != nil {
 		return nil, fmt.Errorf("service manager migration: %w", err)
 	}
 	return m, nil
+}
+
+// Deps returns the injected dependencies for services that need them.
+func (m *Manager) Deps() ManagerDeps {
+	return m.deps
 }
 
 // serviceFactory is a function that creates a service instance.
