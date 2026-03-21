@@ -89,6 +89,9 @@ func HandlerWithDeps(store *config.Store, deps *WebDeps) http.Handler {
 		mux.HandleFunc("GET /services", handleServices(deps.ServiceMgr))
 	}
 
+	// Export session validator so the API middleware can accept web sessions.
+	SessionValidator = sessions.valid
+
 	// Wrap with session auth and security headers if API key is configured.
 	var handler http.Handler = mux
 	if deps.APIKey != "" {
@@ -96,6 +99,11 @@ func HandlerWithDeps(store *config.Store, deps *WebDeps) http.Handler {
 	}
 	return securityHeaders(handler)
 }
+
+// SessionValidator is set during HandlerWithDeps initialization.
+// It validates web UI session tokens and is used by the API auth
+// middleware to accept htmx requests authenticated via session cookie.
+var SessionValidator func(token string) bool
 
 func handleDashboard(store *config.Store, deps *WebDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {

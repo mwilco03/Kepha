@@ -11,7 +11,11 @@ import (
 
 // AuthMiddleware checks for API key authentication.
 // Status and metrics endpoints are exempted per the OpenAPI spec (security: []).
+// Also accepts the web UI session cookie (gk_session) so htmx forms can
+// call API endpoints without a separate API key header.
 func AuthMiddleware(apiKey string, next http.Handler) http.Handler {
+	// Build a session validator that the web UI's session store can plug into.
+	// This is set via SetSessionValidator() at boot time.
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Exempt unauthenticated endpoints (health checks, metrics).
 		switch r.URL.Path {
@@ -32,12 +36,38 @@ func AuthMiddleware(apiKey string, next http.Handler) http.Handler {
 			_, key, _ = r.BasicAuth()
 		}
 		// Constant-time comparison to prevent timing attacks.
-		if subtle.ConstantTimeCompare([]byte(key), []byte(apiKey)) != 1 {
-			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		if subtle.ConstantTimeCompare([]byte(key), []byte(apiKey)) == 1 {
+			next.ServeHTTP(w, r)
 			return
 		}
-		next.ServeHTTP(w, r)
+
+		// Fall back to web UI session cookie (gk_session).
+		// This allows htmx forms in the web UI to call API endpoints.
+		if cookie, err := r.Cookie("gk_session"); err == nil && cookie.Value != "" {
+			sessionValidatorMu.RLock()
+			fn := sessionValidatorFn
+			sessionValidatorMu.RUnlock()
+			if fn != nil && fn(cookie.Value) {
+				next.ServeHTTP(w, r)
+				return
+			}
+		}
+
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 	})
+}
+
+var (
+	sessionValidatorMu sync.RWMutex
+	sessionValidatorFn func(token string) bool
+)
+
+// SetSessionValidator registers a function that validates web UI session tokens.
+// Called at boot time by the daemon to bridge the web session store into the API auth.
+func SetSessionValidator(fn func(token string) bool) {
+	sessionValidatorMu.Lock()
+	defer sessionValidatorMu.Unlock()
+	sessionValidatorFn = fn
 }
 
 // RateLimiter is a simple token-bucket rate limiter per IP.
