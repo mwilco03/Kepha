@@ -149,18 +149,30 @@ func (m *MultiWAN) setupRoutingTables() error {
 
 	// Create routing tables for each WAN.
 	// Table 100: WAN1, Table 200: WAN2.
-	Net.RouteFlushTable(100)
-	Net.RouteFlushTable(200)
+	if err := Net.RouteFlushTable(100); err != nil {
+		slog.Warn("multi-wan: flush table 100", "error", err)
+	}
+	if err := Net.RouteFlushTable(200); err != nil {
+		slog.Warn("multi-wan: flush table 200", "error", err)
+	}
 
 	// WAN1 routing table.
-	Net.RouteAddTable("default", cfg["wan1_gateway"], cfg["wan1_interface"], 100)
+	if err := Net.RouteAddTable("default", cfg["wan1_gateway"], cfg["wan1_interface"], 100); err != nil {
+		return fmt.Errorf("wan1 route table: %w", err)
+	}
 
 	// WAN2 routing table.
-	Net.RouteAddTable("default", cfg["wan2_gateway"], cfg["wan2_interface"], 200)
+	if err := Net.RouteAddTable("default", cfg["wan2_gateway"], cfg["wan2_interface"], 200); err != nil {
+		return fmt.Errorf("wan2 route table: %w", err)
+	}
 
 	// Set up ip rules for source-based routing.
-	Net.RuleAdd(cfg["wan1_interface"], 100, 100)
-	Net.RuleAdd(cfg["wan2_interface"], 200, 200)
+	if err := Net.RuleAdd(cfg["wan1_interface"], 100, 100); err != nil {
+		return fmt.Errorf("wan1 rule: %w", err)
+	}
+	if err := Net.RuleAdd(cfg["wan2_interface"], 200, 200); err != nil {
+		return fmt.Errorf("wan2 rule: %w", err)
+	}
 
 	// Initial default route via WAN1.
 	m.setDefaultRoute(cfg["wan1_gateway"], cfg["wan1_interface"])
