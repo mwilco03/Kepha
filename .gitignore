@@ -3,6 +3,7 @@ bin/
 /gk
 *.db
 *.tar.zst
+*.tar.gz
 *.key
 scripts/fetch-deps.sh
 .claude/
