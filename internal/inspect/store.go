@@ -3,7 +3,6 @@ package inspect
 import (
 	"database/sql"
 	"fmt"
-	"time"
 )
 
 // SQLiteStore implements FingerprintStore backed by SQLite.
@@ -36,6 +35,7 @@ func (s *SQLiteStore) migrate() error {
 			count       INTEGER NOT NULL DEFAULT 1,
 			threat_match INTEGER NOT NULL DEFAULT 0
 		);
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_fingerprints_hash_src ON fingerprints(hash, src_ip);
 		CREATE INDEX IF NOT EXISTS idx_fingerprints_hash ON fingerprints(hash);
 		CREATE INDEX IF NOT EXISTS idx_fingerprints_type ON fingerprints(type);
 		CREATE INDEX IF NOT EXISTS idx_fingerprints_src_ip ON fingerprints(src_ip);
@@ -45,22 +45,17 @@ func (s *SQLiteStore) migrate() error {
 }
 
 // RecordFingerprint upserts a fingerprint observation.
+// Uses ON CONFLICT(hash, src_ip) so repeated observations from the same
+// source update the existing row instead of inserting duplicates.
 func (s *SQLiteStore) RecordFingerprint(fp ObservedFingerprint) error {
 	_, err := s.db.Exec(`
 		INSERT INTO fingerprints (type, hash, src_ip, dst_ip, sni, first_seen, last_seen, count, threat_match)
 		VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)
-		ON CONFLICT(id) DO UPDATE SET
+		ON CONFLICT(hash, src_ip) DO UPDATE SET
 			last_seen = excluded.last_seen,
-			count = count + 1
+			count = count + 1,
+			threat_match = excluded.threat_match
 	`, fp.Type, fp.Hash, fp.SrcIP, fp.DstIP, fp.SNI, fp.FirstSeen, fp.LastSeen, boolToInt(fp.ThreatMatch))
-
-	// If the hash+src_ip combo already exists, update instead.
-	if err == nil {
-		_, _ = s.db.Exec(`
-			UPDATE fingerprints SET last_seen = ?, count = count + 1
-			WHERE hash = ? AND src_ip = ? AND id != last_insert_rowid()
-		`, time.Now(), fp.Hash, fp.SrcIP)
-	}
 	return err
 }
 
