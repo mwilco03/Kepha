@@ -198,10 +198,22 @@ func (w *WireGuard) findStalePeers(maxAge time.Duration) ([]string, error) {
 }
 
 // GenerateClientConfig creates a client configuration for a peer.
+// clientAllowedIPs controls the tunnel scope:
+//   - "0.0.0.0/0" = full tunnel (all traffic through VPN, default)
+//   - specific CIDRs = split tunnel (only listed networks through VPN)
 func (w *WireGuard) GenerateClientConfig(clientPrivateKey, serverEndpoint string, peer WGPeer) string {
+	return w.GenerateClientConfigWithRoutes(clientPrivateKey, serverEndpoint, peer, "")
+}
+
+// GenerateClientConfigWithRoutes creates a client config with configurable AllowedIPs.
+func (w *WireGuard) GenerateClientConfigWithRoutes(clientPrivateKey, serverEndpoint string, peer WGPeer, clientAllowedIPs string) string {
 	w.mu.Lock()
 	serverPubKey := publicKeyFromPrivate(w.config.PrivateKey)
 	w.mu.Unlock()
+
+	if clientAllowedIPs == "" {
+		clientAllowedIPs = "0.0.0.0/0" // Default: full tunnel.
+	}
 
 	var b strings.Builder
 	b.WriteString("[Interface]\n")
@@ -210,13 +222,12 @@ func (w *WireGuard) GenerateClientConfig(clientPrivateKey, serverEndpoint string
 	b.WriteString("DNS = 10.50.0.1\n\n")
 	b.WriteString("[Peer]\n")
 	b.WriteString(fmt.Sprintf("PublicKey = %s\n", serverPubKey))
-	// If the endpoint already includes a port (host:port), use it as-is.
 	if strings.Contains(serverEndpoint, ":") {
 		b.WriteString(fmt.Sprintf("Endpoint = %s\n", serverEndpoint))
 	} else {
 		b.WriteString(fmt.Sprintf("Endpoint = %s:%d\n", serverEndpoint, w.config.ListenPort))
 	}
-	b.WriteString("AllowedIPs = 0.0.0.0/0\n")
+	b.WriteString(fmt.Sprintf("AllowedIPs = %s\n", clientAllowedIPs))
 	b.WriteString("PersistentKeepalive = 25\n")
 	return b.String()
 }
