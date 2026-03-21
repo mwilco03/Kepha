@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -555,42 +556,73 @@ func (b *NftablesBackend) buildForwardChain(conn *nft.Conn, table *nft.Table, in
 		zoneByID[input.Zones[i].ID] = &input.Zones[i]
 	}
 
-	profileByName := make(map[string]struct{ ZoneIface, PolicyName string })
-	for _, p := range input.Profiles {
-		if z, ok := zoneByID[p.ZoneID]; ok {
-			profileByName[p.Name] = struct{ ZoneIface, PolicyName string }{z.Interface, p.PolicyName}
+	// Build policy lookup (name → full Policy with Rules).
+	policyByName := make(map[string]*model.Policy, len(input.Policies))
+	for i := range input.Policies {
+		policyByName[input.Policies[i].Name] = &input.Policies[i]
+	}
+
+	// C1 fix: Per-zone/profile forward rules — iterate individual policy rules,
+	// not just the default action. Mirrors the text compiler's writeForwardChain().
+	wanIface := ""
+	for _, z := range input.Zones {
+		if z.Name == "wan" && z.Interface != "" {
+			wanIface = z.Interface
+			break
 		}
 	}
 
-	policyByName := make(map[string]model.RuleAction, len(input.Policies))
-	for _, p := range input.Policies {
-		policyByName[p.Name] = p.DefaultAction
-	}
-
-	// Per-profile forward rules.
-	for _, entry := range profileByName {
-		if entry.ZoneIface == "" {
+	for _, zone := range input.Zones {
+		if zone.Name == "wan" || zone.Interface == "" {
 			continue
 		}
+		// Find profiles for this zone.
+		for _, profile := range input.Profiles {
+			if profile.ZoneID != zone.ID {
+				continue
+			}
+			policy, ok := policyByName[profile.PolicyName]
+			if !ok || policy == nil {
+				continue
+			}
 
-		defaultAction, ok := policyByName[entry.PolicyName]
-		if !ok {
-			continue
-		}
+			// Emit each rule in the policy.
+			for _, rule := range policy.Rules {
+				ruleExprs := b.compileRuleExprs(rule, zone.Interface, wanIface)
+				if len(ruleExprs) > 0 {
+					conn.AddRule(&nft.Rule{
+						Table: table,
+						Chain: chain,
+						Exprs: ruleExprs,
+					})
+				}
+			}
 
-		if defaultAction == model.RuleActionAllow {
-			// iifname <iface> accept
-			conn.AddRule(&nft.Rule{
-				Table: table,
-				Chain: chain,
-				Exprs: []expr.Any{
-					&expr.Meta{Key: expr.MetaKeyIIFNAME, Register: 1},
-					&expr.Cmp{Op: expr.CmpOpEq, Register: 1, Data: ifname(entry.ZoneIface)},
-					&expr.Verdict{Kind: expr.VerdictAccept},
-				},
-			})
+			// Default action for unmatched traffic from this zone.
+			switch policy.DefaultAction {
+			case model.RuleActionAllow:
+				conn.AddRule(&nft.Rule{
+					Table: table,
+					Chain: chain,
+					Exprs: []expr.Any{
+						&expr.Meta{Key: expr.MetaKeyIIFNAME, Register: 1},
+						&expr.Cmp{Op: expr.CmpOpEq, Register: 1, Data: ifname(zone.Interface)},
+						&expr.Verdict{Kind: expr.VerdictAccept},
+					},
+				})
+			case model.RuleActionReject:
+				conn.AddRule(&nft.Rule{
+					Table: table,
+					Chain: chain,
+					Exprs: []expr.Any{
+						&expr.Meta{Key: expr.MetaKeyIIFNAME, Register: 1},
+						&expr.Cmp{Op: expr.CmpOpEq, Register: 1, Data: ifname(zone.Interface)},
+						&expr.Verdict{Kind: expr.VerdictDrop}, // netlink has no reject verdict; drop is safest
+					},
+				})
+			}
+			// deny = chain default (drop), no explicit rule needed.
 		}
-		// deny is the chain's default policy (drop), so no explicit rule needed.
 	}
 
 	return nil
@@ -626,6 +658,98 @@ func (b *NftablesBackend) buildPostroutingChain(conn *nft.Conn, table *nft.Table
 	}
 
 	return nil
+}
+
+// compileRuleExprs converts a model.Rule into nftables netlink expressions.
+// Mirrors the text compiler's compileRule() function.
+func (b *NftablesBackend) compileRuleExprs(r model.Rule, srcIface, wanIface string) []expr.Any {
+	var exprs []expr.Any
+
+	// Match source interface.
+	exprs = append(exprs,
+		&expr.Meta{Key: expr.MetaKeyIIFNAME, Register: 1},
+		&expr.Cmp{Op: expr.CmpOpEq, Register: 1, Data: ifname(srcIface)},
+	)
+
+	// Match output interface (WAN) if available.
+	if wanIface != "" {
+		exprs = append(exprs,
+			&expr.Meta{Key: expr.MetaKeyOIFNAME, Register: 1},
+			&expr.Cmp{Op: expr.CmpOpEq, Register: 1, Data: ifname(wanIface)},
+		)
+	}
+
+	// Protocol matching.
+	proto := strings.ToLower(r.Protocol)
+	switch proto {
+	case "tcp":
+		exprs = append(exprs,
+			&expr.Meta{Key: expr.MetaKeyL4PROTO, Register: 1},
+			&expr.Cmp{Op: expr.CmpOpEq, Register: 1, Data: []byte{6}},
+		)
+		if r.Ports != "" {
+			if portExprs := b.compilePortMatch(r.Ports); len(portExprs) > 0 {
+				exprs = append(exprs, portExprs...)
+			}
+		}
+	case "udp":
+		exprs = append(exprs,
+			&expr.Meta{Key: expr.MetaKeyL4PROTO, Register: 1},
+			&expr.Cmp{Op: expr.CmpOpEq, Register: 1, Data: []byte{17}},
+		)
+		if r.Ports != "" {
+			if portExprs := b.compilePortMatch(r.Ports); len(portExprs) > 0 {
+				exprs = append(exprs, portExprs...)
+			}
+		}
+	case "icmp":
+		exprs = append(exprs,
+			&expr.Meta{Key: expr.MetaKeyL4PROTO, Register: 1},
+			&expr.Cmp{Op: expr.CmpOpEq, Register: 1, Data: []byte{1}},
+		)
+	case "":
+		// No protocol filter — match all.
+	default:
+		return nil // Unsupported protocol, skip rule.
+	}
+
+	// Verdict.
+	if !model.ValidActions[r.Action] {
+		return nil
+	}
+	switch r.Action {
+	case model.RuleActionAllow:
+		exprs = append(exprs, &expr.Verdict{Kind: expr.VerdictAccept})
+	case model.RuleActionDeny:
+		exprs = append(exprs, &expr.Verdict{Kind: expr.VerdictDrop})
+	case model.RuleActionReject:
+		exprs = append(exprs, &expr.Verdict{Kind: expr.VerdictDrop}) // netlink: drop as fallback
+	case model.RuleActionLog:
+		exprs = append(exprs, &expr.Log{Key: 0}) // log and continue
+	}
+
+	return exprs
+}
+
+// compilePortMatch builds nftables expressions matching a destination port.
+// Supports single port or first port from comma-separated list.
+func (b *NftablesBackend) compilePortMatch(ports string) []expr.Any {
+	// Parse first port (multi-port requires anonymous sets — future enhancement).
+	portStr := strings.Split(ports, ",")[0]
+	portStr = strings.TrimSpace(portStr)
+	port, err := strconv.ParseUint(portStr, 10, 16)
+	if err != nil {
+		return nil
+	}
+	return []expr.Any{
+		&expr.Payload{
+			DestRegister: 1,
+			Base:         expr.PayloadBaseTransportHeader,
+			Offset:       2, // Destination port offset.
+			Len:          2,
+		},
+		&expr.Cmp{Op: expr.CmpOpEq, Register: 1, Data: binaryPort(uint16(port))},
+	}
 }
 
 // ifname converts a string interface name to the 16-byte padded format
