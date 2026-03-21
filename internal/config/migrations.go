@@ -154,6 +154,18 @@ CREATE INDEX IF NOT EXISTS idx_alias_members_alias_id ON alias_members(alias_id)
 CREATE INDEX IF NOT EXISTS idx_audit_log_id ON audit_log(id DESC);
 `,
 	},
+	{
+		name: "003_content_filter_fk_note",
+		sql: `
+-- M-DB7: content_filters.zone_id and profile_id lack FK constraints.
+-- SQLite does not support ALTER TABLE ADD CONSTRAINT for foreign keys.
+-- Adding FKs requires a full table rebuild (CREATE new → INSERT SELECT →
+-- DROP old → ALTER TABLE RENAME). Deferred to a major schema revision.
+-- Application-level validation in CreateZone/DeleteZone handles integrity.
+-- This migration is a no-op placeholder to track the decision.
+SELECT 1;
+`,
+	},
 }
 
 // Migrate runs all pending schema migrations.
