@@ -22,6 +22,32 @@ import (
 	"github.com/gatekeeper-firewall/gatekeeper/internal/service"
 )
 
+// paginateAndRespond handles the common in-memory pagination pattern.
+// If limit/offset query params are present, slices the data and returns
+// a paginated response. Otherwise returns the full slice. Returns true
+// if it handled the response (caller should return).
+func paginateAndRespond(w http.ResponseWriter, r *http.Request, total int, slicer func(start, end int) any) bool {
+	if !r.URL.Query().Has("limit") && !r.URL.Query().Has("offset") {
+		return false
+	}
+	p := config.ParsePagination(r.URL.Query().Get("limit"), r.URL.Query().Get("offset"))
+	start := p.Offset
+	if start > total {
+		start = total
+	}
+	end := p.Offset + p.Limit
+	if end > total {
+		end = total
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"data":   slicer(start, end),
+		"total":  total,
+		"limit":  p.Limit,
+		"offset": p.Offset,
+	})
+	return true
+}
+
 // actorFromRequest extracts the RBAC key identity from the request context,
 // falling back to "api" if RBAC is not enabled.
 func actorFromRequest(r *http.Request) ops.Actor {
@@ -133,17 +159,7 @@ func (h *handlers) listAliases(w http.ResponseWriter, r *http.Request) {
 	if aliases == nil {
 		aliases = []model.Alias{}
 	}
-	if r.URL.Query().Has("limit") || r.URL.Query().Has("offset") {
-		p := config.ParsePagination(r.URL.Query().Get("limit"), r.URL.Query().Get("offset"))
-		end := p.Offset + p.Limit
-		if end > len(aliases) {
-			end = len(aliases)
-		}
-		start := p.Offset
-		if start > len(aliases) {
-			start = len(aliases)
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"data": aliases[start:end], "total": len(aliases), "limit": p.Limit, "offset": p.Offset})
+	if paginateAndRespond(w, r, len(aliases), func(s, e int) any { return aliases[s:e] }) {
 		return
 	}
 	writeJSON(w, http.StatusOK, aliases)
@@ -255,17 +271,7 @@ func (h *handlers) listProfiles(w http.ResponseWriter, r *http.Request) {
 	if profiles == nil {
 		profiles = []model.Profile{}
 	}
-	if r.URL.Query().Has("limit") || r.URL.Query().Has("offset") {
-		p := config.ParsePagination(r.URL.Query().Get("limit"), r.URL.Query().Get("offset"))
-		end := p.Offset + p.Limit
-		if end > len(profiles) {
-			end = len(profiles)
-		}
-		start := p.Offset
-		if start > len(profiles) {
-			start = len(profiles)
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"data": profiles[start:end], "total": len(profiles), "limit": p.Limit, "offset": p.Offset})
+	if paginateAndRespond(w, r, len(profiles), func(s, e int) any { return profiles[s:e] }) {
 		return
 	}
 	writeJSON(w, http.StatusOK, profiles)
@@ -337,17 +343,7 @@ func (h *handlers) listPolicies(w http.ResponseWriter, r *http.Request) {
 	if policies == nil {
 		policies = []model.Policy{}
 	}
-	if r.URL.Query().Has("limit") || r.URL.Query().Has("offset") {
-		p := config.ParsePagination(r.URL.Query().Get("limit"), r.URL.Query().Get("offset"))
-		end := p.Offset + p.Limit
-		if end > len(policies) {
-			end = len(policies)
-		}
-		start := p.Offset
-		if start > len(policies) {
-			start = len(policies)
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"data": policies[start:end], "total": len(policies), "limit": p.Limit, "offset": p.Offset})
+	if paginateAndRespond(w, r, len(policies), func(s, e int) any { return policies[s:e] }) {
 		return
 	}
 	writeJSON(w, http.StatusOK, policies)
@@ -449,17 +445,7 @@ func (h *handlers) listDevices(w http.ResponseWriter, r *http.Request) {
 	if devices == nil {
 		devices = []model.DeviceAssignment{}
 	}
-	if r.URL.Query().Has("limit") || r.URL.Query().Has("offset") {
-		p := config.ParsePagination(r.URL.Query().Get("limit"), r.URL.Query().Get("offset"))
-		end := p.Offset + p.Limit
-		if end > len(devices) {
-			end = len(devices)
-		}
-		start := p.Offset
-		if start > len(devices) {
-			start = len(devices)
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"data": devices[start:end], "total": len(devices), "limit": p.Limit, "offset": p.Offset})
+	if paginateAndRespond(w, r, len(devices), func(s, e int) any { return devices[s:e] }) {
 		return
 	}
 	writeJSON(w, http.StatusOK, devices)
