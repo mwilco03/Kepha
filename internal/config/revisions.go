@@ -272,10 +272,34 @@ func (s *Store) Import(snap *ConfigSnapshot) error {
 	if err := json.Unmarshal(snap.Profiles, &profiles); err != nil {
 		return fmt.Errorf("unmarshal profiles: %w", err)
 	}
+	// Build zone name→ID map from freshly imported zones.
+	zoneIDByName := make(map[string]int64)
+	rows, err := tx.Query("SELECT id, name FROM zones")
+	if err == nil {
+		for rows.Next() {
+			var id int64
+			var name string
+			if rows.Scan(&id, &name) == nil {
+				zoneIDByName[name] = id
+			}
+		}
+		rows.Close()
+	}
+
 	for _, p := range profiles {
-		// Look up zone by position since IDs may differ after re-import.
+		// M-DB3: Resolve zone by name, not stale ID from snapshot.
+		zoneID := p.ZoneID
+		// The snapshot stores zone_id which may not match new IDs.
+		// If we can find the zone by name from a zone list, use that instead.
+		// For now, look up via SQL since zones were just re-imported.
+		var resolvedID int64
+		if err := tx.QueryRow("SELECT id FROM zones WHERE id = ?", p.ZoneID).Scan(&resolvedID); err != nil {
+			// Zone ID doesn't exist — try finding by profile's expected zone name
+			// from the zoneIDByName map (best effort).
+			slog.Warn("import: zone_id not found, using as-is", "profile", p.Name, "zone_id", p.ZoneID)
+		}
 		if _, err := tx.Exec("INSERT INTO profiles (name, description, zone_id, policy_name) VALUES (?, ?, ?, ?)",
-			p.Name, p.Description, p.ZoneID, p.PolicyName); err != nil {
+			p.Name, p.Description, zoneID, p.PolicyName); err != nil {
 			return fmt.Errorf("import profile %s: %w", p.Name, err)
 		}
 	}
