@@ -697,7 +697,31 @@ type loginRateLimiter struct {
 }
 
 func newLoginRateLimiter() *loginRateLimiter {
-	return &loginRateLimiter{attempts: make(map[string][]time.Time)}
+	l := &loginRateLimiter{attempts: make(map[string][]time.Time)}
+	// L9: Cleanup stale entries every 5 minutes to prevent memory leak.
+	go func() {
+		ticker := time.NewTicker(5 * time.Minute)
+		defer ticker.Stop()
+		for range ticker.C {
+			l.mu.Lock()
+			cutoff := time.Now().Add(-5 * time.Minute)
+			for ip, times := range l.attempts {
+				var recent []time.Time
+				for _, t := range times {
+					if t.After(cutoff) {
+						recent = append(recent, t)
+					}
+				}
+				if len(recent) == 0 {
+					delete(l.attempts, ip)
+				} else {
+					l.attempts[ip] = recent
+				}
+			}
+			l.mu.Unlock()
+		}
+	}()
+	return l
 }
 
 // allow returns true if the IP has fewer than 5 attempts in the last minute.
