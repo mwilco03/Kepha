@@ -26,13 +26,21 @@ func (s *Store) Commit(message string) (int, error) {
 		return 0, fmt.Errorf("marshal snapshot: %w", err)
 	}
 
+	// Atomic SELECT MAX + INSERT inside a transaction to prevent
+	// concurrent commits from colliding on the same rev_number.
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
 	var nextRev int
-	err = s.db.QueryRow("SELECT COALESCE(MAX(rev_number), 0) + 1 FROM config_revisions").Scan(&nextRev)
+	err = tx.QueryRow("SELECT COALESCE(MAX(rev_number), 0) + 1 FROM config_revisions").Scan(&nextRev)
 	if err != nil {
 		return 0, err
 	}
 
-	_, err = s.db.Exec(
+	_, err = tx.Exec(
 		"INSERT INTO config_revisions (rev_number, message, snapshot) VALUES (?, ?, ?)",
 		nextRev, message, string(snapshotJSON),
 	)
@@ -40,6 +48,9 @@ func (s *Store) Commit(message string) (int, error) {
 		return 0, fmt.Errorf("insert revision: %w", err)
 	}
 
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("commit tx: %w", err)
+	}
 	return nextRev, nil
 }
 
