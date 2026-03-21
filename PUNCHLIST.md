@@ -10,10 +10,10 @@ Items marked `[x]` are verified complete. Items marked `[ ]` are open. Priority 
 
 ## CRITICAL (deployment blockers)
 
-- [ ] **C1 — NftablesBackend drops per-rule forwarding** `internal/backend/firewall_nftables.go:558-594` — Only emits default action. Individual policy rules silently ignored. "deny-all + allow HTTP" becomes "deny-all". *(Network Engineer)*
-- [ ] **C2 — Multi-WAN recovery never triggers** `internal/service/multiwan.go:230-231` — Counter reset/decrement logic makes recovery_threshold unreachable. WAN stays down forever. *(Network Engineer)*
-- [ ] **C3 — CSP blocks own scripts** `internal/web/web.go:428` — `script-src 'self'` blocks htmx from unpkg.com and inline JS. Web UI non-functional. Vendor htmx+qrcode.js into /static/, update CSP. *(Frontend Developer)*
-- [ ] **C4 — Default deployment has zero auth** `cmd/gatekeeperd/main.go:36` — `--api-key` defaults empty. Refuse to start without `--api-key` or `--enable-rbac`. *(Security Engineer)*
+- [x] **C1 — NftablesBackend drops per-rule forwarding** `internal/backend/firewall_nftables.go` — FIXED: Added compileRuleExprs() + compilePortMatch(). Now iterates policy.Rules into netlink expressions. *(Network Engineer)*
+- [x] **C2 — Multi-WAN recovery never triggers** `internal/service/multiwan.go` — FIXED: Dedicated recovery counters that increment on success, reset on failure. *(Network Engineer)*
+- [x] **C3 — CSP blocks own scripts** — FIXED: Vendored htmx.min.js + qrcode.js to /static/, updated template refs, CSP now allows 'unsafe-inline' for scripts. *(Frontend Developer)*
+- [x] **C4 — Default deployment has zero auth** `cmd/gatekeeperd/main.go:59-66` — FIXED: Daemon now refuses to start without `--api-key` or `--enable-rbac`. *(Security Engineer)*
 - [ ] **C5 — mergedThreats map swapped without synchronization** `internal/inspect/ja4.go:455` — Data race between `CheckThreat()` reads and `rebuildMergedIndex()` writes. Use atomic.Value or RWMutex. *(Threat Detection Engineer)*
 
 ---
