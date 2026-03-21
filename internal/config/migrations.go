@@ -141,6 +141,19 @@ CREATE INDEX IF NOT EXISTS idx_filter_exceptions_filter ON filter_exceptions(fil
 CREATE INDEX IF NOT EXISTS idx_filter_exceptions_domain ON filter_exceptions(domain);
 `,
 	},
+	{
+		name: "002_add_missing_indexes",
+		sql: `
+-- M-DB4: Index on rules.policy_id for efficient per-policy rule lookups.
+CREATE INDEX IF NOT EXISTS idx_rules_policy_id ON rules(policy_id);
+
+-- M-DB5: Index on alias_members.alias_id for efficient member lookups.
+CREATE INDEX IF NOT EXISTS idx_alias_members_alias_id ON alias_members(alias_id);
+
+-- M-DB6: Index on audit_log for efficient ordered queries.
+CREATE INDEX IF NOT EXISTS idx_audit_log_id ON audit_log(id DESC);
+`,
+	},
 }
 
 // Migrate runs all pending schema migrations.
