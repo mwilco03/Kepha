@@ -298,19 +298,33 @@ func handleStatus(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleReady checks that the database is accessible (readiness probe).
+// handleReady checks that the database is accessible and firewall is loaded (readiness probe).
 func (h *handlers) handleReady(w http.ResponseWriter, r *http.Request) {
+	checks := map[string]string{}
+
 	if err := h.ops.Store().Ping(); err != nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{
-			"status": "unavailable",
-			"reason": "database unreachable",
-		})
+		checks["database"] = "unavailable"
+	} else {
+		checks["database"] = "ok"
+	}
+
+	// Verify firewall has compiled rules (best-effort).
+	if h.nft != nil {
+		if _, err := h.nft.DryRun(); err != nil {
+			checks["firewall"] = "error"
+		} else {
+			checks["firewall"] = "ok"
+		}
+	}
+
+	checks["service"] = "gatekeeperd"
+	if checks["database"] == "unavailable" {
+		checks["status"] = "unavailable"
+		writeJSON(w, http.StatusServiceUnavailable, checks)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{
-		"status":  "ready",
-		"service": "gatekeeperd",
-	})
+	checks["status"] = "ready"
+	writeJSON(w, http.StatusOK, checks)
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
