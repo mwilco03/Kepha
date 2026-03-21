@@ -500,9 +500,11 @@ func sessionAuth(apiKey string, sessions *sessionStore, next http.Handler) http.
 
 func handleLoginPage() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// M-F6: Only show error for known values to prevent phishing via crafted URLs.
+		showError := r.URL.Query().Get("error") == "invalid"
 		render(w, "login", map[string]any{
 			"Title": "Login",
-			"Error": r.URL.Query().Get("error"),
+			"Error": showError,
 		})
 	}
 }
