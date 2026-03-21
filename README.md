@@ -126,21 +126,27 @@ gk audit                     # Show audit log
 
 ## API
 
-All endpoints under `/api/v1/` require the `X-API-Key` header (except health checks).
+All endpoints under `/api/v1/` require the `X-API-Key` header or a valid web session cookie (except health checks). The API has 100+ endpoints. Key endpoints:
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/api/v1/zones` | List zones |
-| POST | `/api/v1/zones` | Create zone |
-| GET | `/api/v1/aliases` | List aliases |
-| GET | `/api/v1/policies` | List policies with rules |
-| POST | `/api/v1/config/commit` | Commit config |
-| POST | `/api/v1/config/rollback/{rev}` | Rollback |
+| GET | `/api/v1/healthz` | Liveness probe |
+| GET | `/api/v1/readyz` | Readiness probe (DB + firewall) |
+| GET/POST | `/api/v1/zones` | List/create zones |
+| GET/POST | `/api/v1/aliases` | List/create aliases |
+| GET/POST | `/api/v1/policies` | List/create policies with rules |
+| GET/POST | `/api/v1/profiles` | List/create profiles |
+| POST | `/api/v1/assign` | Assign device to profile |
+| POST | `/api/v1/config/commit` | Commit and apply config |
+| POST | `/api/v1/config/rollback/{rev}` | Rollback to revision |
 | GET | `/api/v1/wg/peers` | List WireGuard peers |
-| POST | `/api/v1/wg/prune` | Prune stale peers |
 | GET | `/api/v1/diag/dry-run` | Preview compiled nftables |
 | POST | `/api/v1/test` | Test packet path |
-| GET | `/api/v1/diag/leases` | DHCP leases |
+| GET | `/api/v1/services` | List available services |
+| GET | `/api/v1/audit` | Audit log |
+| GET | `/api/v1/metrics` | Prometheus-style metrics |
+
+Full API documentation: see `api/openapi.yaml`.
 
 ## Daemon Flags
 
