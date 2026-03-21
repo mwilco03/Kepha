@@ -1,7 +1,7 @@
 # Gatekeeper Punchlist
 
 **Goal:** Production-ready network firewall appliance deployment.
-**Status:** 5/5 Critical, 22/26 High RESOLVED. 4 High remaining (H17 blocked, H22/H25/H26 in progress).
+**Status:** 5/5 Critical DONE, 25/26 High DONE. 1 High deferred (H17 CI — GitHub OAuth scope). 70+ Medium remaining.
 **Updated:** 2026-03-21
 
 Items marked `[x]` are verified complete. Items marked `[ ]` are open. Priority order within each severity.
@@ -50,15 +50,15 @@ Items marked `[x]` are verified complete. Items marked `[ ]` are open. Priority 
 - [x] **H19 — Audit middleware only logs to stdout, not DB** — FIXED: Persists to DB via store.LogAudit(). *(SRE)* `83aa8c2`
 - [x] **H20 — No WAL checkpoint or VACUUM** — FIXED: Store.Maintenance() with daily goroutine. *(SRE)* `c301503`
 - [x] **H21 — Config revisions grow without bound** — FIXED: Pruned to last 100 in Maintenance(). *(SRE)* `c301503`
-- [ ] **H22 — No log rotation** `init/gatekeeperd.openrc:49-50` — Daemon log grows unbounded. *(SRE)*
+- [x] **H22 — No log rotation** — FIXED: Logrotate config, daily, 14d retention, 50MB max. *(SRE)* `be6559c`
 
 ### Software Architecture
 - [ ] **H23 — Dead code: driver/nftables.go + nftables_netlink.go** — ~400 LOC superseded by backend equivalents. *(Software Architect)* [overlaps H13]
 - [ ] **H24 — Concrete types leak through layers** — WireGuard/dnsmasq drivers not behind interfaces. *(Software Architect)*
-- [ ] **H25 — Three unused interfaces** `internal/backend/backend.go` — VPNBackend, DHCPBackend, PackageManager defined but never consumed. *(Software Architect)*
+- [x] **H25 — Three unused interfaces** — FIXED: Deleted VPNBackend/DHCPBackend/PackageManager (~80 lines). *(Software Architect)* `9e65e05`
 
 ### Database
-- [ ] **H26 — Revision Commit() has TOCTOU race** `internal/config/revisions.go:30-43` — SELECT MAX+1 and INSERT not atomic. Concurrent commits can collide. *(Database Optimizer)*
+- [x] **H26 — Revision Commit() has TOCTOU race** — FIXED: Wrapped in transaction. *(Database Optimizer)* `dc69ca9`
 
 ---
 
