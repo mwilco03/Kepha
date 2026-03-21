@@ -212,6 +212,8 @@ func (m *MultiWAN) healthCheckLoop() {
 
 	wan1Fails := 0
 	wan2Fails := 0
+	wan1Recovery := 0
+	wan2Recovery := 0
 	wan1Up := true
 	wan2Up := true
 	activeWAN := "wan1"
@@ -227,11 +229,12 @@ func (m *MultiWAN) healthCheckLoop() {
 			// Check WAN1.
 			if m.checkWAN(cfg["wan1_check_target"], cfg["wan1_interface"], timeout) {
 				if !wan1Up {
+					wan1Recovery++
 					wan1Fails = 0
-					wan1Fails-- // Count as recovery.
-					if -wan1Fails >= recoveryThreshold {
+					if wan1Recovery >= recoveryThreshold {
 						wan1Up = true
-						slog.Info("multi-wan: WAN1 recovered")
+						wan1Recovery = 0
+						slog.Info("multi-wan: WAN1 recovered", "checks", recoveryThreshold)
 						if activeWAN != "wan1" && cfg["mode"] == "failover" {
 							m.setDefaultRoute(cfg["wan1_gateway"], cfg["wan1_interface"])
 							activeWAN = "wan1"
@@ -240,9 +243,11 @@ func (m *MultiWAN) healthCheckLoop() {
 					}
 				} else {
 					wan1Fails = 0
+					wan1Recovery = 0
 				}
 			} else {
 				wan1Fails++
+				wan1Recovery = 0 // Reset recovery streak on failure.
 				if wan1Fails >= failThreshold && wan1Up {
 					wan1Up = false
 					slog.Warn("multi-wan: WAN1 down", "failures", wan1Fails)
@@ -257,17 +262,20 @@ func (m *MultiWAN) healthCheckLoop() {
 			// Check WAN2.
 			if m.checkWAN(cfg["wan2_check_target"], cfg["wan2_interface"], timeout) {
 				if !wan2Up {
+					wan2Recovery++
 					wan2Fails = 0
-					wan2Fails--
-					if -wan2Fails >= recoveryThreshold {
+					if wan2Recovery >= recoveryThreshold {
 						wan2Up = true
-						slog.Info("multi-wan: WAN2 recovered")
+						wan2Recovery = 0
+						slog.Info("multi-wan: WAN2 recovered", "checks", recoveryThreshold)
 					}
 				} else {
 					wan2Fails = 0
+					wan2Recovery = 0
 				}
 			} else {
 				wan2Fails++
+				wan2Recovery = 0 // Reset recovery streak on failure.
 				if wan2Fails >= failThreshold && wan2Up {
 					wan2Up = false
 					slog.Warn("multi-wan: WAN2 down", "failures", wan2Fails)
