@@ -255,8 +255,10 @@ func main() {
 	// Handle SIGHUP: the CLI sends this after writing a commit/rollback
 	// to the DB, signaling the daemon to re-apply the config.
 	sighupCh := make(chan os.Signal, 1)
+	sighupDone := make(chan struct{})
 	signal.Notify(sighupCh, syscall.SIGHUP)
 	go func() {
+		defer close(sighupDone)
 		for range sighupCh {
 			slog.Info("received SIGHUP, re-applying config")
 			if err := fw.Apply(); err != nil {
@@ -418,6 +420,12 @@ func main() {
 
 	<-ctx.Done()
 	slog.Info("shutting down")
+
+	// Drain SIGHUP handler: stop signal delivery and close channel so the
+	// goroutine finishes any in-flight Apply before we shut down.
+	signal.Stop(sighupCh)
+	close(sighupCh)
+	<-sighupDone
 
 	// Stop all running services gracefully.
 	svcMgr.StopAll()
