@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 )
 
 // ConfigSnapshot holds the full exportable state of the firewall config.

@@ -2,6 +2,13 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <script src="/static/htmx.min.js"></script>
+<script>
+// CSRF: send session cookie value as X-CSRF-Token header on htmx requests.
+document.addEventListener('htmx:configRequest', function(e) {
+    var m = document.cookie.match(/gk_csrf=([^;]+)/);
+    if (m) e.detail.headers['X-CSRF-Token'] = m[1];
+});
+</script>
 <link rel="stylesheet" href="/static/style.css">
 <style>
     :root { --bg: #0f172a; --bg2: #1e293b; --bg3: #334155; --fg: #e2e8f0; --fg2: #94a3b8; --accent: #38bdf8; --green: #4ade80; --red: #f87171; --yellow: #fbbf24; --border: #475569; }

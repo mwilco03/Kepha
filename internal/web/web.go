@@ -92,9 +92,10 @@ func HandlerWithDeps(store *config.Store, deps *WebDeps) http.Handler {
 	// Export session validator so the API middleware can accept web sessions.
 	SessionValidator = sessions.valid
 
-	// Wrap with session auth and security headers if API key is configured.
+	// Wrap with session auth, CSRF protection, and security headers.
 	var handler http.Handler = mux
 	if deps.APIKey != "" {
+		handler = csrfProtect(sessions, handler)
 		handler = sessionAuth(deps.APIKey, sessions, handler)
 	}
 	return securityHeaders(handler)
@@ -438,6 +439,43 @@ func securityHeaders(next http.Handler) http.Handler {
 	})
 }
 
+// csrfProtect enforces double-submit cookie CSRF protection on state-changing
+// requests (POST/PUT/DELETE). The CSRF token is the session cookie value —
+// an attacker cannot read it cross-origin due to SameSite and HttpOnly.
+// Forms must include a hidden _csrf field or an X-CSRF-Token header.
+func csrfProtect(sessions *sessionStore, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "GET" || r.Method == "HEAD" || r.Method == "OPTIONS" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		// Login form doesn't have a session yet — skip CSRF check.
+		if r.URL.Path == "/login" {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		sessionCookie, err := r.Cookie(sessionCookieName)
+		if err != nil || sessionCookie.Value == "" {
+			next.ServeHTTP(w, r) // No session — auth middleware will reject.
+			return
+		}
+
+		// Check form field or header against the session token.
+		csrfToken := r.FormValue("_csrf")
+		if csrfToken == "" {
+			csrfToken = r.Header.Get("X-CSRF-Token")
+		}
+
+		if subtle.ConstantTimeCompare([]byte(csrfToken), []byte(sessionCookie.Value)) != 1 {
+			http.Error(w, "CSRF token mismatch", http.StatusForbidden)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
 // sessionAuth wraps a handler with cookie-based session authentication.
 // Static assets and the login page bypass auth.
 func sessionAuth(apiKey string, sessions *sessionStore, next http.Handler) http.Handler {
@@ -514,6 +552,8 @@ func handleLogout(sessions *sessionStore) http.HandlerFunc {
 
 // setSessionCookie creates a cryptographically random session token,
 // stores it server-side, and sets it as a cookie.
+const csrfCookieName = "gk_csrf"
+
 func setSessionCookie(w http.ResponseWriter, apiKey string, sessions *sessionStore) {
 	token := generateSessionToken(apiKey)
 	sessions.add(token)
@@ -523,6 +563,18 @@ func setSessionCookie(w http.ResponseWriter, apiKey string, sessions *sessionSto
 		Path:     "/",
 		MaxAge:   86400, // 24 hours.
 		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteStrictMode,
+	})
+	// Separate CSRF cookie — readable by JS for double-submit pattern.
+	// Uses the same token value; the session cookie is HttpOnly so JS
+	// can't read it directly.
+	http.SetCookie(w, &http.Cookie{
+		Name:     csrfCookieName,
+		Value:    token,
+		Path:     "/",
+		MaxAge:   86400,
+		HttpOnly: false, // Readable by JS for htmx X-CSRF-Token header.
 		Secure:   true,
 		SameSite: http.SameSiteStrictMode,
 	})
