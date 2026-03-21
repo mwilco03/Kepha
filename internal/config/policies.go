@@ -8,30 +8,64 @@ import (
 )
 
 func (s *Store) ListPolicies() ([]model.Policy, error) {
-	rows, err := s.db.Query("SELECT id, name, description, default_action FROM policies ORDER BY name")
+	// Single query with LEFT JOIN to avoid N+1: one row per policy×rule.
+	rows, err := s.db.Query(`
+		SELECT p.id, p.name, p.description, p.default_action,
+		       r.id, r.policy_id, r."order", r.src_alias, r.dst_alias,
+		       r.protocol, r.ports, r.action, r.log, r.description
+		FROM policies p
+		LEFT JOIN rules r ON r.policy_id = p.id
+		ORDER BY p.name, r."order"
+	`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	var policies []model.Policy
+	policyMap := make(map[int64]*model.Policy)
+	var order []int64
 	for rows.Next() {
-		var p model.Policy
-		if err := rows.Scan(&p.ID, &p.Name, &p.Description, &p.DefaultAction); err != nil {
+		var pid int64
+		var pName, pDesc string
+		var pAction model.RuleAction
+		var rID, rPolicyID sql.NullInt64
+		var rOrder sql.NullInt64
+		var rSrc, rDst, rProto, rPorts, rDesc sql.NullString
+		var rAction sql.NullString
+		var rLog sql.NullBool
+		if err := rows.Scan(&pid, &pName, &pDesc, &pAction,
+			&rID, &rPolicyID, &rOrder, &rSrc, &rDst,
+			&rProto, &rPorts, &rAction, &rLog, &rDesc); err != nil {
 			return nil, err
 		}
-		policies = append(policies, p)
+		p, ok := policyMap[pid]
+		if !ok {
+			p = &model.Policy{ID: pid, Name: pName, Description: pDesc, DefaultAction: pAction}
+			policyMap[pid] = p
+			order = append(order, pid)
+		}
+		if rID.Valid {
+			p.Rules = append(p.Rules, model.Rule{
+				ID:          rID.Int64,
+				PolicyID:    rPolicyID.Int64,
+				Order:       int(rOrder.Int64),
+				SrcAlias:    rSrc.String,
+				DstAlias:    rDst.String,
+				Protocol:    rProto.String,
+				Ports:       rPorts.String,
+				Action:      model.RuleAction(rAction.String),
+				Log:         rLog.Bool,
+				Description: rDesc.String,
+			})
+		}
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 
-	for i := range policies {
-		rules, err := s.getRules(policies[i].ID)
-		if err != nil {
-			return nil, err
-		}
-		policies[i].Rules = rules
+	policies := make([]model.Policy, 0, len(order))
+	for _, id := range order {
+		policies = append(policies, *policyMap[id])
 	}
 	return policies, nil
 }
