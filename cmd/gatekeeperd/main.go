@@ -46,13 +46,25 @@ var (
 	pxeServer   = flag.String("pxe-server", "", "PXE server IP for dhcp-boot (empty = disabled)")
 	enableMCP   = flag.Bool("enable-mcp", false, "Enable MCP (Model Context Protocol) server")
 	enableRBAC  = flag.Bool("enable-rbac", false, "Enable RBAC (replaces simple API key auth)")
+	logLevel    = flag.String("log-level", "info", "Log level: debug, info, warn, error")
 )
 
 func main() {
 	flag.Parse()
 
+	var level slog.Level
+	switch strings.ToLower(*logLevel) {
+	case "debug":
+		level = slog.LevelDebug
+	case "warn", "warning":
+		level = slog.LevelWarn
+	case "error":
+		level = slog.LevelError
+	default:
+		level = slog.LevelInfo
+	}
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
+		Level: level,
 	}))
 	slog.SetDefault(logger)
 
