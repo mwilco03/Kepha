@@ -20,8 +20,8 @@ if [ ! -f "$API_KEY_FILE" ]; then
     API_KEY=$(head -c 32 /dev/urandom | base64 | tr -d '/+=' | head -c 32)
     echo "$API_KEY" > "$API_KEY_FILE"
     chmod 600 "$API_KEY_FILE"
-    echo "Generated API key: $API_KEY"
-    echo "Save this key — it is required for API access."
+    echo "API key generated and saved to $API_KEY_FILE"
+    echo "Retrieve with: cat $API_KEY_FILE"
 else
     echo "API key already exists at $API_KEY_FILE"
 fi
