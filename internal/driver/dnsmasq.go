@@ -3,6 +3,7 @@ package driver
 import (
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -278,18 +279,54 @@ func isDNSLabel(s string) bool {
 	return s != "" && dnsLabelRe.MatchString(s) && !strings.Contains(s, "..")
 }
 
-// deriveDHCPRange generates a DHCP range from a CIDR.
-// For x.x.x.0/24, returns "x.x.x.100,x.x.x.250".
+// deriveDHCPRange generates a DHCP range from a CIDR, respecting prefix length.
+// Uses the middle 60% of the usable address space (skips first 20% and last 20%).
 func deriveDHCPRange(cidr string) string {
-	parts := strings.Split(cidr, "/")
-	if len(parts) != 2 {
+	ip, ipnet, err := net.ParseCIDR(cidr)
+	if err != nil || ip.To4() == nil {
 		return ""
 	}
-	ip := parts[0]
-	octets := strings.Split(ip, ".")
-	if len(octets) != 4 {
-		return ""
+
+	mask := ipnet.Mask
+	ones, bits := mask.Size()
+	if bits != 32 || ones > 30 {
+		return "" // /31 and /32 have no usable DHCP range.
 	}
-	prefix := strings.Join(octets[:3], ".")
-	return fmt.Sprintf("%s.100,%s.250", prefix, prefix)
+
+	// Calculate usable host range.
+	networkIP := ipnet.IP.To4()
+	hostBits := 32 - ones
+	totalHosts := (1 << hostBits) - 2 // Exclude network and broadcast.
+	if totalHosts < 4 {
+		return "" // Too small for a meaningful DHCP range.
+	}
+
+	// Start at 20% into the range, end at 80%.
+	startOffset := totalHosts / 5
+	if startOffset < 1 {
+		startOffset = 1
+	}
+	endOffset := totalHosts * 4 / 5
+	if endOffset > totalHosts {
+		endOffset = totalHosts
+	}
+
+	startIP := make(net.IP, 4)
+	copy(startIP, networkIP)
+	addToIP(startIP, startOffset)
+
+	endIP := make(net.IP, 4)
+	copy(endIP, networkIP)
+	addToIP(endIP, endOffset)
+
+	return fmt.Sprintf("%s,%s", startIP.String(), endIP.String())
+}
+
+// addToIP adds n to an IPv4 address in place.
+func addToIP(ip net.IP, n int) {
+	for i := 3; i >= 0 && n > 0; i-- {
+		sum := int(ip[i]) + n
+		ip[i] = byte(sum & 0xff)
+		n = sum >> 8
+	}
 }
