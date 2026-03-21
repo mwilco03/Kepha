@@ -42,9 +42,10 @@ func Compile(input *Input) (*CompiledRuleset, error) {
 	b.WriteString("# Gatekeeper auto-generated ruleset\n")
 	b.WriteString("# DO NOT EDIT — managed by gatekeeperd\n\n")
 
-	// Flush existing gatekeeper tables.
-	b.WriteString("table inet gatekeeper\ndelete table inet gatekeeper\n\n")
-	b.WriteString("table inet gatekeeper {\n\n")
+	// Flush existing table.
+	tbl := model.NFTablesTableName
+	b.WriteString("table inet " + tbl + "\ndelete table inet " + tbl + "\n\n")
+	b.WriteString("table inet " + tbl + " {\n\n")
 
 	// Build alias → members map for resolution.
 	aliasMap := make(map[string]*model.Alias)

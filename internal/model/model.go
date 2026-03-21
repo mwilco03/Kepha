@@ -5,6 +5,10 @@ import (
 	"time"
 )
 
+// NFTablesTableName is the nftables table name used by Gatekeeper.
+// Single source of truth — avoids hardcoding "gatekeeper" in 15+ locations.
+const NFTablesTableName = "gatekeeper"
+
 // SanitizeName produces a valid nftables identifier from a user-supplied name.
 // Only alphanumeric characters and underscores are kept; everything else
 // becomes an underscore. Shared by compiler and backend packages.

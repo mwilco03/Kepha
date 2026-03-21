@@ -91,7 +91,7 @@ func (b *NftablesBackend) Apply(artifact *Artifact) error {
 	tables, err := conn.ListTables()
 	if err == nil {
 		for _, t := range tables {
-			if t.Name == "gatekeeper" {
+			if t.Name == model.NFTablesTableName {
 				conn.DelTable(t)
 			}
 		}
@@ -100,7 +100,7 @@ func (b *NftablesBackend) Apply(artifact *Artifact) error {
 	// Create the gatekeeper table in inet (dual-stack) family.
 	table := conn.AddTable(&nft.Table{
 		Family: nft.TableFamilyINet,
-		Name:   "gatekeeper",
+		Name:   model.NFTablesTableName,
 	})
 
 	// Get the input from the artifact.
@@ -157,7 +157,7 @@ func (b *NftablesBackend) Verify(artifact *Artifact) (bool, []Drift, error) {
 
 	var found bool
 	for _, t := range tables {
-		if t.Name == "gatekeeper" && t.Family == nft.TableFamilyINet {
+		if t.Name == model.NFTablesTableName && t.Family == nft.TableFamilyINet {
 			found = true
 			break
 		}
@@ -174,7 +174,7 @@ func (b *NftablesBackend) Verify(artifact *Artifact) (bool, []Drift, error) {
 
 	// Verify chains exist.
 	var drifts []Drift
-	table := &nft.Table{Family: nft.TableFamilyINet, Name: "gatekeeper"}
+	table := &nft.Table{Family: nft.TableFamilyINet, Name: model.NFTablesTableName}
 	chains, err := conn.ListChainsOfTableFamily(nft.TableFamilyINet)
 	if err != nil {
 		return false, nil, fmt.Errorf("list chains: %w", err)
@@ -253,7 +253,7 @@ func (b *NftablesBackend) AddToSet(setName string, member string) error {
 		return err
 	}
 
-	table := &nft.Table{Family: nft.TableFamilyINet, Name: "gatekeeper"}
+	table := &nft.Table{Family: nft.TableFamilyINet, Name: model.NFTablesTableName}
 	set, err := conn.GetSetByName(table, setName)
 	if err != nil {
 		return fmt.Errorf("get set %s: %w", setName, err)
@@ -281,7 +281,7 @@ func (b *NftablesBackend) RemoveFromSet(setName string, member string) error {
 		return err
 	}
 
-	table := &nft.Table{Family: nft.TableFamilyINet, Name: "gatekeeper"}
+	table := &nft.Table{Family: nft.TableFamilyINet, Name: model.NFTablesTableName}
 	set, err := conn.GetSetByName(table, setName)
 	if err != nil {
 		return fmt.Errorf("get set %s: %w", setName, err)
@@ -309,7 +309,7 @@ func (b *NftablesBackend) FlushSet(setName string) error {
 		return err
 	}
 
-	table := &nft.Table{Family: nft.TableFamilyINet, Name: "gatekeeper"}
+	table := &nft.Table{Family: nft.TableFamilyINet, Name: model.NFTablesTableName}
 	set, err := conn.GetSetByName(table, setName)
 	if err != nil {
 		return fmt.Errorf("get set %s: %w", setName, err)
@@ -331,7 +331,7 @@ func (b *NftablesBackend) EmergencyFlush() error {
 		return fmt.Errorf("emergency flush: connect: %w", err)
 	}
 
-	conn.DelTable(&nft.Table{Family: nft.TableFamilyINet, Name: "gatekeeper"})
+	conn.DelTable(&nft.Table{Family: nft.TableFamilyINet, Name: model.NFTablesTableName})
 	if err := conn.Flush(); err != nil {
 		return fmt.Errorf("emergency flush: %w", err)
 	}
