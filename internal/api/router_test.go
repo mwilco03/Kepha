@@ -57,7 +57,9 @@ func TestZoneEndpoints(t *testing.T) {
 		t.Fatalf("list zones: expected 200, got %d", rec.Code)
 	}
 	var zones []map[string]any
-	json.Unmarshal(rec.Body.Bytes(), &zones)
+	if err := json.Unmarshal(rec.Body.Bytes(), &zones); err != nil {
+		t.Fatalf("unmarshal zones: %v", err)
+	}
 	if len(zones) != 2 {
 		t.Fatalf("expected 2 zones, got %d", len(zones))
 	}
@@ -118,7 +120,9 @@ func TestAliasEndpoints(t *testing.T) {
 		t.Fatalf("get alias: expected 200, got %d", rec.Code)
 	}
 	var alias map[string]any
-	json.Unmarshal(rec.Body.Bytes(), &alias)
+	if err := json.Unmarshal(rec.Body.Bytes(), &alias); err != nil {
+		t.Fatalf("unmarshal alias: %v", err)
+	}
 	members := alias["members"].([]any)
 	if len(members) != 2 {
 		t.Errorf("expected 2 members, got %d", len(members))
@@ -142,7 +146,9 @@ func TestDeviceAssignmentEndpoints(t *testing.T) {
 		t.Fatalf("list devices: expected 200, got %d", rec.Code)
 	}
 	var devices []map[string]any
-	json.Unmarshal(rec.Body.Bytes(), &devices)
+	if err := json.Unmarshal(rec.Body.Bytes(), &devices); err != nil {
+		t.Fatalf("unmarshal devices: %v", err)
+	}
 	if len(devices) != 1 {
 		t.Fatalf("expected 1 device, got %d", len(devices))
 	}
