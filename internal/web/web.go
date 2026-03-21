@@ -111,10 +111,10 @@ func handleDashboard(store *config.Store, deps *WebDeps) http.HandlerFunc {
 			http.NotFound(w, r)
 			return
 		}
-		zones, _ := store.ListZones()
-		devices, _ := store.ListDevices()
-		aliases, _ := store.ListAliases()
-		revs, _ := store.ListRevisions()
+		zones, zErr := store.ListZones(); if zErr != nil { slog.Warn("store error", "op", "ListZones", "error", zErr) }
+		devices, dErr := store.ListDevices(); if dErr != nil { slog.Warn("store error", "op", "ListDevices", "error", dErr) }
+		aliases, aErr := store.ListAliases(); if aErr != nil { slog.Warn("store error", "op", "ListAliases", "error", aErr) }
+		revs, rErr := store.ListRevisions(); if rErr != nil { slog.Warn("store error", "op", "ListRevisions", "error", rErr) }
 
 		var lastCommit string
 		if len(revs) > 0 {
@@ -146,7 +146,7 @@ func handleDashboard(store *config.Store, deps *WebDeps) http.HandlerFunc {
 
 func handleZones(store *config.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		zones, _ := store.ListZones()
+		zones, zErr := store.ListZones(); if zErr != nil { slog.Warn("store error", "op", "ListZones", "error", zErr) }
 		render(w, "zones", map[string]any{
 			"Title": "Zones",
 			"Zones": zones,
@@ -164,8 +164,8 @@ func handleZoneDetail(store *config.Store) http.HandlerFunc {
 		}
 
 		// Get devices in this zone via profiles.
-		profiles, _ := store.ListProfiles()
-		devices, _ := store.ListDevices()
+		profiles, prErr := store.ListProfiles(); if prErr != nil { slog.Warn("store error", "op", "ListProfiles", "error", prErr) }
+		devices, dErr := store.ListDevices(); if dErr != nil { slog.Warn("store error", "op", "ListDevices", "error", dErr) }
 
 		var zoneProfiles []model.Profile
 		profileIDs := make(map[int64]bool)
@@ -194,7 +194,7 @@ func handleZoneDetail(store *config.Store) http.HandlerFunc {
 
 func handleAliases(store *config.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		aliases, _ := store.ListAliases()
+		aliases, aErr := store.ListAliases(); if aErr != nil { slog.Warn("store error", "op", "ListAliases", "error", aErr) }
 		render(w, "aliases", map[string]any{
 			"Title":   "Aliases",
 			"Aliases": aliases,
@@ -204,8 +204,8 @@ func handleAliases(store *config.Store) http.HandlerFunc {
 
 func handleDevices(store *config.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		devices, _ := store.ListDevices()
-		profiles, _ := store.ListProfiles()
+		devices, dErr := store.ListDevices(); if dErr != nil { slog.Warn("store error", "op", "ListDevices", "error", dErr) }
+		profiles, prErr := store.ListProfiles(); if prErr != nil { slog.Warn("store error", "op", "ListProfiles", "error", prErr) }
 
 		profileMap := make(map[int64]string)
 		for _, p := range profiles {
@@ -233,7 +233,7 @@ func handleDevices(store *config.Store) http.HandlerFunc {
 
 func handlePolicies(store *config.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		policies, _ := store.ListPolicies()
+		policies, pErr := store.ListPolicies(); if pErr != nil { slog.Warn("store error", "op", "ListPolicies", "error", pErr) }
 		render(w, "policies", map[string]any{
 			"Title":    "Policies",
 			"Policies": policies,
@@ -243,8 +243,8 @@ func handlePolicies(store *config.Store) http.HandlerFunc {
 
 func handleConfig(store *config.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		revs, _ := store.ListRevisions()
-		snap, _ := store.Export()
+		revs, rErr := store.ListRevisions(); if rErr != nil { slog.Warn("store error", "op", "ListRevisions", "error", rErr) }
+		snap, exErr := store.Export(); if exErr != nil { slog.Warn("store error", "op", "Export", "error", exErr) }
 		var snapJSON string
 		if snap != nil {
 			data, _ := json.MarshalIndent(snap, "", "  ")
@@ -260,7 +260,7 @@ func handleConfig(store *config.Store) http.HandlerFunc {
 
 func handleAssignForm(store *config.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		profiles, _ := store.ListProfiles()
+		profiles, prErr := store.ListProfiles(); if prErr != nil { slog.Warn("store error", "op", "ListProfiles", "error", prErr) }
 		render(w, "assign", map[string]any{
 			"Title":    "Assign Device",
 			"Profiles": profiles,
@@ -350,9 +350,9 @@ func parseLeaseFile(path string) []leaseEntry {
 
 func handleFirewall(store *config.Store, deps *WebDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		zones, _ := store.ListZones()
-		policies, _ := store.ListPolicies()
-		profiles, _ := store.ListProfiles()
+		zones, zErr := store.ListZones(); if zErr != nil { slog.Warn("store error", "op", "ListZones", "error", zErr) }
+		policies, pErr := store.ListPolicies(); if pErr != nil { slog.Warn("store error", "op", "ListPolicies", "error", pErr) }
+		profiles, prErr := store.ListProfiles(); if prErr != nil { slog.Warn("store error", "op", "ListProfiles", "error", prErr) }
 
 		// Build zone→policy mapping via profiles.
 		type zonePolicyRow struct {
