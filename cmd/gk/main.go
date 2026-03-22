@@ -635,17 +635,26 @@ func cmdPing(args []string) error {
 		return fmt.Errorf("usage: gk ping <target>")
 	}
 	target := args[0]
-	// Validate target to prevent command injection.
+	// Validate target.
 	for _, c := range target {
 		valid := (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '.' || c == '-' || c == ':'
 		if !valid {
 			return fmt.Errorf("invalid target: must be an IP or hostname")
 		}
 	}
-	cmd := newCommand("ping", "-c", "3", "-W", "2", target)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
+
+	// Native ICMP ping — no exec.Command("ping").
+	nm := &backend.LinuxNetworkManager{}
+	result, err := nm.Ping(target, 3, 2, "")
+	if err != nil {
+		return err
+	}
+	fmt.Print(result.Output)
+	fmt.Printf("--- %d packets transmitted, %d received ---\n", result.Sent, result.Received)
+	if result.Received > 0 {
+		fmt.Printf("avg rtt: %v\n", result.AvgRTT)
+	}
+	return nil
 }
 
 func cmdExplain(b cli.Backend, args []string, outputFmt string) error {

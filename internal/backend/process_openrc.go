@@ -236,13 +236,9 @@ func (m *OpenRCManager) processUptime(pid int) (time.Duration, error) {
 }
 
 // getClockTicks returns the kernel's clock tick rate (USER_HZ).
-// Uses the C library sysconf(_SC_CLK_TCK) via getconf. Falls back to 100.
+// USER_HZ is always 100 on Linux — the kernel guarantees this for all
+// userspace interfaces (/proc/*/stat, times(), etc.) regardless of the
+// internal CONFIG_HZ value. No shell-out or syscall needed.
 func getClockTicks() float64 {
-	out, err := exec.Command("getconf", "CLK_TCK").Output()
-	if err == nil {
-		if v, err := strconv.Atoi(strings.TrimSpace(string(out))); err == nil && v > 0 {
-			return float64(v)
-		}
-	}
-	return 100 // Default for nearly all Linux systems.
+	return 100
 }

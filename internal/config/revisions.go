@@ -3,7 +3,6 @@ package config
 import (
 	"encoding/json"
 	"fmt"
-	"log/slog"
 )
 
 // ConfigSnapshot holds the full exportable state of the firewall config.
@@ -286,23 +285,57 @@ func (s *Store) Import(snap *ConfigSnapshot) error {
 		}
 		rows.Close()
 	}
+	// Build old zone ID→name map from the snapshot's zone data so we can
+	// remap stale zone_id references in profiles to freshly-inserted IDs.
+	oldZoneIDToName := make(map[int64]string)
+	var snapZones []struct {
+		ID   int64  `json:"id"`
+		Name string `json:"name"`
+	}
+	if json.Unmarshal(snap.Zones, &snapZones) == nil {
+		for _, z := range snapZones {
+			oldZoneIDToName[z.ID] = z.Name
+		}
+	}
 
 	for _, p := range profiles {
-		// M-DB3: Resolve zone by name, not stale ID from snapshot.
 		zoneID := p.ZoneID
-		// The snapshot stores zone_id which may not match new IDs.
-		// If we can find the zone by name from a zone list, use that instead.
-		// For now, look up via SQL since zones were just re-imported.
-		var resolvedID int64
-		if err := tx.QueryRow("SELECT id FROM zones WHERE id = ?", p.ZoneID).Scan(&resolvedID); err != nil {
-			// Zone ID doesn't exist — try finding by profile's expected zone name
-			// from the zoneIDByName map (best effort).
-			slog.Warn("import: zone_id not found, using as-is", "profile", p.Name, "zone_id", p.ZoneID)
+		// Resolve stale zone_id: find the zone name from the snapshot,
+		// then look up the freshly-inserted ID for that name.
+		if zoneName, ok := oldZoneIDToName[p.ZoneID]; ok {
+			if newID, ok := zoneIDByName[zoneName]; ok {
+				zoneID = newID
+			}
 		}
 		if _, err := tx.Exec("INSERT INTO profiles (name, description, zone_id, policy_name) VALUES (?, ?, ?, ?)",
 			p.Name, p.Description, zoneID, p.PolicyName); err != nil {
 			return fmt.Errorf("import profile %s: %w", p.Name, err)
 		}
+	}
+
+	// Build old profile ID→name map from snapshot and new profile name→ID
+	// map from freshly imported profiles for device assignment remapping.
+	oldProfileIDToName := make(map[int64]string)
+	var snapProfiles []struct {
+		ID   int64  `json:"id"`
+		Name string `json:"name"`
+	}
+	if json.Unmarshal(snap.Profiles, &snapProfiles) == nil {
+		for _, p := range snapProfiles {
+			oldProfileIDToName[p.ID] = p.Name
+		}
+	}
+	profileIDByName := make(map[string]int64)
+	profRows, err := tx.Query("SELECT id, name FROM profiles")
+	if err == nil {
+		for profRows.Next() {
+			var id int64
+			var name string
+			if profRows.Scan(&id, &name) == nil {
+				profileIDByName[name] = id
+			}
+		}
+		profRows.Close()
 	}
 
 	// Re-import devices.
@@ -317,8 +350,14 @@ func (s *Store) Import(snap *ConfigSnapshot) error {
 			return fmt.Errorf("unmarshal devices: %w", err)
 		}
 		for _, d := range devices {
+			profileID := d.ProfileID
+			if profName, ok := oldProfileIDToName[d.ProfileID]; ok {
+				if newID, ok := profileIDByName[profName]; ok {
+					profileID = newID
+				}
+			}
 			if _, err := tx.Exec("INSERT INTO device_assignments (ip, mac, hostname, profile_id) VALUES (?, ?, ?, ?)",
-				d.IP, d.MAC, d.Hostname, d.ProfileID); err != nil {
+				d.IP, d.MAC, d.Hostname, profileID); err != nil {
 				return fmt.Errorf("import device %s: %w", d.IP, err)
 			}
 		}
