@@ -1,9 +1,9 @@
 # Gatekeeper Punchlist
 
 **Goal:** Production-ready network firewall appliance deployment.
-**Status:** CLOSED — 140/140 items resolved (100%). 16/16 closing smoke test PASS at 192.168.7.131.
-**Updated:** 2026-03-21
-**Total commits this session:** 246
+**Status:** REOPENED — 140/140 original items resolved. 8 new items from live topology testing.
+**Updated:** 2026-03-22
+**Total commits:** 251
 **Dependabot:** Active (6 PRs for dependency updates)
 **OpenAPI:** 103/103 endpoints documented (100%)
 **Smoke test:** 16/16 PASS — health, readiness, auth, zones, nft chains (input/forward/output/NAT), bogon set, web UI, metrics, CLI, logs, ICMP, TLS
@@ -245,4 +245,26 @@
 | **Total** | **140** | **140** | **100%** |
 
 **Closing smoke test: 16/16 PASS at `https://192.168.7.131:8080`**
-**246 commits. 13 review agents. Zero items remaining.**
+**251 commits. 13 review agents.**
+
+---
+
+## LIVE TOPOLOGY FINDINGS (2026-03-22)
+
+Found during 3-container E2E test (scripts/test-topology.sh). See PROOF.md for full evidence.
+
+### Stale Test Assertions (6 items)
+
+Tests expect old string/value formats after code improvements. Functionality verified working live — assertions need syncing.
+
+- [ ] **T1 — TestBackendCaps**: Expects `"nftables"`, got `"nftables (netlink)"`. Update assertion.
+- [ ] **T2 — TestCompileICMPRestricted**: Asserts blanket ICMP accept absent, but test regex matches the type-restricted accept. Fix regex.
+- [ ] **T3 — TestDeriveDHCPRange**: Expects `100,250` range, code produces `50,203` (respects prefix length per M-N1). Update expected values.
+- [ ] **T4 — TestGenerateConfig**: Depends on T3 range values. Update expected DHCP range in config assertion.
+- [ ] **T5 — TestAnomalyDetector_SeverityEscalation**: Expects `"warning"` first severity, code returns `"high"`. Update expected value or fix escalation logic.
+- [ ] **T6 — TestIsToolAllowed**: MCP tool allowlist changed. Sync test with current tool list.
+
+### Other Items
+
+- [ ] **T7 — TestDropInGateway_Validate**: Validation assertion mismatch in service tests. Investigate and fix.
+- [ ] **T8 — TestMapVersionIncrement**: XDP stub mode returns version 0. Test expects >0. Guard test with stub-mode skip or fix version tracking.
