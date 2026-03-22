@@ -17,9 +17,10 @@ func AuthMiddleware(apiKey string, next http.Handler) http.Handler {
 	// Build a session validator that the web UI's session store can plug into.
 	// This is set via SetSessionValidator() at boot time.
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Exempt unauthenticated endpoints (health checks, metrics).
+		// Exempt unauthenticated endpoints (health checks only).
+		// Metrics requires auth — exposes uptime, request counts, goroutine info.
 		switch r.URL.Path {
-		case "/api/v1/status", "/api/v1/metrics", "/api/v1/healthz", "/api/v1/readyz":
+		case "/api/v1/status", "/api/v1/healthz", "/api/v1/readyz":
 			next.ServeHTTP(w, r)
 			return
 		}

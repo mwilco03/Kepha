@@ -92,7 +92,7 @@ func NewRouterWithConfig(cfg *RouterConfig) http.Handler {
 	mux.HandleFunc("GET /api/v1/healthz", handleStatus) // Liveness: process is running.
 	mux.HandleFunc("GET /api/v1/readyz", h.handleReady) // Readiness: DB is accessible.
 
-	// Metrics (unauthenticated).
+	// Metrics (authenticated via AuthMiddleware — exposes uptime, request counts).
 	mux.HandleFunc("GET /api/v1/metrics", metrics.Handler())
 
 	// Zones.
