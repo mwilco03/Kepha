@@ -1,7 +1,7 @@
 # Gatekeeper Punchlist
 
 **Goal:** Production-ready network firewall appliance deployment.
-**Status:** REOPENED — 140/140 original items resolved. 8 new items from live topology testing.
+**Status:** CLOSED — 148/148 items resolved. 16/16 packages pass.
 **Updated:** 2026-03-22
 **Total commits:** 251
 **Dependabot:** Active (6 PRs for dependency updates)
@@ -257,14 +257,14 @@ Found during 3-container E2E test (scripts/test-topology.sh). See PROOF.md for f
 
 Tests expect old string/value formats after code improvements. Functionality verified working live — assertions need syncing.
 
-- [ ] **T1 — TestBackendCaps**: Expects `"nftables"`, got `"nftables (netlink)"`. Update assertion.
-- [ ] **T2 — TestCompileICMPRestricted**: Asserts blanket ICMP accept absent, but test regex matches the type-restricted accept. Fix regex.
-- [ ] **T3 — TestDeriveDHCPRange**: Expects `100,250` range, code produces `50,203` (respects prefix length per M-N1). Update expected values.
-- [ ] **T4 — TestGenerateConfig**: Depends on T3 range values. Update expected DHCP range in config assertion.
-- [ ] **T5 — TestAnomalyDetector_SeverityEscalation**: Expects `"warning"` first severity, code returns `"high"`. Update expected value or fix escalation logic.
-- [ ] **T6 — TestIsToolAllowed**: MCP tool allowlist changed. Sync test with current tool list.
+- [x] **T1 — TestBackendCaps**: FIXED: Expect `"nftables (netlink)"`. `0198c00`
+- [x] **T2 — TestCompileICMPRestricted**: FIXED: Scope ICMP check to input chain only. `0198c00`
+- [x] **T3 — TestDeriveDHCPRange**: FIXED: Expect `50,203` range (20-80% per M-N1). `0198c00`
+- [x] **T4 — TestGenerateConfig**: FIXED: Match full dhcp-range directive format. `0198c00`
+- [x] **T5 — TestAnomalyDetector_SeverityEscalation**: FIXED: Expect `"high"` for rapid change. `0198c00`
+- [x] **T6 — TestIsToolAllowed**: FIXED: nil permissions = deny (M-S3). `0198c00`
 
 ### Other Items
 
-- [ ] **T7 — TestDropInGateway_Validate**: Validation assertion mismatch in service tests. Investigate and fix.
-- [ ] **T8 — TestMapVersionIncrement**: XDP stub mode returns version 0. Test expects >0. Guard test with stub-mode skip or fix version tracking.
+- [x] **T7 — TestDropInGateway_Validate**: FIXED: Use `"not-an-ip"` for DNS validation. `0198c00`
+- [x] **T8 — TestMapVersionIncrement**: FIXED: Stub mode version tracking + standard CIDR notation. `0198c00`

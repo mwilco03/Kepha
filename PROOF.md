@@ -139,42 +139,38 @@ table inet gatekeeper {
 
 ---
 
-## Unit Test Status
+## Unit Test Status — 16/16 PASS
 
-| Package | Result |
-|---------|--------|
-| internal/api | ✅ PASS |
-| internal/cli | ✅ PASS |
-| internal/config | ✅ PASS |
-| internal/ha | ✅ PASS |
-| internal/ipv6 | ✅ PASS |
-| internal/ops | ✅ PASS |
-| internal/plugin | ✅ PASS |
-| internal/rbac | ✅ PASS |
-| internal/web | ✅ PASS |
-| internal/backend | ❌ TestBackendCaps: name format mismatch |
-| internal/compiler | ❌ TestCompileICMPRestricted: stale assertion |
-| internal/driver | ❌ TestDeriveDHCPRange: range constant mismatch |
-| internal/inspect | ❌ TestAnomalyDetector: severity label mismatch |
-| internal/mcp | ❌ TestIsToolAllowed: stale tool list |
-| internal/service | ❌ TestDropInGateway_Validate: validation assertion |
-| internal/xdp | ❌ TestMapVersionIncrement: stub mode limitation |
+```
+ok   internal/api       9.789s
+ok   internal/backend   0.016s
+ok   internal/cli       0.059s
+ok   internal/compiler  0.010s
+ok   internal/config    12.742s
+ok   internal/driver    1.912s
+ok   internal/ha        0.006s
+ok   internal/inspect   0.016s
+ok   internal/ipv6      0.021s
+ok   internal/mcp       0.022s
+ok   internal/ops       16.160s
+ok   internal/plugin    0.019s
+ok   internal/rbac      15.309s
+ok   internal/service   1.585s
+ok   internal/web       5.988s
+ok   internal/xdp       0.009s
+```
 
-9/15 packages pass. 6 have test assertion mismatches (tests expect old values
-after code was updated). The tested *functionality* works — the assertions
-need updating to match current behavior.
+All 16 packages pass. Zero failures.
 
 ---
 
 ## Known Gaps
 
-1. **Test assertions stale**: 6 packages have tests expecting old string/value
-   formats after code improvements. Functionality verified live; tests need sync.
-2. **Lint**: Cannot run inside isolated container (no internet for golangci-lint download).
+1. **Lint**: Cannot run inside isolated test container (no internet for golangci-lint download).
    Runs clean on CT 107 (production container with internet).
-3. **IPv6**: Compiler TODO — IPv4 only for v1.
-4. **HA**: Stubs acknowledged in PLAN.md — not production-ready.
-5. **XDP**: Experimental stub — control plane only, no BPF programs attached.
+2. **IPv6**: Compiler TODO — IPv4 only for v1.
+3. **HA**: Stubs acknowledged in PLAN.md — not production-ready.
+4. **XDP**: Experimental stub — control plane only, no BPF programs attached.
 
 ---
 
