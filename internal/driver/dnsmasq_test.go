@@ -47,7 +47,7 @@ func TestGenerateConfig(t *testing.T) {
 	if !strings.Contains(conf, "interface=eth1") {
 		t.Error("missing LAN interface")
 	}
-	if !strings.Contains(conf, "dhcp-range=10.10.0.100,10.10.0.250") {
+	if !strings.Contains(conf, "dhcp-range=interface:eth1,10.10.0.50,10.10.0.203,12h") {
 		t.Error("missing DHCP range for LAN")
 	}
 	// WAN should not have DHCP.
@@ -74,8 +74,8 @@ func TestDeriveDHCPRange(t *testing.T) {
 	tests := []struct {
 		cidr, want string
 	}{
-		{"10.10.0.0/24", "10.10.0.100,10.10.0.250"},
-		{"192.168.1.0/24", "192.168.1.100,192.168.1.250"},
+		{"10.10.0.0/24", "10.10.0.50,10.10.0.203"},
+		{"192.168.1.0/24", "192.168.1.50,192.168.1.203"},
 		{"invalid", ""},
 		{"", ""},
 	}

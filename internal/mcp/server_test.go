@@ -109,11 +109,11 @@ func TestIsToolAllowed(t *testing.T) {
 		want        bool
 	}{
 		{
-			name:        "nil permissions allows everything",
+			name:        "nil permissions denies everything (default deny)",
 			permissions: nil,
 			principal:   "alice",
 			tool:        "list_zones",
-			want:        true,
+			want:        false,
 		},
 		{
 			name:        "principal not in map and no wildcard denies",

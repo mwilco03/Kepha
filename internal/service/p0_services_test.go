@@ -336,7 +336,7 @@ func TestDropInGateway_Validate(t *testing.T) {
 		},
 		{
 			name:    "invalid dns",
-			cfg:     map[string]string{"ip": "192.168.1.50", "gateway": "192.168.1.1", "subnet": "255.255.255.0", "dns": ""},
+			cfg:     map[string]string{"ip": "192.168.1.50", "gateway": "192.168.1.1", "subnet": "255.255.255.0", "dns": "not-an-ip"},
 			wantErr: true,
 		},
 	}

@@ -163,8 +163,8 @@ func TestBackendCaps(t *testing.T) {
 	b := NewNftablesBackend("/tmp/test-rulesets")
 	caps := b.Capabilities()
 
-	if caps.Name != "nftables" {
-		t.Errorf("name = %q, want nftables", caps.Name)
+	if caps.Name != "nftables (netlink)" {
+		t.Errorf("name = %q, want nftables (netlink)", caps.Name)
 	}
 	if !caps.Sets {
 		t.Error("expected Sets = true")

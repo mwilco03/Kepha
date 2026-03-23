@@ -290,9 +290,17 @@ func TestCompileICMPRestricted(t *testing.T) {
 	}
 	text := result.Text
 
-	// Should have restricted ICMP types, not blanket accept.
-	if strings.Contains(text, "ip protocol icmp accept") {
-		t.Error("blanket ICMP accept should not be present")
+	// Input chain should have restricted ICMP types, not blanket accept.
+	// (Output chain legitimately has blanket ICMP accept for appliance mode.)
+	inputChain := text
+	if idx := strings.Index(text, "chain input"); idx >= 0 {
+		endIdx := strings.Index(text[idx:], "\t}")
+		if endIdx > 0 {
+			inputChain = text[idx : idx+endIdx]
+		}
+	}
+	if strings.Contains(inputChain, "ip protocol icmp accept") {
+		t.Error("blanket ICMP accept should not be present in input chain")
 	}
 	for _, icmpType := range []string{"echo-reply", "destination-unreachable", "echo-request", "time-exceeded"} {
 		if !strings.Contains(text, icmpType) {

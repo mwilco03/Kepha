@@ -165,10 +165,10 @@ func TestAnomalyDetector_SeverityEscalation(t *testing.T) {
 
 	// First observation.
 	d.CheckFingerprint("10.0.0.1", "ja4", "hash1", "")
-	// First change = warning.
+	// First change within 5 minutes = high (rapid change detection).
 	a1 := d.CheckFingerprint("10.0.0.1", "ja4", "hash2", "")
-	if a1 == nil || a1.Severity != "warning" {
-		t.Errorf("first change severity = %q, want warning", a1.Severity)
+	if a1 == nil || a1.Severity != "high" {
+		t.Errorf("first change severity = %q, want high", a1.Severity)
 	}
 
 	// More changes escalate severity.
