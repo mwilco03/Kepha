@@ -157,9 +157,18 @@ func (p *PerformanceTuner) applySysctlTuning(cfg map[string]string) {
 		{"net.core.somaxconn", cfg["somaxconn"]},
 		// Enable IP forwarding (should already be on, but ensure it).
 		{"net.ipv4.ip_forward", "1"},
-		// Disable rp_filter on forwarding paths (allows asymmetric routing).
-		{"net.ipv4.conf.all.rp_filter", "0"},
-		{"net.ipv4.conf.default.rp_filter", "0"},
+		// Loose rp_filter for forwarding (allows asymmetric routing on WAN).
+		// Default interfaces keep strict mode; only all/default set to loose (2).
+		// Value 2 = loose mode (accepts if any interface could route the source).
+		{"net.ipv4.conf.all.rp_filter", "2"},
+		{"net.ipv4.conf.default.rp_filter", "2"},
+		// Hardening: reject ICMP redirects and source routing.
+		{"net.ipv4.conf.all.accept_redirects", "0"},
+		{"net.ipv4.conf.all.send_redirects", "0"},
+		{"net.ipv4.conf.all.accept_source_route", "0"},
+		{"net.ipv4.tcp_syncookies", "1"},
+		{"net.ipv4.conf.all.log_martians", "1"},
+		{"net.ipv4.icmp_echo_ignore_broadcasts", "1"},
 	}
 
 	// TCP Fast Open: 3 = enable for both client and server.

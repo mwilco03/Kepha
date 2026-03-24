@@ -108,7 +108,7 @@ function loadPeers() {
             var qrBtn = document.createElement('button');
             qrBtn.textContent = 'QR';
             qrBtn.className = 'btn btn-sm';
-            qrBtn.addEventListener('click', (function(key, n) { return function() { showQR(key, n); }; })(pk, name));
+            qrBtn.addEventListener('click', (function(key, n) { return function() { _qrTrigger = this; showQR(key, n); }; })(pk, name));
             actCell.appendChild(qrBtn);
             var delBtn = document.createElement('button');
             delBtn.textContent = 'Delete';
@@ -200,17 +200,26 @@ function showQR(pubkey, name) {
         qr.make();
         document.getElementById('qr-canvas').innerHTML = qr.createSvgTag(4);
 
-        document.getElementById('qr-modal').style.display = 'flex';
+        var modal = document.getElementById('qr-modal');
+        modal.style.display = 'flex';
+        modal.querySelector('button').focus();
     })
     .catch(function(err) { alert('Error generating config: ' + err); });
 }
 
+var _qrTrigger = null;
 function closeQR() {
     document.getElementById('qr-modal').style.display = 'none';
+    if (_qrTrigger) { _qrTrigger.focus(); _qrTrigger = null; }
 }
 
 document.getElementById('qr-modal').addEventListener('click', function(e) {
     if (e.target === this) closeQR();
+});
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape' && document.getElementById('qr-modal').style.display !== 'none') {
+        closeQR();
+    }
 });
 
 loadPeers();

@@ -893,12 +893,8 @@ func (b *NftablesBackend) compileRuleExprsList(r model.Rule, srcIface, wanIface 
 		&expr.Meta{Key: expr.MetaKeyIIFNAME, Register: 1},
 		&expr.Cmp{Op: expr.CmpOpEq, Register: 1, Data: ifname(srcIface)},
 	)
-	if wanIface != "" {
-		prefix = append(prefix,
-			&expr.Meta{Key: expr.MetaKeyOIFNAME, Register: 1},
-			&expr.Cmp{Op: expr.CmpOpEq, Register: 1, Data: ifname(wanIface)},
-		)
-	}
+	// Do NOT restrict oifname — rules apply to all forwarded traffic from
+	// the source zone, enabling inter-zone forwarding (LAN→DMZ, etc.).
 
 	// Source alias set lookup.
 	if r.SrcAlias != "" {

@@ -22,11 +22,18 @@ apk add --no-cache go make nftables dnsmasq iproute2 openssl wireguard-tools bas
     exit 1
 }
 
-# Create directories.
+# Create dedicated service user (runs with CAP_NET_ADMIN in LXC).
+addgroup -S gatekeeper 2>/dev/null || true
+adduser -S -G gatekeeper -H -s /sbin/nologin gatekeeper 2>/dev/null || true
+
+# Create directories with proper ownership.
 mkdir -p \
     "${DATA_DIR}" "${DATA_DIR}/rulesets" "${DATA_DIR}/plugins" \
     "${CONF_DIR}" "${CONF_DIR}/tls" "${DNSMASQ_DIR}" \
     /var/log/gatekeeper /run/gatekeeper
+chown -R gatekeeper:gatekeeper "${DATA_DIR}" /var/log/gatekeeper /run/gatekeeper
+chown -R root:gatekeeper "${CONF_DIR}"
+chmod 750 "${CONF_DIR}"
 
 # Build from source if binaries not present.
 if [ ! -f bin/gatekeeperd ]; then

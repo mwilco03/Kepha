@@ -87,7 +87,7 @@ fi
 echo ""
 echo "=== First Boot Complete ==="
 echo "API URL: https://$(hostname):8080"
-echo "API Key: $(cat "$API_KEY_FILE")"
+echo "API Key: stored at $API_KEY_FILE"
 echo ""
 echo "Quick start:"
 echo "  gk status                           # Check daemon status"

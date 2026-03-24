@@ -320,9 +320,10 @@ func (m *MultiWAN) checkWAN(target, iface, timeout string) bool {
 }
 
 func (m *MultiWAN) setDefaultRoute(gateway, iface string) {
-	// Remove existing default, add new.
-	Net.RouteDel("default", "", "")
-	Net.RouteAdd("default", gateway, iface)
+	// Atomic route replacement — no window without a default route.
+	if err := Net.RouteReplace(gateway, iface); err != nil {
+		slog.Error("multi-wan: failed to replace default route", "gw", gateway, "iface", iface, "error", err)
+	}
 }
 
 func boolState(up bool) string {

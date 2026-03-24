@@ -312,9 +312,9 @@ func compileRule(r model.Rule, srcIface, wanIface string, aliasMap map[string]*m
 
 	parts = append(parts, fmt.Sprintf("iifname %q", srcIface))
 
-	if wanIface != "" {
-		parts = append(parts, fmt.Sprintf("oifname %q", wanIface))
-	}
+	// Do NOT restrict oifname here — rules should apply to all forwarded
+	// traffic from this zone, not just WAN-bound. This enables inter-zone
+	// forwarding (LAN→DMZ, LAN→Guest, etc.).
 
 	proto := strings.ToLower(r.Protocol)
 	if proto != "" {
