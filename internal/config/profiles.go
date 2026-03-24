@@ -4,7 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 
-	"github.com/gatekeeper-firewall/gatekeeper/internal/model"
+	"github.com/mwilco03/kepha/internal/model"
 )
 
 func (s *Store) ListProfiles() ([]model.Profile, error) {

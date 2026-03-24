@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/gatekeeper-firewall/gatekeeper/internal/inspect"
+	"github.com/mwilco03/kepha/internal/inspect"
 )
 
 // iocHandlers implements the IOC management API.

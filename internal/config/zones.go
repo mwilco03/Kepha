@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"net"
 
-	"github.com/gatekeeper-firewall/gatekeeper/internal/model"
+	"github.com/mwilco03/kepha/internal/model"
 )
 
 func (s *Store) ListZones() ([]model.Zone, error) {

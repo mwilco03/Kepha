@@ -22,8 +22,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/gatekeeper-firewall/gatekeeper/internal/config"
-	"github.com/gatekeeper-firewall/gatekeeper/internal/model"
+	"github.com/mwilco03/kepha/internal/config"
+	"github.com/mwilco03/kepha/internal/model"
 )
 
 // FilterDecision is the result of checking a domain against content filters.

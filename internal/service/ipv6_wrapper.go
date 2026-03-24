@@ -1,7 +1,7 @@
 package service
 
 import (
-	"github.com/gatekeeper-firewall/gatekeeper/internal/ipv6"
+	"github.com/mwilco03/kepha/internal/ipv6"
 )
 
 // IPv6RAWrapper adapts ipv6.RouterAdvertisement to the service.Service interface.

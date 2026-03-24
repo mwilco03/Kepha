@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/gatekeeper-firewall/gatekeeper/internal/model"
+	"github.com/mwilco03/kepha/internal/model"
 )
 
 // Sanitize strips null bytes and trims whitespace from user input.

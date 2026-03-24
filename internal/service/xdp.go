@@ -7,7 +7,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/gatekeeper-firewall/gatekeeper/internal/xdp"
+	"github.com/mwilco03/kepha/internal/xdp"
 )
 
 // XDPService provides XDP/eBPF fast-path packet processing.

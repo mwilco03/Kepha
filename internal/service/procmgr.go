@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/gatekeeper-firewall/gatekeeper/internal/backend"
+	"github.com/mwilco03/kepha/internal/backend"
 )
 
 // Package-level dependencies for service DI. These are write-once globals:

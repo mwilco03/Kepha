@@ -26,7 +26,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gatekeeper-firewall/gatekeeper/internal/backend"
+	"github.com/mwilco03/kepha/internal/backend"
 )
 
 // Proc is the package-level ProcessManager for HA process management.

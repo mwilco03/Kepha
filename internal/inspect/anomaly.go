@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gatekeeper-firewall/gatekeeper/internal/validate"
+	"github.com/mwilco03/kepha/internal/validate"
 )
 
 // AnomalyDetector watches for fingerprint changes on known devices.

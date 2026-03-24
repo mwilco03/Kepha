@@ -8,7 +8,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/gatekeeper-firewall/gatekeeper/internal/inspect"
+	"github.com/mwilco03/kepha/internal/inspect"
 )
 
 // FingerprintService provides passive TLS fingerprinting and device profiling.

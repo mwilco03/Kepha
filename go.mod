@@ -1,4 +1,4 @@
-module github.com/gatekeeper-firewall/gatekeeper
+module github.com/mwilco03/kepha
 
 go 1.24.7
 

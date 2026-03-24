@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/gatekeeper-firewall/gatekeeper/internal/model"
+	"github.com/mwilco03/kepha/internal/model"
 )
 
 func basicInput() *Input {

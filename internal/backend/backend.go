@@ -10,7 +10,7 @@ package backend
 import (
 	"time"
 
-	"github.com/gatekeeper-firewall/gatekeeper/internal/compiler"
+	"github.com/mwilco03/kepha/internal/compiler"
 )
 
 // Firewall is the consumer-facing interface used by the API, web UI, MCP,

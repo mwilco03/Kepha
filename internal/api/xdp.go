@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/gatekeeper-firewall/gatekeeper/internal/service"
-	"github.com/gatekeeper-firewall/gatekeeper/internal/xdp"
+	"github.com/mwilco03/kepha/internal/service"
+	"github.com/mwilco03/kepha/internal/xdp"
 )
 
 // xdpHandlers handles XDP API endpoints.

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/gatekeeper-firewall/gatekeeper/internal/config"
+	"github.com/mwilco03/kepha/internal/config"
 )
 
 func newTestHandler(t *testing.T) http.Handler {

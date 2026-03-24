@@ -11,7 +11,7 @@ import (
 	nft "github.com/google/nftables"
 	"github.com/google/nftables/expr"
 
-	"github.com/gatekeeper-firewall/gatekeeper/internal/model"
+	"github.com/mwilco03/kepha/internal/model"
 )
 
 // Common MTU values for reference:

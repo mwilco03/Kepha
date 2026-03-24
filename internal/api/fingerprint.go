@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/gatekeeper-firewall/gatekeeper/internal/inspect"
-	"github.com/gatekeeper-firewall/gatekeeper/internal/service"
+	"github.com/mwilco03/kepha/internal/inspect"
+	"github.com/mwilco03/kepha/internal/service"
 )
 
 // fingerprintHandlers handles fingerprint API endpoints.

@@ -12,14 +12,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gatekeeper-firewall/gatekeeper/internal/backend"
-	"github.com/gatekeeper-firewall/gatekeeper/internal/compiler"
-	"github.com/gatekeeper-firewall/gatekeeper/internal/config"
-	"github.com/gatekeeper-firewall/gatekeeper/internal/driver"
-	"github.com/gatekeeper-firewall/gatekeeper/internal/model"
-	"github.com/gatekeeper-firewall/gatekeeper/internal/ops"
-	"github.com/gatekeeper-firewall/gatekeeper/internal/rbac"
-	"github.com/gatekeeper-firewall/gatekeeper/internal/service"
+	"github.com/mwilco03/kepha/internal/backend"
+	"github.com/mwilco03/kepha/internal/compiler"
+	"github.com/mwilco03/kepha/internal/config"
+	"github.com/mwilco03/kepha/internal/driver"
+	"github.com/mwilco03/kepha/internal/model"
+	"github.com/mwilco03/kepha/internal/ops"
+	"github.com/mwilco03/kepha/internal/rbac"
+	"github.com/mwilco03/kepha/internal/service"
 )
 
 // paginateAndRespond handles the common in-memory pagination pattern.

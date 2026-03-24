@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gatekeeper-firewall/gatekeeper/internal/validate"
+	"github.com/mwilco03/kepha/internal/validate"
 	"golang.org/x/crypto/curve25519"
 	"golang.zx2c4.com/wireguard/wgctrl"
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"

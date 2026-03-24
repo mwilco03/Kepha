@@ -3,7 +3,7 @@ package api
 import (
 	"net/http"
 
-	"github.com/gatekeeper-firewall/gatekeeper/internal/service"
+	"github.com/mwilco03/kepha/internal/service"
 )
 
 // serviceHandlers provides API endpoints for service management.

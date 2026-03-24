@@ -14,8 +14,8 @@ import (
 	nft "github.com/google/nftables"
 	"github.com/google/nftables/expr"
 
-	"github.com/gatekeeper-firewall/gatekeeper/internal/backend"
-	"github.com/gatekeeper-firewall/gatekeeper/internal/validate"
+	"github.com/mwilco03/kepha/internal/backend"
+	"github.com/mwilco03/kepha/internal/validate"
 )
 
 // IDS provides Intrusion Detection and Prevention via Suricata.

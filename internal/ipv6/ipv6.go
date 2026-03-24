@@ -14,7 +14,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/gatekeeper-firewall/gatekeeper/internal/backend"
+	"github.com/mwilco03/kepha/internal/backend"
 )
 
 // Proc is the package-level ProcessManager for IPv6 service management.

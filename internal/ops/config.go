@@ -3,7 +3,7 @@ package ops
 import (
 	"fmt"
 
-	"github.com/gatekeeper-firewall/gatekeeper/internal/config"
+	"github.com/mwilco03/kepha/internal/config"
 )
 
 // Revision is a simplified config revision for listing.

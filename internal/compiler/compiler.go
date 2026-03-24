@@ -6,8 +6,8 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/gatekeeper-firewall/gatekeeper/internal/model"
-	"github.com/gatekeeper-firewall/gatekeeper/internal/validate"
+	"github.com/mwilco03/kepha/internal/model"
+	"github.com/mwilco03/kepha/internal/validate"
 )
 
 // validIfaceName matches valid Linux interface names (alphanumeric, dash, underscore, dot; max 15 chars).

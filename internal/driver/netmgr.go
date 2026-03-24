@@ -1,6 +1,6 @@
 package driver
 
-import "github.com/gatekeeper-firewall/gatekeeper/internal/backend"
+import "github.com/mwilco03/kepha/internal/backend"
 
 // WGNet is the package-level NetworkManager used by the WireGuard driver for
 // interface and address management via netlink. Set by the daemon at startup

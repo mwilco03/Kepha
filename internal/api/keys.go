@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/gatekeeper-firewall/gatekeeper/internal/rbac"
+	"github.com/mwilco03/kepha/internal/rbac"
 )
 
 // keyHandlers implements the RBAC key management API endpoints.

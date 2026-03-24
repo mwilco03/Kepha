@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/gatekeeper-firewall/gatekeeper/internal/driver"
-	"github.com/gatekeeper-firewall/gatekeeper/internal/validate"
+	"github.com/mwilco03/kepha/internal/driver"
+	"github.com/mwilco03/kepha/internal/validate"
 )
 
 // WGManager abstracts WireGuard peer operations (H24).

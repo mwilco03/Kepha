@@ -3,8 +3,8 @@ package ops
 import (
 	"fmt"
 
-	"github.com/gatekeeper-firewall/gatekeeper/internal/model"
-	"github.com/gatekeeper-firewall/gatekeeper/internal/validate"
+	"github.com/mwilco03/kepha/internal/model"
+	"github.com/mwilco03/kepha/internal/validate"
 )
 
 // ListDevices returns all device assignments. Read-only.

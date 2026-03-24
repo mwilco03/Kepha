@@ -5,9 +5,10 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
-	"github.com/gatekeeper-firewall/gatekeeper/internal/validate"
+	"github.com/mwilco03/kepha/internal/validate"
 )
 
 // Countermeasures implements active defense techniques that impose costs
@@ -74,7 +75,7 @@ type CountermeasurePolicy struct {
 	Source      string            `json:"source"`       // "manual", "threat_feed", "anomaly"
 	CreatedAt   time.Time         `json:"created_at"`
 	ExpiresAt   time.Time         `json:"expires_at"`   // Zero = permanent
-	HitCount    uint64            `json:"hit_count"`
+	HitCount    atomic.Uint64     `json:"hit_count"`
 	Active      bool              `json:"active"`
 }
 
@@ -286,7 +287,18 @@ func (c *Countermeasures) ListPolicies() []CountermeasurePolicy {
 		if !p.ExpiresAt.IsZero() && now.After(p.ExpiresAt) {
 			continue
 		}
-		result = append(result, *p)
+		// Manual copy — atomic.Uint64 cannot be copied by value.
+		cp := CountermeasurePolicy{
+			Target:     p.Target,
+			Techniques: p.Techniques,
+			Reason:     p.Reason,
+			Source:     p.Source,
+			CreatedAt:  p.CreatedAt,
+			ExpiresAt:  p.ExpiresAt,
+			Active:     p.Active,
+		}
+		cp.HitCount.Store(p.HitCount.Load())
+		result = append(result, cp)
 	}
 	return result
 }
@@ -302,7 +314,7 @@ func (c *Countermeasures) Evaluate(srcIP string) *CountermeasurePolicy {
 	// Exact IP match first.
 	if p, ok := c.policies[srcIP]; ok {
 		if p.Active && (p.ExpiresAt.IsZero() || now.Before(p.ExpiresAt)) {
-			p.HitCount++
+			p.HitCount.Add(1)
 			return p
 		}
 	}
@@ -313,7 +325,7 @@ func (c *Countermeasures) Evaluate(srcIP string) *CountermeasurePolicy {
 			continue
 		}
 		if matchCIDRSimple(srcIP, p.Target) {
-			p.HitCount++
+			p.HitCount.Add(1)
 			return p
 		}
 	}

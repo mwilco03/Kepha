@@ -12,8 +12,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gatekeeper-firewall/gatekeeper/internal/compiler"
-	"github.com/gatekeeper-firewall/gatekeeper/internal/model"
+	"github.com/mwilco03/kepha/internal/compiler"
+	"github.com/mwilco03/kepha/internal/model"
 	nft "github.com/google/nftables"
 	"github.com/google/nftables/expr"
 )

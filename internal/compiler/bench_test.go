@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/gatekeeper-firewall/gatekeeper/internal/model"
+	"github.com/mwilco03/kepha/internal/model"
 )
 
 func buildBenchInput(nZones, nAliases, nPolicies, rulesPerPolicy, nDevices int) *Input {

@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gatekeeper-firewall/gatekeeper/internal/compiler"
-	"github.com/gatekeeper-firewall/gatekeeper/internal/config"
+	"github.com/mwilco03/kepha/internal/compiler"
+	"github.com/mwilco03/kepha/internal/config"
 )
 
 // FirewallController implements the Firewall interface by combining a

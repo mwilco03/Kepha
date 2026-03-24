@@ -15,7 +15,7 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/gatekeeper-firewall/gatekeeper/internal/config"
+	"github.com/mwilco03/kepha/internal/config"
 )
 
 // Sentinel errors for the ops layer. Use errors.Is() in handlers

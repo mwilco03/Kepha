@@ -19,11 +19,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gatekeeper-firewall/gatekeeper/internal/backend"
-	"github.com/gatekeeper-firewall/gatekeeper/internal/config"
-	"github.com/gatekeeper-firewall/gatekeeper/internal/driver"
-	"github.com/gatekeeper-firewall/gatekeeper/internal/model"
-	"github.com/gatekeeper-firewall/gatekeeper/internal/service"
+	"github.com/mwilco03/kepha/internal/backend"
+	"github.com/mwilco03/kepha/internal/config"
+	"github.com/mwilco03/kepha/internal/driver"
+	"github.com/mwilco03/kepha/internal/model"
+	"github.com/mwilco03/kepha/internal/service"
 )
 
 const sessionCookieName = "gk_session"

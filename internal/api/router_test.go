@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/gatekeeper-firewall/gatekeeper/internal/config"
+	"github.com/mwilco03/kepha/internal/config"
 )
 
 func newTestRouter(t *testing.T) (http.Handler, *config.Store) {

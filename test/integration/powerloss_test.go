@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/gatekeeper-firewall/gatekeeper/internal/config"
-	"github.com/gatekeeper-firewall/gatekeeper/internal/model"
+	"github.com/mwilco03/kepha/internal/config"
+	"github.com/mwilco03/kepha/internal/model"
 )
 
 // TestPowerLossRecovery simulates a crash during commit by:

@@ -707,8 +707,9 @@ func (v *VPNProvider) startTailscale(cfg map[string]string) error {
 	// Ensure tailscaled is running.
 	Proc.Start("tailscaled")
 
-	// Build tailscale up command.
-	args := []string{"up", "--authkey=" + cfg["tailscale_auth_key"], "--reset"}
+	// Build tailscale up command. Auth key passed via environment variable
+	// to avoid exposing it in the process argument list (ps aux / /proc/*/cmdline).
+	args := []string{"up", "--reset"}
 
 	if routes := cfg["tailscale_advertise_routes"]; routes != "" {
 		args = append(args, "--advertise-routes="+routes)
@@ -723,21 +724,29 @@ func (v *VPNProvider) startTailscale(cfg map[string]string) error {
 		args = append(args, "--hostname="+hostname)
 	}
 
-	out, err := exec.Command("tailscale", args...).CombinedOutput()
+	cmd := exec.Command("tailscale", args...)
+	cmd.Env = append(os.Environ(), "TS_AUTHKEY="+cfg["tailscale_auth_key"])
+	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("tailscale up: %s: %w", string(out), err)
 	}
 
 	// Enable IP forwarding for subnet routing / exit node via /proc/sys.
-	os.WriteFile("/proc/sys/net/ipv4/ip_forward", []byte("1"), 0o644)
-	os.WriteFile("/proc/sys/net/ipv6/conf/all/forwarding", []byte("1"), 0o644)
+	if err := os.WriteFile("/proc/sys/net/ipv4/ip_forward", []byte("1"), 0o644); err != nil {
+		return fmt.Errorf("enable ipv4 forwarding: %w", err)
+	}
+	if err := os.WriteFile("/proc/sys/net/ipv6/conf/all/forwarding", []byte("1"), 0o644); err != nil {
+		slog.Warn("enable ipv6 forwarding failed", "error", err)
+	}
 
 	slog.Info("tailscale connected")
 	return nil
 }
 
 func (v *VPNProvider) stopTailscale() {
-	exec.Command("tailscale", "down").Run()
+	if err := exec.Command("tailscale", "down").Run(); err != nil {
+		slog.Warn("tailscale down failed", "error", err)
+	}
 	slog.Info("tailscale disconnected")
 }
 

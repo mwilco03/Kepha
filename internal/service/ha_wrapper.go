@@ -1,7 +1,7 @@
 package service
 
 import (
-	"github.com/gatekeeper-firewall/gatekeeper/internal/ha"
+	"github.com/mwilco03/kepha/internal/ha"
 )
 
 // HAWrapper adapts ha.HAManager to satisfy the service.Service interface.

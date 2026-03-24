@@ -24,12 +24,12 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/gatekeeper-firewall/gatekeeper/internal/backend"
-	"github.com/gatekeeper-firewall/gatekeeper/internal/compiler"
-	"github.com/gatekeeper-firewall/gatekeeper/internal/driver"
-	"github.com/gatekeeper-firewall/gatekeeper/internal/model"
-	"github.com/gatekeeper-firewall/gatekeeper/internal/ops"
-	"github.com/gatekeeper-firewall/gatekeeper/internal/service"
+	"github.com/mwilco03/kepha/internal/backend"
+	"github.com/mwilco03/kepha/internal/compiler"
+	"github.com/mwilco03/kepha/internal/driver"
+	"github.com/mwilco03/kepha/internal/model"
+	"github.com/mwilco03/kepha/internal/ops"
+	"github.com/mwilco03/kepha/internal/service"
 )
 
 // ToolCategory classifies tools by risk level and required controls.

@@ -3,7 +3,7 @@ package compiler
 import (
 	"testing"
 
-	"github.com/gatekeeper-firewall/gatekeeper/internal/model"
+	"github.com/mwilco03/kepha/internal/model"
 )
 
 func FuzzCompile(f *testing.F) {

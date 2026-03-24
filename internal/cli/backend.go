@@ -11,11 +11,11 @@ package cli
 import (
 	"time"
 
-	"github.com/gatekeeper-firewall/gatekeeper/internal/compiler"
-	"github.com/gatekeeper-firewall/gatekeeper/internal/config"
-	"github.com/gatekeeper-firewall/gatekeeper/internal/driver"
-	"github.com/gatekeeper-firewall/gatekeeper/internal/model"
-	"github.com/gatekeeper-firewall/gatekeeper/internal/ops"
+	"github.com/mwilco03/kepha/internal/compiler"
+	"github.com/mwilco03/kepha/internal/config"
+	"github.com/mwilco03/kepha/internal/driver"
+	"github.com/mwilco03/kepha/internal/model"
+	"github.com/mwilco03/kepha/internal/ops"
 )
 
 // Backend defines the operations the CLI can perform. Both DirectBackend

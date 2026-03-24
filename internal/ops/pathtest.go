@@ -3,7 +3,7 @@ package ops
 import (
 	"fmt"
 
-	"github.com/gatekeeper-firewall/gatekeeper/internal/compiler"
+	"github.com/mwilco03/kepha/internal/compiler"
 )
 
 // BuildCompilerInput loads all config needed for compilation or path testing.

@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gatekeeper-firewall/gatekeeper/internal/api"
-	"github.com/gatekeeper-firewall/gatekeeper/internal/config"
-	"github.com/gatekeeper-firewall/gatekeeper/internal/model"
+	"github.com/mwilco03/kepha/internal/api"
+	"github.com/mwilco03/kepha/internal/config"
+	"github.com/mwilco03/kepha/internal/model"
 )
 
 // setup creates a test server with a fresh seeded database.

@@ -15,9 +15,9 @@ import (
 
 	"strconv"
 
-	"github.com/gatekeeper-firewall/gatekeeper/internal/config"
-	"github.com/gatekeeper-firewall/gatekeeper/internal/model"
-	"github.com/gatekeeper-firewall/gatekeeper/internal/validate"
+	"github.com/mwilco03/kepha/internal/config"
+	"github.com/mwilco03/kepha/internal/model"
+	"github.com/mwilco03/kepha/internal/validate"
 )
 
 // Dnsmasq manages dnsmasq configuration for DHCP and DNS.
