@@ -1,7 +1,6 @@
 package api
 
 import (
-	"encoding/json"
 	"net/http"
 
 	"github.com/mwilco03/kepha/internal/service"
@@ -85,7 +84,7 @@ func (xh *xdpHandlers) addBlocklistEntry(w http.ResponseWriter, r *http.Request)
 	}
 
 	var entry xdp.BlocklistEntry
-	if err := json.NewDecoder(r.Body).Decode(&entry); err != nil {
+	if err := readJSON(r, &entry); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
 		return
 	}
@@ -149,7 +148,7 @@ func (xh *xdpHandlers) addACLRule(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var rule xdp.ACLRule
-	if err := json.NewDecoder(r.Body).Decode(&rule); err != nil {
+	if err := readJSON(r, &rule); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
 		return
 	}

@@ -592,7 +592,7 @@ func routeAction(method, path string) string {
 
 	// Unauthenticated endpoints.
 	switch path {
-	case "/api/v1/status", "/api/v1/healthz", "/api/v1/readyz", "/api/v1/metrics":
+	case "/api/v1/status", "/api/v1/healthz", "/api/v1/readyz":
 		return ""
 	}
 
@@ -696,6 +696,46 @@ func routeAction(method, path string) string {
 	// MCP websocket/SSE endpoint.
 	case strings.HasPrefix(path, "/api/v1/mcp"):
 		return ActionMCPConnect
+
+	// Metrics — requires auth (exposes uptime, request counts, goroutine info).
+	case path == "/api/v1/metrics":
+		return ActionDiagRead
+
+	// IOCs / threat intelligence.
+	case strings.HasPrefix(path, "/api/v1/iocs"):
+		if isWrite {
+			return ActionServicesWrite
+		}
+		return ActionServicesRead
+
+	// Fingerprints.
+	case strings.HasPrefix(path, "/api/v1/fingerprints"):
+		return ActionDiagRead
+
+	// XDP / countermeasures.
+	case strings.HasPrefix(path, "/api/v1/xdp"):
+		if isWrite {
+			return ActionServicesWrite
+		}
+		return ActionServicesRead
+
+	// API keys management.
+	case strings.HasPrefix(path, "/api/v1/keys"):
+		if isWrite {
+			return ActionConfigCommit
+		}
+		return ActionConfigExport
+
+	// MTU management.
+	case strings.HasPrefix(path, "/api/v1/mtu"):
+		if isWrite {
+			return ActionServicesWrite
+		}
+		return ActionServicesRead
+
+	// Performance / NIC info.
+	case strings.HasPrefix(path, "/api/v1/perf"):
+		return ActionDiagRead
 	}
 
 	// Unknown path: deny by default by returning a non-existent action

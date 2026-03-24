@@ -3,6 +3,7 @@ package api
 import (
 	"crypto/subtle"
 	"log/slog"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -129,7 +130,10 @@ func (rl *RateLimiter) cleanup() {
 // Middleware returns an HTTP middleware that rate-limits by client IP.
 func (rl *RateLimiter) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ip := r.RemoteAddr
+		ip, _, _ := net.SplitHostPort(r.RemoteAddr)
+		if ip == "" {
+			ip = r.RemoteAddr
+		}
 		if !rl.allow(ip) {
 			writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "rate limit exceeded"})
 			return

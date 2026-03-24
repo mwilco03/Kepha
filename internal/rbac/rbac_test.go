@@ -405,7 +405,7 @@ func TestRouteAction(t *testing.T) {
 		{"status", "GET", "/api/v1/status", ""},
 		{"healthz", "GET", "/api/v1/healthz", ""},
 		{"readyz", "GET", "/api/v1/readyz", ""},
-		{"metrics", "GET", "/api/v1/metrics", ""},
+		{"metrics", "GET", "/api/v1/metrics", ActionDiagRead},
 		{"status_trailing_slash", "GET", "/api/v1/status/", ""},
 		{"healthz_trailing_slash", "GET", "/api/v1/healthz/", ""},
 
@@ -1279,7 +1279,7 @@ func TestRBACMiddleware(t *testing.T) {
 	mw := RBACMiddleware(e)(handler)
 
 	t.Run("unauthenticated_endpoint_no_key", func(t *testing.T) {
-		for _, path := range []string{"/api/v1/healthz", "/api/v1/status", "/api/v1/readyz", "/api/v1/metrics"} {
+		for _, path := range []string{"/api/v1/healthz", "/api/v1/status", "/api/v1/readyz"} {
 			r := httptest.NewRequest("GET", path, nil)
 			w := httptest.NewRecorder()
 			mw.ServeHTTP(w, r)

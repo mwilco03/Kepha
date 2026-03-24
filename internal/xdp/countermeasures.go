@@ -271,8 +271,11 @@ func (c *Countermeasures) RemovePolicy(target string) error {
 func (c *Countermeasures) GetPolicy(target string) *CountermeasurePolicy {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	p := c.policies[target]
-	return p
+	p, ok := c.policies[target]
+	if !ok {
+		return nil
+	}
+	return copyPolicy(p)
 }
 
 // ListPolicies returns all active countermeasure policies.
@@ -287,24 +290,28 @@ func (c *Countermeasures) ListPolicies() []CountermeasurePolicy {
 		if !p.ExpiresAt.IsZero() && now.After(p.ExpiresAt) {
 			continue
 		}
-		// Manual copy — atomic.Uint64 cannot be copied by value.
-		cp := CountermeasurePolicy{
-			Target:     p.Target,
-			Techniques: p.Techniques,
-			Reason:     p.Reason,
-			Source:     p.Source,
-			CreatedAt:  p.CreatedAt,
-			ExpiresAt:  p.ExpiresAt,
-			Active:     p.Active,
-		}
-		cp.HitCount.Store(p.HitCount.Load())
-		result = append(result, cp)
+		result = append(result, *copyPolicy(p))
 	}
 	return result
 }
 
+// copyPolicy returns a safe copy of a policy. Callers must not hold references to internal state.
+func copyPolicy(p *CountermeasurePolicy) *CountermeasurePolicy {
+	cp := CountermeasurePolicy{
+		Target:     p.Target,
+		Techniques: p.Techniques,
+		Reason:     p.Reason,
+		Source:     p.Source,
+		CreatedAt:  p.CreatedAt,
+		ExpiresAt:  p.ExpiresAt,
+		Active:     p.Active,
+	}
+	cp.HitCount.Store(p.HitCount.Load())
+	return &cp
+}
+
 // Evaluate determines what countermeasures should be applied to an IP.
-// Returns nil if no countermeasures apply.
+// Returns nil if no countermeasures apply. Returns a copy — safe for concurrent use.
 func (c *Countermeasures) Evaluate(srcIP string) *CountermeasurePolicy {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -315,7 +322,7 @@ func (c *Countermeasures) Evaluate(srcIP string) *CountermeasurePolicy {
 	if p, ok := c.policies[srcIP]; ok {
 		if p.Active && (p.ExpiresAt.IsZero() || now.Before(p.ExpiresAt)) {
 			p.HitCount.Add(1)
-			return p
+			return copyPolicy(p)
 		}
 	}
 
@@ -326,7 +333,7 @@ func (c *Countermeasures) Evaluate(srcIP string) *CountermeasurePolicy {
 		}
 		if matchCIDRSimple(srcIP, p.Target) {
 			p.HitCount.Add(1)
-			return p
+			return copyPolicy(p)
 		}
 	}
 

@@ -620,7 +620,10 @@ func (v *VPNProvider) startOpenVPN(cfg map[string]string) error {
 	// Write auth file if needed.
 	var authPath string
 	if cfg["username"] != "" && cfg["password"] != "" {
-		authFile, err := os.CreateTemp("", "gk-vpn-auth-*.txt")
+		// Create temp file with 0600 from the start — no TOCTOU window.
+		authFile, err := os.OpenFile(
+			filepath.Join(os.TempDir(), "gk-vpn-auth-"+fmt.Sprintf("%d", os.Getpid())+".txt"),
+			os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 		if err != nil {
 			return fmt.Errorf("create auth temp file: %w", err)
 		}
@@ -632,10 +635,6 @@ func (v *VPNProvider) startOpenVPN(cfg map[string]string) error {
 			return fmt.Errorf("write auth file: %w", err)
 		}
 		authFile.Close()
-		if err := os.Chmod(authPath, 0o600); err != nil {
-			os.Remove(authPath)
-			return fmt.Errorf("chmod auth file: %w", err)
-		}
 	}
 
 	// openvpn is a third-party daemon that must be managed via CLI.

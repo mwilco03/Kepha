@@ -1,7 +1,6 @@
 package api
 
 import (
-	"encoding/json"
 	"net/http"
 
 	"github.com/mwilco03/kepha/internal/rbac"
@@ -39,7 +38,7 @@ func (kh *keyHandlers) createKey(w http.ResponseWriter, r *http.Request) {
 		ZoneScope    []string `json:"zone_scope"`
 		ProfileScope []string `json:"profile_scope"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := readJSON(r, &req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}

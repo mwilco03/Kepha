@@ -1,8 +1,9 @@
 package api
 
 import (
-	"encoding/json"
 	"net/http"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/mwilco03/kepha/internal/inspect"
@@ -62,7 +63,7 @@ func (ih *iocHandlers) addIOC(w http.ResponseWriter, r *http.Request) {
 		Tags      []string            `json:"tags"`
 		ExpiresIn string              `json:"expires_in"` // Duration string (e.g. "24h", "1h30m")
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if err := readJSON(r, &body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
 		return
 	}
@@ -102,7 +103,7 @@ func (ih *iocHandlers) bulkAddIOCs(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		IOCs []inspect.IOC `json:"iocs"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if err := readJSON(r, &body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
 		return
 	}
@@ -198,7 +199,7 @@ func (ih *iocHandlers) listTemplates(w http.ResponseWriter, r *http.Request) {
 // POST /api/v1/iocs/templates
 func (ih *iocHandlers) addTemplate(w http.ResponseWriter, r *http.Request) {
 	var tmpl inspect.ResponseTemplate
-	if err := json.NewDecoder(r.Body).Decode(&tmpl); err != nil {
+	if err := readJSON(r, &tmpl); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
 		return
 	}
@@ -267,13 +268,19 @@ func (ih *iocHandlers) mmdbConfig(w http.ResponseWriter, r *http.Request) {
 		LicenseKey string `json:"license_key"`
 		Path       string `json:"path"` // Manual mmdb file path.
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if err := readJSON(r, &body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
 		return
 	}
 
 	if body.Path != "" {
-		if err := ih.updater.LoadFromPath(body.Path); err != nil {
+		// Validate path: must be absolute, no traversal, must end in .mmdb.
+		cleaned := filepath.Clean(body.Path)
+		if strings.Contains(cleaned, "..") || !strings.HasSuffix(cleaned, ".mmdb") {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid mmdb path"})
+			return
+		}
+		if err := ih.updater.LoadFromPath(cleaned); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}

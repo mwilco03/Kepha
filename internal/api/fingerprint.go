@@ -115,7 +115,7 @@ func (fh *fingerprintHandlers) assignProfile(w http.ResponseWriter, r *http.Requ
 	var body struct {
 		Profile string `json:"profile"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if err := readJSON(r, &body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
 		return
 	}

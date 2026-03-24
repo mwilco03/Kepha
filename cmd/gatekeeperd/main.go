@@ -341,6 +341,8 @@ func main() {
 		mcpHandler = mcpSrv.Handler()
 		if *apiKey != "" {
 			mcpHandler = api.AuthMiddleware(*apiKey, mcpHandler)
+		} else if enforcer != nil {
+			mcpHandler = rbac.RBACMiddleware(enforcer)(mcpHandler)
 		}
 		slog.Info("MCP server enabled")
 	}
