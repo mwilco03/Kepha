@@ -1,9 +1,9 @@
 # Gatekeeper Punchlist
 
 **Goal:** Production-ready network firewall appliance deployment.
-**Status:** REOPENED — 148/148 original + 8 test fixes resolved. 55 new frontend findings from 6-agent audit.
+**Status:** REOPENED — 148 original + 8 test fixes resolved. 55 frontend + ~120 backend/infra findings from 17-agent audit.
 **Updated:** 2026-03-24
-**Total commits:** 255
+**Total commits:** 256
 **Dependabot:** Active (6 PRs for dependency updates)
 **OpenAPI:** 103/103 endpoints documented (100%)
 **Smoke test:** 16/16 PASS — health, readiness, auth, zones, nft chains (input/forward/output/NAT), bogon set, web UI, metrics, CLI, logs, ICMP, TLS
@@ -365,3 +365,211 @@ Found by 6 parallel agents: Frontend Engineer, Frontend Developer, Accessibility
 | **Total** | **55** |
 
 **Audited by:** Frontend Engineer, Frontend Developer, Accessibility Auditor, CSS & Design System Engineer, UX Designer, Web Performance Engineer.
+
+---
+
+## BACKEND / INFRASTRUCTURE AUDIT FINDINGS (2026-03-24)
+
+Found by 11 parallel agents: Network Engineer, Systems Administrator, Backend Architect, Software Architect, Database Optimizer, API Tester, Coding Policy Enforcer, Code Reviewer, Testing & Verification Engineer, Reality Checker, Evidence Collector.
+
+### CRITICAL — Security (8 items)
+
+- [ ] **BE-C1 — MCP server unauthenticated under RBAC mode**: `main.go:341-344` — MCP handler only wrapped with AuthMiddleware when `apiKey != ""`. With `--enable-rbac`, MCP is fully unauthenticated. Fix: wrap with RBACMiddleware when enforcer is set.
+- [ ] **BE-C2 — Rate limiter uses RemoteAddr with port — ineffective**: `middleware.go:132` — each TCP connection gets a fresh bucket. Fix: strip port via `net.SplitHostPort`.
+- [ ] **BE-C3 — 8 endpoints bypass 1MB body limit**: `fingerprint.go:118`, `xdp.go:88,152`, `keys.go:42`, `ioc.go:65,105,201,270` — use `json.NewDecoder(r.Body)` directly instead of `readJSON()`. Fix: replace with `readJSON()`.
+- [ ] **BE-C4 — RBAC missing route mappings for IOC/fingerprint/XDP/keys/MTU/perf**: `rbac.go:589-703` — all return `"unknown:unknown"`, blocked for all roles including admin. Fix: add case branches + new actions.
+- [ ] **BE-C5 — mmdb config endpoint allows arbitrary file path reads**: `ioc.go:275-279` — `body.Path` passed directly to `LoadFromPath()`. Fix: validate against allowlist, reject `..`.
+- [ ] **BE-C6 — Metrics endpoint unauthenticated in RBAC mode**: `rbac.go:595` exempts `/api/v1/metrics`. Fix: remove from unauthenticated list, add `ActionMetricsRead`.
+- [ ] **BE-C7 — VPN auth credentials temp file TOCTOU**: `vpn_provider.go:623-638` — `CreateTemp` then `Chmod`. Fix: use `os.OpenFile` with `0o600` from the start.
+- [ ] **BE-C8 — GetPolicy/Evaluate return internal mutable pointers**: `countermeasures.go:271-276,308-320` — callers get live references to map values under RLock. Fix: return copies like ListPolicies does.
+
+### CRITICAL — Network Correctness (5 items)
+
+- [ ] **NET-C1 — Forward chain forces WAN oifname — blocks inter-zone forwarding**: `firewall_nftables.go:896-900`, `compiler.go:315-317` — all forward rules match `oifname <wan>` only. LAN-to-DMZ, LAN-to-Guest traffic is dropped. Fix: only add oifname when destination zone IS the WAN.
+- [ ] **NET-C2 — Port forwarding DNAT missing from netlink backend**: `compiler.go:268-296` generates prerouting chain but `firewall_nftables.go` has no `buildPreroutingChain`. Port forwards silently fail in production. Fix: add `buildPreroutingChain` to netlink backend.
+- [ ] **NET-C3 — dnsmasq only listens on 127.0.0.1**: `dnsmasq.go:184` — LAN clients can't reach DNS. Fix: remove `listen-address=127.0.0.1`, rely on `bind-dynamic` + `interface=` directives.
+- [ ] **NET-C4 — Multi-WAN default route race**: `multiwan.go:322-326` — `RouteDel` then `RouteAdd` is non-atomic. If add fails, no default route. Fix: use `RouteReplace`.
+- [ ] **NET-C5 — Reverse path filtering disabled globally**: `performance.go:160-162` — `rp_filter=0` on all interfaces, removing kernel anti-spoof. Fix: set per-interface (`rp_filter=0` on WAN only).
+
+### CRITICAL — Data Integrity (4 items)
+
+- [ ] **DB-C1 — Export() not transactional — inconsistent snapshots**: `revisions.go:118-153` — 5 separate queries with no transaction. Fix: wrap in read transaction.
+- [ ] **DB-C2 — Commit() calls Export() outside its transaction**: `revisions.go:18-55` — snapshot can be stale by INSERT time. Fix: move Export inside the transaction.
+- [ ] **DB-C3 — CIDR overlap check in CreateZone/UpdateZone is TOCTOU**: `zones.go:43-59,90-103` — read-then-write without transaction. Fix: wrap check+insert in single tx.
+- [ ] **DB-C4 — DeleteZone profile-count check + DELETE is TOCTOU**: `zones.go:126-136` — same pattern. Fix: wrap in transaction or rely on FK constraint.
+
+### CRITICAL — Architecture (2 items)
+
+- [ ] **ARCH-C1 — Device-profile rules not enforced in compiled ruleset**: `compiler.go` builds `profileDevices` but never uses it. All devices on an interface share the same rules regardless of profile. Per-device policy is cosmetic. Fix: emit `ip saddr <device_ip>` rules scoped to each device's assigned profile.
+- [ ] **ARCH-C2 — Dual code path: text compiler vs netlink backend can diverge**: DryRun shows text compiler output, Apply uses netlink code. Different code generates the rules. Fix: generate both from shared IR, or verify post-apply.
+
+### CRITICAL — Systems Admin (3 items)
+
+- [ ] **SYS-C1 — No dedicated service user on Alpine (primary platform)**: `install-alpine.sh` — daemon runs as root with zero privilege restriction. OpenRC init has no `command_user` or capability dropping. Fix: create `gatekeeper` user, restrict capabilities.
+- [ ] **SYS-C2 — first-boot.sh prints API key to stdout**: `first-boot.sh:90` — key appears in Proxmox logs and cloud-init output. Fix: remove echo, print path to key file only.
+- [ ] **SYS-C3 — No automated database backup**: No backup script/cron for SQLite. Fix: daily `sqlite3 .backup` with retention.
+
+### HIGH — Network (8 items)
+
+- [ ] **NET-H1 — Multi-WAN policy rules use oif (wrong)**: `multiwan.go:170-175` — should use source IP or fwmark. Fix: use `RuleAddSrc`.
+- [ ] **NET-H2 — Multi-WAN health probes may exit wrong interface**: `multiwan.go:310-320` — no `SO_BINDTODEVICE`. Fix: bind health probes to WAN interface.
+- [ ] **NET-H3 — Output chain empty in netlink backend**: `firewall_nftables.go:838-852` — accept policy with zero rules, unlike text compiler. Fix: mirror text compiler output rules.
+- [ ] **NET-H4 — No IPv6 bogon filtering**: Bogon set is `ipv4_addr` only. Fix: add IPv6 bogon set.
+- [ ] **NET-H5 — Missing hardening sysctls**: No `accept_redirects=0`, `send_redirects=0`, `tcp_syncookies=1`, `log_martians=1`. Fix: add to sysctl tuning.
+- [ ] **NET-H6 — ICMP not rate-limited on WAN**: `compiler.go:144-147` — accepts ICMP from all interfaces with no limit. Fix: add rate limit for WAN.
+- [ ] **NET-H7 — Management API port open from WAN**: `compiler.go:152-155` — `tcp dport 8080 accept` from all interfaces. Fix: restrict to internal interfaces.
+- [ ] **NET-H8 — QoS fwmark filters have mark=0 — no traffic classified**: `bandwidth.go:227-251`. Fix: set actual mark values and add nft rules to mark packets.
+
+### HIGH — Database (6 items)
+
+- [ ] **DB-H1 — Missing FK index on profiles.zone_id**: Full table scan on zone delete. Fix: add index.
+- [ ] **DB-H2 — Missing FK index on device_assignments.profile_id**: Full table scan on profile delete. Fix: add index.
+- [ ] **DB-H3 — content_filters zone_id/profile_id have no FK constraints**: `migrations.go:114-115`. Fix: table rebuild migration.
+- [ ] **DB-H4 — profiles.policy_name is soft reference, not FK**: Deleting policy silently orphans profiles. Fix: add FK or app-level validation on delete.
+- [ ] **DB-H5 — rules.src_alias/dst_alias are soft references**: Deleting alias can orphan rules. Fix: app-level validation on alias delete.
+- [ ] **DB-H6 — Missing index on fingerprints(last_seen) and iocs(active,created_at)**: ORDER BY on hot tables without index. Fix: add indexes.
+
+### HIGH — API (6 items)
+
+- [ ] **API-H1 — Metrics endpoint endpointCount map grows unboundedly**: `metrics.go:124-130` — one entry per unique path. Fix: normalize to route patterns or use bounded LRU.
+- [ ] **API-H2 — No CORS headers**: Browser fetch/htmx calls fail from different origins. Fix: add CORS middleware.
+- [ ] **API-H3 — Content filter approve/deny has no admin check in legacy auth**: `content_filter.go:194-256`. Fix: add role check or require RBAC mode.
+- [ ] **API-H4 — Audit log endpoint has no pagination**: `handlers.go:910-929` — max 1000, no offset. Fix: add offset.
+- [ ] **API-H5 — statusWriter doesn't implement Flusher/Hijacker**: `middleware.go:195-203` — breaks SSE/WebSocket. Fix: add Unwrap() or delegate methods.
+- [ ] **API-H6 — Delete handlers return 500 for not-found instead of 404**: `handlers.go` — 5 delete handlers. Fix: add `ops.IsNotFound` checks.
+
+### HIGH — Code Quality (6 items)
+
+- [ ] **CQ-H1 — MCP server swallows audit log errors (5 sites)**: `mcp/server.go` — `_ = LogAudit()`. Fix: log errors.
+- [ ] **CQ-H2 — MCP server swallows JSON unmarshal errors**: `mcp/server.go:972,1293`. Fix: return JSON-RPC error.
+- [ ] **CQ-H3 — Capture stats under full mutex on hot path**: `inspect/capture.go:151-153` — lock contention at line rate. Fix: use `atomic.Uint64`.
+- [ ] **CQ-H4 — CreateAlias TOCTOU — cycle check after insert**: `ops/aliases.go:43-53`. Fix: wrap in transaction.
+- [ ] **CQ-H5 — Export() discards json.Marshal errors**: `revisions.go:140-144`. Fix: check and return errors.
+- [ ] **CQ-H6 — Import() ignores rows.Err() after scanning**: `revisions.go:277-287,329-339`. Fix: check rows.Err().
+
+### HIGH — Systems Admin (5 items)
+
+- [ ] **SYS-H1 — install.sh embeds unhardened systemd unit**: Canonical hardened unit exists at `init/gatekeeperd.service` but script embeds a stripped version. Fix: copy the canonical file.
+- [ ] **SYS-H2 — build-lxc.sh PID file path race with canonical init**: `build-lxc.sh:76` uses same path as daemon's own PID file. Fix: use `-openrc.pid` suffix.
+- [ ] **SYS-H3 — Dockerfile CMD missing --api-key-file — daemon refuses to start**: `Dockerfile:42`. Fix: add `--api-key-file` or `--enable-rbac`.
+- [ ] **SYS-H4 — Dockerfile healthcheck uses HTTP but default is HTTPS**: `Dockerfile:37`. Fix: try HTTPS first.
+- [ ] **SYS-H5 — No IPv6 forwarding sysctl set anywhere**: Fix: add `net.ipv6.conf.all.forwarding=1`.
+
+### HIGH — Testing (4 items)
+
+- [ ] **TEST-H1 — internal/validate has zero test files**: Single input validation gateway with no direct tests. Fix: add validate_test.go.
+- [ ] **TEST-H2 — TestHTTPClientGet calls live httpbin.org**: `backend_test.go:152`. Fix: replace with httptest.NewServer.
+- [ ] **TEST-H3 — Session cookie auth path untested**: `middleware.go:47`. Fix: add tests for gk_session cookie.
+- [ ] **TEST-H4 — Rate limiter untested**: `middleware.go:75`. Fix: add rate limiter unit tests.
+
+### HIGH — Documentation (3 items)
+
+- [ ] **DOC-H1 — Punchlist summary table claims 140/140 (100%) but 55+ items are open**: Stale table at line 245 contradicts header. Fix: update or remove summary table.
+- [ ] **DOC-H2 — 32 punchlist items reference "Erudite commit" with no real commit hash**: Untraceable. Fix: find actual commits via `git log --all --grep` or mark as unverifiable.
+- [ ] **DOC-H3 — PLAN.md architecture decision log says "nft -f" but code uses netlink**: `PLAN.md:344`. Fix: update decision log.
+
+### MEDIUM — Network (5 items)
+
+- [ ] **NET-M1 — Masquerade applies to all WAN egress including VPN tunnel traffic**: Fix: restrict to RFC1918 source addresses.
+- [ ] **NET-M2 — MSS clamping in text compiler absent from netlink backend**: Fix: add MSS clamping to netlink forward chain or document MTUManager covers it.
+- [ ] **NET-M3 — WireGuard interface names not validated against 15-char limit**: `vpn_legs.go:338`. Fix: check `len("wg-"+name) <= 15`.
+- [ ] **NET-M4 — VPN legs routesUp=true even if all routes fail**: `vpn_legs.go:443`. Fix: only set true if at least one route succeeded.
+- [ ] **NET-M5 — VPN provider writes /proc/sys directly, bypassing SysctlSet validation**: `vpn_provider.go:735`. Fix: use `Net.SysctlSet()`.
+
+### MEDIUM — Database (5 items)
+
+- [ ] **DB-M1 — Migration naming collision (duplicate 002/003 prefixes)**: Fix: renumber to 005/006.
+- [ ] **DB-M2 — Seed hardcodes zone_id=2 for profiles**: `seed.go:40-43`. Fix: use `SELECT id FROM zones WHERE name='lan'`.
+- [ ] **DB-M3 — content_filters stores CSV in TEXT columns (1NF violation)**: Fix: document or use JSON columns.
+- [ ] **DB-M4 — Maintenance prune uses inefficient NOT IN subquery**: `store.go:60-73`. Fix: use `WHERE id < (SELECT ... OFFSET)`.
+- [ ] **DB-M5 — storeAlert() writes DB while holding anomaly detector mutex**: `anomaly.go:389-409`. Fix: collect data under lock, write outside.
+
+### MEDIUM — Architecture (5 items)
+
+- [ ] **ARCH-M1 — PortForward model exists but no CRUD/API/schema**: Dead code. Fix: implement full path or remove.
+- [ ] **ARCH-M2 — Services table migration outside main migration system**: `manager.go:537`. Fix: move to main pipeline.
+- [ ] **ARCH-M3 — Package-level globals for service DI**: `service/procmgr.go:16-19`. Fix: complete ManagerDeps migration.
+- [ ] **ARCH-M4 — Overlapping confirm timers — second commit overwrites first**: `firewall.go:92`. Fix: reject new ApplyWithConfirm while confirmation pending.
+- [ ] **ARCH-M5 — Import() does not validate entity data**: `revisions.go:168` — trusts snapshot completely. Fix: validate zone names, CIDRs before insert.
+
+### MEDIUM — API (5 items)
+
+- [ ] **API-M1 — OpenAPI spec missing many newer endpoints**: diag/*, perf/nic, xdp/*, keys/*, mtu/*. Fix: add specs.
+- [ ] **API-M2 — fingerprints/iocs list endpoints have no limit cap**: Can request `?limit=999999999`. Fix: cap at 1000.
+- [ ] **API-M3 — Content filter and XDP list endpoints have no pagination**: Fix: add limit/offset.
+- [ ] **API-M4 — parseInt in fingerprint.go silently overflows**: Fix: use strconv.ParseInt.
+- [ ] **API-M5 — OpenAPI spec status code mismatch (200 vs 204) on deletes**: Fix: align spec with code.
+
+### MEDIUM — Code Quality (8 items)
+
+- [ ] **CQ-M1 — Duplicated maxAliasExpansion constant**: `compiler.go:368` and `firewall_nftables.go:23`. Fix: shared location.
+- [ ] **CQ-M2 — Magic numbers for session MaxAge, audit retention, latency buffer**: Fix: named constants.
+- [ ] **CQ-M3 — readJSON error silently discarded in commit/prune handlers**: `handlers.go:505,817`. Fix: check if body present.
+- [ ] **CQ-M4 — nfthelper creates separate netlink connections per call**: `nfthelper.go:24,34,49,82`. Fix: share persistent connection.
+- [ ] **CQ-M5 — CLI fs.Parse errors discarded (10 sites)**: `gk/main.go`. Fix: check error.
+- [ ] **CQ-M6 — LastInsertId error discarded at 12+ sites**: Fix: document or check.
+- [ ] **CQ-M7 — sanitizeForNft truncates multi-byte runes to single bytes**: `countermeasures.go:519-523`. Fix: use `strings.Map`.
+- [ ] **CQ-M8 — Proc.Start("tailscaled") error not checked**: `vpn_provider.go:708`. Fix: check error.
+
+### MEDIUM — Systems Admin (6 items)
+
+- [ ] **SYS-M1 — TLS certificate validity 10 years**: Fix: change to 365 days + expiry monitoring.
+- [ ] **SYS-M2 — Logrotate copytruncate can lose log lines**: Fix: switch to SIGHUP-based rotation or document.
+- [ ] **SYS-M3 — install-alpine.sh appends to /etc/sysctl.conf (not idempotent)**: Fix: use drop-in file.
+- [ ] **SYS-M4 — No log forwarding/centralized logging**: Fix: add syslog forwarding option.
+- [ ] **SYS-M5 — No certificate expiry monitoring**: Fix: add readiness probe or periodic check.
+- [ ] **SYS-M6 — OpenRC init missing retry directive**: Fix: add `retry="TERM/15/KILL/5"`.
+
+### MEDIUM — Testing (4 items)
+
+- [ ] **TEST-M1 — TestConcurrentCommit is sequential, not concurrent**: `powerloss_test.go:100`. Fix: use goroutines + WaitGroup.
+- [ ] **TEST-M2 — Router tests check only status codes, not response bodies**: Fix: verify response content.
+- [ ] **TEST-M3 — Integration tests have no visible CI trigger**: Fix: document in CI config.
+- [ ] **TEST-M4 — No path traversal tests on API routes**: Fix: add `../../etc/passwd` test cases.
+
+### LOW (15 items)
+
+- [ ] **LOW-1 — Duplicate forward chain rules in nftables output**: Compiler emits `iifname "eth1" accept` twice.
+- [ ] **LOW-2 — build-lxc.sh embedded init diverges from canonical**: Fix: copy canonical file.
+- [ ] **LOW-3 — install-alpine.sh leaves build deps (go, make, bash) at runtime**: Fix: `apk del` after build.
+- [ ] **LOW-4 — Makefile `run` target broken (no --api-key)**: Fix: add dev key.
+- [ ] **LOW-5 — OpenRC init missing `after sysctl` dependency**: Fix: add to depend().
+- [ ] **LOW-6 — Maintenance timer fires 24h after start, not at fixed time**: Fix: compute next 02:00.
+- [ ] **LOW-7 — TTL randomization is per-rule, not per-packet**: `countermeasures.go:440`. Fix: use nft numgen.
+- [ ] **LOW-8 — cli.Backend is 30-method god interface**: Fix: decompose into sub-interfaces.
+- [ ] **LOW-9 — Web UI no auth when RBAC enabled (apiKey empty)**: `web.go:101-104`. Fix: check for RBAC enforcer.
+- [ ] **LOW-10 — Login rate limiter counts successful attempts**: `web.go:744-747`. Fix: check limit before incrementing.
+- [ ] **LOW-11 — loginRateLimiter goroutine has no stop mechanism**: `web.go:708`. Fix: add stopCh.
+- [ ] **LOW-12 — MCP rate limiter goroutine has no stop mechanism**: `mcp/server.go:193`. Fix: add done channel.
+- [ ] **LOW-13 — AddPolicy does not validate target is valid IP/CIDR**: `countermeasures.go:222`. Fix: validate with net.ParseIP/ParseCIDR.
+- [ ] **LOW-14 — Process.Kill called without Wait (zombie)**: `vpn_provider.go:302`. Fix: call Wait() after Kill().
+- [ ] **LOW-15 — dnsmasq log-queries/log-dhcp always enabled**: `dnsmasq.go:188-189`. Fix: make configurable.
+
+### BACKEND/INFRA AUDIT SUMMARY
+
+| Severity | Count |
+|----------|-------|
+| Critical | 22 |
+| High | 38 |
+| Medium | 38 |
+| Low | 15 |
+| **Total** | **113** |
+
+**Audited by:** Network Engineer, Systems Administrator, Backend Architect, Software Architect, Database Optimizer, API Tester, Coding Policy Enforcer, Code Reviewer, Testing & Verification Engineer, Reality Checker, Evidence Collector.
+
+---
+
+## GRAND TOTAL — ALL AUDITS
+
+| Section | Critical | High | Medium | Low | Total |
+|---------|----------|------|--------|-----|-------|
+| Original punchlist (resolved) | 5 | 26 | 70 | 26 | 140 (all done) |
+| Test fixes (resolved) | — | — | — | — | 8 (all done) |
+| Frontend audit (open) | 9 | 17 | 19 | 10 | 55 |
+| Backend/infra audit (open) | 22 | 38 | 38 | 15 | 113 |
+| **Open total** | **31** | **55** | **57** | **25** | **168** |
+
+**Reality Checker overall verdict: NEEDS WORK**
+- Backend: B+ (solid Go code, real networking, good test suite)
+- Frontend: D+ (security vulnerabilities, accessibility failures, missing core UI)
+- Documentation: C- (stale summaries, unverifiable commit refs)
