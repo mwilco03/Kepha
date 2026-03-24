@@ -20,7 +20,7 @@
 </head>
 <body>
 {{template "nav" .}}
-<div class="container">
+<main id="main-content" class="container">
     <h1>Firewall</h1>
 
     <div class="tab-bar" role="tablist">
@@ -88,7 +88,7 @@
         <pre class="ruleset-pre" id="ruleset-code">{{.Ruleset}}</pre>
         {{else}}<p class="empty">No compiled ruleset available. Is nftables configured?</p>{{end}}
     </div>
-</div>
+</main>
 
 <script>
 function switchTab(name) {

@@ -1,7 +1,9 @@
 package web
 
 import (
+	"bytes"
 	"crypto/hmac"
+	"fmt"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -469,13 +471,14 @@ func csrfProtect(sessions *sessionStore, next http.Handler) http.Handler {
 			return
 		}
 
-		// Check form field or header against the session token.
+		// Check form field or header against the HMAC-derived CSRF token.
 		csrfToken := r.FormValue("_csrf")
 		if csrfToken == "" {
 			csrfToken = r.Header.Get("X-CSRF-Token")
 		}
 
-		if subtle.ConstantTimeCompare([]byte(csrfToken), []byte(sessionCookie.Value)) != 1 {
+		expected := deriveCSRFToken(sessionCookie.Value)
+		if subtle.ConstantTimeCompare([]byte(csrfToken), []byte(expected)) != 1 {
 			http.Error(w, "CSRF token mismatch", http.StatusForbidden)
 			return
 		}
@@ -577,11 +580,12 @@ func setSessionCookie(w http.ResponseWriter, apiKey string, sessions *sessionSto
 		SameSite: http.SameSiteStrictMode,
 	})
 	// Separate CSRF cookie — readable by JS for double-submit pattern.
-	// Uses the same token value; the session cookie is HttpOnly so JS
-	// can't read it directly.
+	// Derived from session token via HMAC so the CSRF cookie does not
+	// leak the actual session credential to JavaScript.
+	csrfToken := deriveCSRFToken(token)
 	http.SetCookie(w, &http.Cookie{
 		Name:     csrfCookieName,
-		Value:    token,
+		Value:    csrfToken,
 		Path:     "/",
 		MaxAge:   86400,
 		HttpOnly: false, // Readable by JS for htmx X-CSRF-Token header.
@@ -597,6 +601,14 @@ func validSession(r *http.Request, apiKey string, sessions *sessionStore) bool {
 		return false
 	}
 	return sessions.valid(cookie.Value)
+}
+
+// deriveCSRFToken produces an HMAC of the session token so the CSRF cookie
+// does not leak the actual session credential to JavaScript.
+func deriveCSRFToken(sessionToken string) string {
+	mac := hmac.New(sha256.New, []byte("gk-csrf-v1"))
+	mac.Write([]byte(sessionToken))
+	return fmt.Sprintf("%x", mac.Sum(nil))
 }
 
 // generateSessionToken creates a random nonce and signs it with the API key.
@@ -754,9 +766,12 @@ func (l *loginRateLimiter) reset(ip string) {
 }
 
 func render(w http.ResponseWriter, name string, data any) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := templates.ExecuteTemplate(w, name+".html", data); err != nil {
+	var buf bytes.Buffer
+	if err := templates.ExecuteTemplate(&buf, name+".html", data); err != nil {
 		slog.Error("template render error", "template", name, "error", err)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
 	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	buf.WriteTo(w)
 }

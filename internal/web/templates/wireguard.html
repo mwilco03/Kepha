@@ -17,7 +17,7 @@
 </head>
 <body>
 {{template "nav" .}}
-<div class="container">
+<main id="main-content" class="container">
     <h1>WireGuard VPN</h1>
 
     <h2>Add Peer</h2>
@@ -61,11 +61,10 @@
 
 <script src="/static/qrcode.js"></script>
 <script>
-var apiKey = '';
-
 function getHeaders() {
     var h = {'Content-Type': 'application/json'};
-    if (apiKey) h['X-API-Key'] = apiKey;
+    var m = document.cookie.match(/gk_csrf=([^;]+)/);
+    if (m) h['X-CSRF-Token'] = m[1];
     return h;
 }
 
@@ -121,7 +120,7 @@ function loadPeers() {
         el.appendChild(table);
     })
     .catch(function() {
-        document.getElementById('peers-table').innerHTML = '<div class="empty">WireGuard not available. Enable with --wg-interface flag.</div>';
+        document.getElementById('peers-table').innerHTML = '<div class="empty">WireGuard not available. Enable with --wg-interface flag.</main>';
     });
 }
 

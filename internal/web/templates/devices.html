@@ -6,7 +6,7 @@
 </head>
 <body>
     {{template "nav" .}}
-    <div class="container">
+    <main id="main-content" class="container">
         <h1>Devices</h1>
         {{if .Devices}}
         <table>
@@ -24,6 +24,6 @@
             </tbody>
         </table>
         {{else}}<p class="empty">No devices assigned. <a href="/assign">Assign a device</a>.</p>{{end}}
-    </div>
+    </main>
 </body>
 </html>

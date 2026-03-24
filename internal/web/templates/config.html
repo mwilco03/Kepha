@@ -6,7 +6,7 @@
 </head>
 <body>
     {{template "nav" .}}
-    <div class="container">
+    <main id="main-content" class="container">
         <h1>Configuration</h1>
 
         <h2>Revision History</h2>
@@ -23,6 +23,6 @@
 
         <h2>Current Config (JSON Export)</h2>
         <pre>{{.Snapshot}}</pre>
-    </div>
+    </main>
 </body>
 </html>

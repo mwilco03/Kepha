@@ -6,7 +6,7 @@
 </head>
 <body>
     {{template "nav" .}}
-    <div class="container">
+    <main id="main-content" class="container">
         <h1>{{.Zone.Name}}
             {{if eq .Zone.TrustLevel "full"}}<span class="badge badge-green">full trust</span>
             {{else if eq .Zone.TrustLevel "none"}}<span class="badge badge-red">no trust</span>
@@ -37,6 +37,6 @@
             </tbody>
         </table>
         {{else}}<p class="text-muted">No devices assigned to this zone.</p>{{end}}
-    </div>
+    </main>
 </body>
 </html>

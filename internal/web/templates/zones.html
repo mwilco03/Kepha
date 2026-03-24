@@ -6,7 +6,7 @@
 </head>
 <body>
     {{template "nav" .}}
-    <div class="container">
+    <main id="main-content" class="container">
         <h1>Zones</h1>
         <div class="grid grid-wide">
         {{range .Zones}}
@@ -28,6 +28,6 @@
             <p class="empty">No zones configured.</p>
         {{end}}
         </div>
-    </div>
+    </main>
 </body>
 </html>
