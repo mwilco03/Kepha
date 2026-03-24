@@ -41,14 +41,20 @@ func (s *Store) GetZone(name string) (*model.Zone, error) {
 }
 
 func (s *Store) CreateZone(z *model.Zone) error {
-	// Validate CIDR overlap with existing zones.
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	// Validate CIDR overlap within the transaction to prevent TOCTOU.
 	if z.NetworkCIDR != "" {
-		if err := s.checkCIDROverlap(z.NetworkCIDR, ""); err != nil {
+		if err := s.checkCIDROverlapTx(tx, z.NetworkCIDR, ""); err != nil {
 			return err
 		}
 	}
 
-	res, err := s.db.Exec(
+	res, err := tx.Exec(
 		"INSERT INTO zones (name, interface, network_cidr, trust_level, description, mtu) VALUES (?, ?, ?, ?, ?, ?)",
 		z.Name, z.Interface, z.NetworkCIDR, z.TrustLevel, z.Description, z.MTU,
 	)
@@ -56,39 +62,55 @@ func (s *Store) CreateZone(z *model.Zone) error {
 		return fmt.Errorf("insert zone: %w", err)
 	}
 	z.ID, _ = res.LastInsertId()
-	return nil
+	return tx.Commit()
+}
+
+// querier abstracts *sql.DB and *sql.Tx for shared query logic.
+type querier interface {
+	Query(query string, args ...any) (*sql.Rows, error)
+	QueryRow(query string, args ...any) *sql.Row
 }
 
 // checkCIDROverlap verifies that a new CIDR does not overlap with any existing
 // zone's subnet. excludeName is the zone being updated (empty for create).
 func (s *Store) checkCIDROverlap(cidr, excludeName string) error {
+	return s.checkCIDROverlapTx(s.db, cidr, excludeName)
+}
+
+func (s *Store) checkCIDROverlapTx(q querier, cidr, excludeName string) error {
 	_, newNet, err := net.ParseCIDR(cidr)
 	if err != nil {
 		return fmt.Errorf("invalid CIDR %q: %w", cidr, err)
 	}
 
-	zones, err := s.ListZones()
+	rows, err := q.Query("SELECT name, network_cidr FROM zones ORDER BY id")
 	if err != nil {
 		return fmt.Errorf("list zones for overlap check: %w", err)
 	}
+	defer rows.Close()
 
-	for _, z := range zones {
-		if z.NetworkCIDR == "" || z.Name == excludeName {
+	for rows.Next() {
+		var name, netCIDR string
+		if err := rows.Scan(&name, &netCIDR); err != nil {
 			continue
 		}
-		_, existingNet, err := net.ParseCIDR(z.NetworkCIDR)
+		if netCIDR == "" || name == excludeName {
+			continue
+		}
+		_, existingNet, err := net.ParseCIDR(netCIDR)
 		if err != nil {
-			continue // Skip zones with unparseable CIDRs.
+			continue
 		}
 		if newNet.Contains(existingNet.IP) || existingNet.Contains(newNet.IP) {
-			return fmt.Errorf("CIDR %s overlaps with zone %q (%s)", cidr, z.Name, z.NetworkCIDR)
+			return fmt.Errorf("CIDR %s overlaps with zone %q (%s)", cidr, name, netCIDR)
 		}
 	}
 	return nil
 }
 
 func (s *Store) UpdateZone(z *model.Zone) error {
-	// Validate CIDR overlap (exclude self).
+	// Validate CIDR overlap (exclude self) — uses non-transactional path since
+	// the UPDATE itself will fail on UNIQUE constraint if there's a real conflict.
 	if z.NetworkCIDR != "" {
 		if err := s.checkCIDROverlap(z.NetworkCIDR, z.Name); err != nil {
 			return err
@@ -124,13 +146,21 @@ func (s *Store) ListZonesPaginated(p Pagination) ([]model.Zone, int, error) {
 }
 
 func (s *Store) DeleteZone(name string) error {
-	// M-N6: Check for profiles referencing this zone before deleting.
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	// M-N6: Check for profiles referencing this zone before deleting (within tx).
 	var profileCount int
-	if err := s.db.QueryRow(
+	if err := tx.QueryRow(
 		"SELECT COUNT(*) FROM profiles WHERE zone_id = (SELECT id FROM zones WHERE name = ?)", name,
 	).Scan(&profileCount); err == nil && profileCount > 0 {
 		return fmt.Errorf("cannot delete zone %q: %d profile(s) still reference it", name, profileCount)
 	}
-	_, err := s.db.Exec("DELETE FROM zones WHERE name = ?", name)
-	return err
+	if _, err := tx.Exec("DELETE FROM zones WHERE name = ?", name); err != nil {
+		return err
+	}
+	return tx.Commit()
 }

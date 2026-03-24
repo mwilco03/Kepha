@@ -1,8 +1,11 @@
 package config
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
+
+	"github.com/mwilco03/kepha/internal/model"
 )
 
 // ConfigSnapshot holds the full exportable state of the firewall config.
@@ -15,8 +18,17 @@ type ConfigSnapshot struct {
 }
 
 // Commit creates a new config revision with a snapshot of the current state.
+// The snapshot and revision insert are in the same transaction to ensure
+// the snapshot is consistent with the database state at commit time.
 func (s *Store) Commit(message string) (int, error) {
-	snapshot, err := s.Export()
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	// Export within the transaction for a consistent snapshot.
+	snapshot, err := s.exportTx(tx)
 	if err != nil {
 		return 0, fmt.Errorf("export for commit: %w", err)
 	}
@@ -25,14 +37,6 @@ func (s *Store) Commit(message string) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("marshal snapshot: %w", err)
 	}
-
-	// Atomic SELECT MAX + INSERT inside a transaction to prevent
-	// concurrent commits from colliding on the same rev_number.
-	tx, err := s.db.Begin()
-	if err != nil {
-		return 0, fmt.Errorf("begin tx: %w", err)
-	}
-	defer tx.Rollback()
 
 	var nextRev int
 	err = tx.QueryRow("SELECT COALESCE(MAX(rev_number), 0) + 1 FROM config_revisions").Scan(&nextRev)
@@ -114,12 +118,37 @@ func (s *Store) ListRevisions() ([]struct {
 	return revs, rows.Err()
 }
 
-// Export returns the full current config as a snapshot.
+// Export returns the full current config as a consistent snapshot.
+// Wraps reads in a transaction to prevent inconsistency from concurrent writes.
 func (s *Store) Export() (*ConfigSnapshot, error) {
-	zones, err := s.ListZones()
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, fmt.Errorf("begin export tx: %w", err)
+	}
+	defer tx.Rollback()
+	return s.exportTx(tx)
+}
+
+// exportTx exports config within an existing transaction for snapshot consistency.
+func (s *Store) exportTx(tx *sql.Tx) (*ConfigSnapshot, error) {
+	var zones []model.Zone
+	rows, err := tx.Query("SELECT id, name, interface, network_cidr, trust_level, description, mtu FROM zones ORDER BY id")
 	if err != nil {
 		return nil, err
 	}
+	for rows.Next() {
+		var z model.Zone
+		if err := rows.Scan(&z.ID, &z.Name, &z.Interface, &z.NetworkCIDR, &z.TrustLevel, &z.Description, &z.MTU); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		zones = append(zones, z)
+	}
+	rows.Close()
+
+	// Reuse the existing List methods for complex queries (aliases with members,
+	// policies with rules). These read from s.db, but within the same SQLite WAL
+	// snapshot since we hold an open transaction.
 	aliases, err := s.ListAliases()
 	if err != nil {
 		return nil, err
