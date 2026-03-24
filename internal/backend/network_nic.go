@@ -40,6 +40,9 @@ var offloadCmds = map[string][2]uint32{
 
 // NICInfo reads hardware details from sysfs, /proc, and ethtool ioctls.
 func (m *LinuxNetworkManager) NICInfo(iface string) (*NICInfo, error) {
+	if err := validSysfsName(iface); err != nil {
+		return nil, err
+	}
 	base := filepath.Join("/sys/class/net", iface)
 	if _, err := os.Stat(base); err != nil {
 		return nil, fmt.Errorf("interface %s: %w", iface, err)
@@ -62,6 +65,12 @@ func (m *LinuxNetworkManager) NICInfo(iface string) (*NICInfo, error) {
 
 // SetIRQAffinity pins an IRQ to specific CPUs.
 func (m *LinuxNetworkManager) SetIRQAffinity(irq int, cpuList string) error {
+	// Validate cpuList contains only digits, commas, and hyphens.
+	for _, c := range cpuList {
+		if !((c >= '0' && c <= '9') || c == ',' || c == '-') {
+			return fmt.Errorf("invalid cpu list: %q", cpuList)
+		}
+	}
 	path := fmt.Sprintf("/proc/irq/%d/smp_affinity_list", irq)
 	return os.WriteFile(path, []byte(cpuList), 0o644)
 }
@@ -163,11 +172,13 @@ func findNICIRQs(iface string) []int {
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
 		line := scanner.Text()
-		if !strings.Contains(line, iface) {
-			continue
-		}
+		// Match exact interface name or queue suffix (e.g., "eth0", "eth0-0", "eth0-tx-0").
 		fields := strings.Fields(line)
 		if len(fields) < 2 {
+			continue
+		}
+		lastField := fields[len(fields)-1]
+		if lastField != iface && !strings.HasPrefix(lastField, iface+"-") {
 			continue
 		}
 		irqStr := strings.TrimSuffix(fields[0], ":")

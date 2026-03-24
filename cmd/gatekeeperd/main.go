@@ -368,10 +368,10 @@ func main() {
 		MaxHeaderBytes:    1 << 20, // 1 MB
 	}
 
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+
 	// H20/H21: Daily SQLite maintenance — WAL checkpoint + revision pruning.
-	maintenanceDone := make(chan struct{})
 	go func() {
-		defer close(maintenanceDone)
 		ticker := time.NewTicker(24 * time.Hour)
 		defer ticker.Stop()
 		for {
@@ -382,13 +382,11 @@ func main() {
 				} else {
 					slog.Info("daily maintenance complete")
 				}
-			case <-maintenanceDone:
+			case <-ctx.Done():
 				return
 			}
 		}
 	}()
-
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
 	go func() {

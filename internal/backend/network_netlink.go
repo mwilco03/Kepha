@@ -171,10 +171,13 @@ func (m *LinuxNetworkManager) AddrFlush(name string) error {
 	if err != nil {
 		return fmt.Errorf("list addrs %s: %w", name, err)
 	}
+	var firstErr error
 	for i := range addrs {
-		netlink.AddrDel(link, &addrs[i])
+		if err := netlink.AddrDel(link, &addrs[i]); err != nil && firstErr == nil {
+			firstErr = fmt.Errorf("del addr %s: %w", addrs[i].IPNet, err)
+		}
 	}
-	return nil
+	return firstErr
 }
 
 // RouteAdd adds a route to the main routing table.
@@ -240,10 +243,13 @@ func (m *LinuxNetworkManager) RouteFlushTable(table int) error {
 	if err != nil {
 		return err
 	}
+	var firstErr error
 	for i := range routes {
-		netlink.RouteDel(&routes[i])
+		if err := netlink.RouteDel(&routes[i]); err != nil && firstErr == nil {
+			firstErr = fmt.Errorf("del route table %d: %w", table, err)
+		}
 	}
-	return nil
+	return firstErr
 }
 
 // RouteAddMetric adds a route via device with a specific metric.
@@ -328,12 +334,15 @@ func (m *LinuxNetworkManager) RuleDel(table int) error {
 	if err != nil {
 		return err
 	}
+	var firstErr error
 	for i := range rules {
 		if rules[i].Table == table {
-			netlink.RuleDel(&rules[i])
+			if err := netlink.RuleDel(&rules[i]); err != nil && firstErr == nil {
+				firstErr = fmt.Errorf("del rule table %d: %w", table, err)
+			}
 		}
 	}
-	return nil
+	return firstErr
 }
 
 // BridgeVlanAdd adds a VLAN to a bridge (self mode).
@@ -345,8 +354,24 @@ func (m *LinuxNetworkManager) BridgeVlanAdd(bridge string, vid int) error {
 	return netlink.BridgeVlanAdd(link, uint16(vid), false, false, true, false)
 }
 
+// validSysfsName rejects names containing path traversal characters.
+func validSysfsName(name string) error {
+	if name == "" || len(name) > 15 || name == "." || name == ".." {
+		return fmt.Errorf("invalid interface name: %q", name)
+	}
+	for _, c := range name {
+		if c == '/' || c == '\\' || c == '.' {
+			return fmt.Errorf("invalid interface name: %q", name)
+		}
+	}
+	return nil
+}
+
 // BridgeSetSTP enables or disables STP on a bridge via sysfs.
 func (m *LinuxNetworkManager) BridgeSetSTP(name string, enabled bool) error {
+	if err := validSysfsName(name); err != nil {
+		return err
+	}
 	val := "0"
 	if enabled {
 		val = "1"
@@ -356,6 +381,9 @@ func (m *LinuxNetworkManager) BridgeSetSTP(name string, enabled bool) error {
 
 // BridgeSetForwardDelay sets the forward delay on a bridge via sysfs (jiffies).
 func (m *LinuxNetworkManager) BridgeSetForwardDelay(name string, delay int) error {
+	if err := validSysfsName(name); err != nil {
+		return err
+	}
 	return os.WriteFile(
 		fmt.Sprintf("/sys/class/net/%s/bridge/forward_delay", name),
 		[]byte(strconv.Itoa(delay)), 0o644,
@@ -364,6 +392,9 @@ func (m *LinuxNetworkManager) BridgeSetForwardDelay(name string, delay int) erro
 
 // BridgeSetVlanFiltering enables or disables VLAN filtering on a bridge via sysfs.
 func (m *LinuxNetworkManager) BridgeSetVlanFiltering(name string, enabled bool) error {
+	if err := validSysfsName(name); err != nil {
+		return err
+	}
 	val := "0"
 	if enabled {
 		val = "1"

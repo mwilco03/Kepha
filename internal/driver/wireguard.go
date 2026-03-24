@@ -219,7 +219,12 @@ func (w *WireGuard) GenerateClientConfigWithRoutes(clientPrivateKey, serverEndpo
 	b.WriteString("[Interface]\n")
 	b.WriteString(fmt.Sprintf("PrivateKey = %s\n", clientPrivateKey))
 	b.WriteString(fmt.Sprintf("Address = %s\n", peer.AllowedIPs))
-	b.WriteString("DNS = 10.50.0.1\n\n")
+	// Derive DNS server from the WireGuard server address (first IP in the subnet).
+	wgDNS := w.config.Address
+	if idx := strings.IndexByte(wgDNS, '/'); idx > 0 {
+		wgDNS = wgDNS[:idx]
+	}
+	b.WriteString(fmt.Sprintf("DNS = %s\n\n", wgDNS))
 	b.WriteString("[Peer]\n")
 	b.WriteString(fmt.Sprintf("PublicKey = %s\n", serverPubKey))
 	if strings.Contains(serverEndpoint, ":") {

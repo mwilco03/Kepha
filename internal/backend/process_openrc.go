@@ -32,7 +32,12 @@ func NewOpenRCManager() *OpenRCManager {
 
 // Start starts a service by executing its OpenRC init script.
 func (m *OpenRCManager) Start(svc string) error {
-	// Try rc-service first (Alpine OpenRC).
+	// Validate service name to prevent path traversal in init script path.
+	for _, c := range svc {
+		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-') {
+			return fmt.Errorf("invalid service name: %q", svc)
+		}
+	}
 	initPath := filepath.Join("/etc/init.d", svc)
 	if _, err := os.Stat(initPath); err != nil {
 		return fmt.Errorf("init script not found: %s", initPath)

@@ -18,6 +18,11 @@ import (
 	"github.com/google/nftables/expr"
 )
 
+const (
+	maxAliasRecursionDepth = 10    // Maximum nesting depth for alias resolution.
+	maxAliasExpansion      = 10000 // Maximum total members after expansion.
+)
+
 // NftablesBackend implements FirewallBackend using the google/nftables
 // netlink library. No exec.Command("nft", ...) — pure netlink syscalls.
 type NftablesBackend struct {
@@ -421,7 +426,7 @@ func resolveAliasMembers(a *model.Alias, aliasMap map[string]*model.Alias, depth
 }
 
 func resolveAliasMembersDedup(a *model.Alias, aliasMap map[string]*model.Alias, depth int, seen map[string]struct{}) []string {
-	if depth > 10 {
+	if depth > maxAliasRecursionDepth {
 		return nil
 	}
 	if a.Type != model.AliasTypeNested {
@@ -441,8 +446,8 @@ func resolveAliasMembersDedup(a *model.Alias, aliasMap map[string]*model.Alias, 
 			continue
 		}
 		resolved = append(resolved, resolveAliasMembersDedup(nested, aliasMap, depth+1, seen)...)
-		if len(resolved) > 10000 {
-			return resolved[:10000]
+		if len(resolved) > maxAliasExpansion {
+			return resolved[:maxAliasExpansion]
 		}
 	}
 	return resolved

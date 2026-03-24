@@ -39,7 +39,7 @@ func (m *LinuxNetworkManager) SysctlSet(key string, value string) error {
 	if !strings.HasPrefix(resolved, "/proc/sys/") {
 		return fmt.Errorf("sysctl path %q resolves outside /proc/sys/", key)
 	}
-	if err := os.WriteFile(path, []byte(value), 0o644); err != nil {
+	if err := os.WriteFile(resolved, []byte(value), 0o644); err != nil {
 		return fmt.Errorf("sysctl set %s=%s: %w", key, value, err)
 	}
 	return nil
@@ -48,12 +48,17 @@ func (m *LinuxNetworkManager) SysctlSet(key string, value string) error {
 // SysctlGet reads a sysctl value from /proc/sys.
 func (m *LinuxNetworkManager) SysctlGet(key string) (string, error) {
 	path := filepath.Join("/proc/sys", strings.ReplaceAll(key, ".", "/"))
-	// Validate resolved path is under /proc/sys/ to prevent path traversal.
-	resolved := filepath.Clean(path)
+	// Resolve symlinks and validate path stays under /proc/sys/.
+	resolved, err := filepath.EvalSymlinks(filepath.Dir(path))
+	if err == nil {
+		resolved = filepath.Join(resolved, filepath.Base(path))
+	} else {
+		resolved = filepath.Clean(path)
+	}
 	if !strings.HasPrefix(resolved, "/proc/sys/") {
 		return "", fmt.Errorf("sysctl path %q resolves outside /proc/sys/", key)
 	}
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(resolved)
 	if err != nil {
 		return "", fmt.Errorf("sysctl get %s: %w", key, err)
 	}
@@ -150,6 +155,8 @@ func interfaceIPv4(name string) (net.IP, error) {
 	return nil, fmt.Errorf("no IPv4 address on %s", name)
 }
 
+const tcpPingPort = "80" // Fallback port for TCP connectivity check when ICMP unavailable.
+
 // tcpPing falls back to TCP connect for ping when ICMP isn't available.
 func (m *LinuxNetworkManager) tcpPing(target string, count int, timeoutSec int) (PingResult, error) {
 	result := PingResult{Sent: count}
@@ -157,7 +164,7 @@ func (m *LinuxNetworkManager) tcpPing(target string, count int, timeoutSec int) 
 	var totalRTT time.Duration
 	for i := 0; i < count; i++ {
 		start := time.Now()
-		conn, err := net.DialTimeout("tcp", target+":80", time.Duration(timeoutSec)*time.Second)
+		conn, err := net.DialTimeout("tcp", target+":"+tcpPingPort, time.Duration(timeoutSec)*time.Second)
 		if err != nil {
 			continue
 		}
@@ -303,22 +310,24 @@ func parseHexAddr(s string) string {
 	return fmt.Sprintf("[%s]:%d", hexIP, port)
 }
 
+// tcpStates maps /proc/net/tcp state hex to human-readable names.
+var tcpStates = map[string]string{
+	"01": "ESTABLISHED",
+	"02": "SYN_SENT",
+	"03": "SYN_RECV",
+	"04": "FIN_WAIT1",
+	"05": "FIN_WAIT2",
+	"06": "TIME_WAIT",
+	"07": "CLOSE",
+	"08": "CLOSE_WAIT",
+	"09": "LAST_ACK",
+	"0A": "LISTEN",
+	"0B": "CLOSING",
+}
+
 // parseTCPState converts /proc/net/tcp state hex to human-readable.
 func parseTCPState(hex string) string {
-	states := map[string]string{
-		"01": "ESTABLISHED",
-		"02": "SYN_SENT",
-		"03": "SYN_RECV",
-		"04": "FIN_WAIT1",
-		"05": "FIN_WAIT2",
-		"06": "TIME_WAIT",
-		"07": "CLOSE",
-		"08": "CLOSE_WAIT",
-		"09": "LAST_ACK",
-		"0A": "LISTEN",
-		"0B": "CLOSING",
-	}
-	if s, ok := states[strings.ToUpper(hex)]; ok {
+	if s, ok := tcpStates[strings.ToUpper(hex)]; ok {
 		return s
 	}
 	return hex

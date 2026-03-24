@@ -3,11 +3,11 @@ package api
 import (
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/mwilco03/kepha/internal/config"
 	"github.com/mwilco03/kepha/internal/model"
+	"github.com/mwilco03/kepha/internal/ops"
 	"github.com/mwilco03/kepha/internal/rbac"
 	"github.com/mwilco03/kepha/internal/service"
 )
@@ -63,7 +63,7 @@ func (h *contentFilterHandlers) createFilter(w http.ResponseWriter, r *http.Requ
 		}
 	}
 	if err := h.store.CreateContentFilter(&cf); err != nil {
-		if strings.Contains(err.Error(), "UNIQUE") {
+		if ops.IsConflict(err) {
 			writeError(w, http.StatusConflict, "content filter already exists")
 		} else {
 			writeError(w, http.StatusBadRequest, err.Error())

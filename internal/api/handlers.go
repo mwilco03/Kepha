@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/mwilco03/kepha/internal/backend"
@@ -237,7 +236,7 @@ func (h *handlers) addAliasMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.ops.AddAliasMember(actorFromRequest(r), name, body.Member); err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		if ops.IsNotFound(err) {
 			writeError(w, http.StatusNotFound, err.Error())
 		} else {
 			writeError(w, http.StatusBadRequest, err.Error())
@@ -257,7 +256,7 @@ func (h *handlers) removeAliasMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.ops.RemoveAliasMember(actorFromRequest(r), name, body.Member); err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		if ops.IsNotFound(err) {
 			writeError(w, http.StatusNotFound, err.Error())
 		} else {
 			writeError(w, http.StatusInternalServerError, err.Error())
@@ -487,7 +486,7 @@ func (h *handlers) unassignDevice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.ops.UnassignDevice(actorFromRequest(r), body.IP); err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		if ops.IsNotFound(err) {
 			writeError(w, http.StatusNotFound, err.Error())
 		} else {
 			writeError(w, http.StatusInternalServerError, err.Error())
@@ -783,7 +782,7 @@ func (h *handlers) addWGPeer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.wgOps.AddPeer(peer); err != nil {
-		if strings.Contains(err.Error(), "already exists") {
+		if ops.IsConflict(err) {
 			writeError(w, http.StatusConflict, err.Error())
 		} else {
 			writeError(w, http.StatusBadRequest, err.Error())
@@ -843,7 +842,7 @@ func (h *handlers) generateWGClientConfig(w http.ResponseWriter, r *http.Request
 	}
 	configText, clientPubKey, err := h.wgOps.GenerateClientConfig(body.PublicKey, body.ServerEndpoint)
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		if ops.IsNotFound(err) {
 			writeError(w, http.StatusNotFound, err.Error())
 		} else {
 			writeError(w, http.StatusBadRequest, err.Error())
