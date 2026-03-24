@@ -90,7 +90,7 @@
 | Active countermeasures | No | **Yes** | Ahead |
 | MCP (AI management) | No | **Yes** | Ahead |
 | RBAC | No | **Yes** | Ahead |
-| Travel router / WiFi | Yes | No | Gap (by design) |
+| Travel router / WiFi | Yes | No | Gap (planned Phase 8) |
 | Mobile app | Yes (GoodCloud) | No | Gap |
 | IPv6 + VPN leak prevention | Broken | **Yes** | Ahead |
 | Security posture | CVEs | **Clean** | Ahead |
@@ -192,6 +192,19 @@ The biggest gap vs pfSense. Operators need visibility.
 | **Cloud images (AWS/Azure)** | Cloud-native firewall | Medium |
 | **Setup wizard** | First-time configuration walkthrough | Small |
 | **Package manager** | Install optional features on demand | Large |
+
+### Phase 8 — WiFi (Future)
+
+| Feature | Why | Effort |
+|---------|-----|--------|
+| **hostapd integration** | Manage WiFi radios, SSIDs, WPA3 | Large |
+| **Guest network with AP isolation** | Secure guest WiFi via zone model | Medium |
+| **Band steering** | Auto-steer clients to 5GHz/6GHz | Medium |
+| **Scheduled WiFi** | On/off per band on a schedule | Small |
+| **DFS channel selection** | Use radar-aware 5GHz channels | Small |
+| **Mesh networking** | Multi-AP coordination | Large |
+| **Repeater/extender mode** | Use existing WiFi as WAN uplink | Medium |
+| **Captive portal passthrough** | Handle upstream captive portals (hotels) | Medium |
 
 ---
 
