@@ -1,8 +1,9 @@
 # Gatekeeper Punchlist
 
 **Goal:** Production-ready network firewall appliance deployment.
-**Status:** REOPENED — 148 original + 8 test fixes resolved. 55 frontend + ~120 backend/infra findings from 17-agent audit.
+**Status:** REOPENED — 148 original + 8 test fixes + 20 critical fixes resolved. 168 audit findings + roadmap items from 17-agent + pfSense/GL.iNet competitive analysis.
 **Updated:** 2026-03-24
+**Roadmap:** See `docs/ROADMAP.md` for full competitive analysis and phased feature plan.
 **Total commits:** 256
 **Dependabot:** Active (6 PRs for dependency updates)
 **OpenAPI:** 103/103 endpoints documented (100%)
