@@ -136,6 +136,11 @@ Features needed for basic competitive parity with pfSense/GL.iNet.
 | **NAT reflection (hairpin)** | Needed for accessing port-forwards from inside | Small |
 | **1:1 NAT** | Required for server hosting scenarios | Small |
 | **Config history GUI** | Commit/rollback + diff viewer in web UI | Medium |
+| **DNS feed management** | Subscribe to blocklists (StevenBlack, OISD, hagezi, etc.), enable/disable per feed, auto-update on schedule | Medium |
+| **DNS block log with one-click allow** | Frequency + recency sorted list of blocked domains. Each row shows which feed blocked it + "Allow" button. Non-technical household members can self-service unblock (e.g. Chase.com broken by ad blocking) | Medium |
+| **DNS feed performance testing** | Before subscribing to a feed, show: entry count, estimated query latency impact, overlap with existing feeds. After enabling, show: queries/sec hitting this feed, false positive rate | Medium |
+| **Split DNS** | Different answers for internal vs external queries (e.g. internal services resolve to LAN IPs) | Small |
+| **DNSSEC validation** | Validate upstream responses via Unbound integration | Small |
 
 ### Phase 3 — Monitoring & Observability (Q3 2026)
 
