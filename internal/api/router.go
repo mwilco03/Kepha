@@ -155,6 +155,22 @@ func NewRouterWithConfig(cfg *RouterConfig) http.Handler {
 	mux.HandleFunc("POST /api/v1/test", h.pathTest)
 	mux.HandleFunc("POST /api/v1/explain", h.explainPath)
 
+	// DNS host overrides.
+	mux.HandleFunc("GET /api/v1/dns/hosts", h.listDNSHosts)
+	mux.HandleFunc("POST /api/v1/dns/hosts", h.createDNSHost)
+	mux.HandleFunc("PUT /api/v1/dns/hosts/{id}", h.updateDNSHost)
+	mux.HandleFunc("DELETE /api/v1/dns/hosts/{id}", h.deleteDNSHost)
+
+	// DNS feed management.
+	mux.HandleFunc("GET /api/v1/dns/feeds", h.listDNSFeeds)
+	mux.HandleFunc("GET /api/v1/dns/feeds/{name}", h.getDNSFeed)
+	mux.HandleFunc("POST /api/v1/dns/feeds/{name}/enable", h.enableDNSFeed)
+	mux.HandleFunc("POST /api/v1/dns/feeds/{name}/disable", h.disableDNSFeed)
+
+	// DNS block log.
+	mux.HandleFunc("GET /api/v1/dns/blocked", h.listBlockedDomains)
+	mux.HandleFunc("POST /api/v1/dns/allow", h.allowBlockedDomain)
+
 	// Audit log.
 	mux.HandleFunc("GET /api/v1/audit", h.listAuditLog)
 

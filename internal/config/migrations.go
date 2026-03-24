@@ -155,6 +155,59 @@ CREATE INDEX IF NOT EXISTS idx_audit_log_id ON audit_log(id DESC);
 `,
 	},
 	{
+		name: "005_dns_hosts_and_feeds",
+		sql: `
+-- DNS host overrides: standalone hostname→IP records independent of device assignments.
+CREATE TABLE IF NOT EXISTS dns_hosts (
+	id          INTEGER PRIMARY KEY AUTOINCREMENT,
+	hostname    TEXT NOT NULL,
+	domain      TEXT NOT NULL DEFAULT '',
+	record_type TEXT NOT NULL DEFAULT 'A',
+	value       TEXT NOT NULL,
+	description TEXT NOT NULL DEFAULT '',
+	enabled     INTEGER NOT NULL DEFAULT 1,
+	created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+	UNIQUE(hostname, domain, record_type)
+);
+
+-- DNS feed subscriptions: blocklist feeds for ad/tracker/malware blocking.
+CREATE TABLE IF NOT EXISTS dns_feeds (
+	id           INTEGER PRIMARY KEY AUTOINCREMENT,
+	name         TEXT NOT NULL UNIQUE,
+	url          TEXT NOT NULL,
+	category     TEXT NOT NULL DEFAULT 'general',
+	enabled      INTEGER NOT NULL DEFAULT 0,
+	entry_count  INTEGER NOT NULL DEFAULT 0,
+	last_updated DATETIME,
+	update_interval_sec INTEGER NOT NULL DEFAULT 86400,
+	description  TEXT NOT NULL DEFAULT '',
+	created_at   DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+-- DNS block log: records blocked queries for the "recently blocked" UI.
+CREATE TABLE IF NOT EXISTS dns_block_log (
+	id         INTEGER PRIMARY KEY AUTOINCREMENT,
+	domain     TEXT NOT NULL,
+	client_ip  TEXT NOT NULL DEFAULT '',
+	feed_name  TEXT NOT NULL DEFAULT '',
+	blocked_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_dns_block_log_domain ON dns_block_log(domain);
+CREATE INDEX IF NOT EXISTS idx_dns_block_log_time ON dns_block_log(blocked_at DESC);
+
+-- Seed default feed sources (disabled by default — user opts in).
+INSERT OR IGNORE INTO dns_feeds (name, url, category, description) VALUES
+	('stevenblack-unified', 'https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts', 'ads+malware', 'StevenBlack unified hosts — ads, malware, fakenews'),
+	('oisd-small', 'https://small.oisd.nl/domainswildcard', 'ads', 'OISD small — balanced ad blocking with low false positives'),
+	('oisd-big', 'https://big.oisd.nl/domainswildcard', 'ads+tracking', 'OISD big — aggressive ad + tracker blocking'),
+	('hagezi-light', 'https://raw.githubusercontent.com/hagezi/dns-blocklists/main/domains/light.txt', 'ads', 'Hagezi light — minimal blocking, very few false positives'),
+	('hagezi-normal', 'https://raw.githubusercontent.com/hagezi/dns-blocklists/main/domains/multi.txt', 'ads+tracking', 'Hagezi normal — recommended balance'),
+	('hagezi-pro', 'https://raw.githubusercontent.com/hagezi/dns-blocklists/main/domains/pro.txt', 'ads+tracking+privacy', 'Hagezi pro — aggressive, may break some sites'),
+	('phishing-army', 'https://phishing.army/download/phishing_army_blocklist.txt', 'phishing', 'Phishing Army — phishing domain blocklist'),
+	('malware-filter', 'https://malware-filter.gitlab.io/malware-filter/urlhaus-filter-domains.txt', 'malware', 'URLhaus malware domain filter');
+`,
+	},
+	{
 		name: "003_content_filter_fk_note",
 		sql: `
 -- M-DB7: content_filters.zone_id and profile_id lack FK constraints.

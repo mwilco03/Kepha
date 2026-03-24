@@ -73,6 +73,16 @@ func (d *Dnsmasq) GenerateConfig() error {
 		return fmt.Errorf("write static-leases.conf: %w", err)
 	}
 
+	// DNS host overrides (manual A/AAAA/CNAME entries).
+	dnsHosts, _ := d.store.ListDNSHosts()
+	if len(dnsHosts) > 0 {
+		hostOverrides := d.buildHostOverrides(dnsHosts)
+		overridePath := filepath.Join(d.confDir, "host-overrides.conf")
+		if err := os.WriteFile(overridePath, []byte(hostOverrides), 0o640); err != nil {
+			return fmt.Errorf("write host-overrides.conf: %w", err)
+		}
+	}
+
 	slog.Info("dnsmasq config generated", "path", confPath)
 	return nil
 }
@@ -205,6 +215,7 @@ func (d *Dnsmasq) buildMainConfig(zones []model.Zone) string {
 	b.WriteString(fmt.Sprintf("domain=%s\n", localDomain))
 	b.WriteString("expand-hosts\n")
 	b.WriteString(fmt.Sprintf("conf-file=%s\n", filepath.Join(d.confDir, "static-leases.conf")))
+	b.WriteString(fmt.Sprintf("conf-file=%s\n", filepath.Join(d.confDir, "host-overrides.conf")))
 	b.WriteString("\n")
 
 	// PXE boot support — chainload iPXE for BIOS and UEFI clients.
@@ -277,6 +288,38 @@ func (d *Dnsmasq) buildStaticLeases(devices []model.DeviceAssignment) string {
 		} else if dev.IP != "" && dev.Hostname != "" {
 			// DNS-only entry (no MAC for static lease).
 			b.WriteString(fmt.Sprintf("address=/%s.%s/%s\n", dev.Hostname, d.LocalDomain, dev.IP))
+		}
+	}
+
+	return b.String()
+}
+
+// buildHostOverrides generates dnsmasq address= and cname= directives from DNS host overrides.
+func (d *Dnsmasq) buildHostOverrides(hosts []config.DNSHost) string {
+	var b strings.Builder
+	b.WriteString("# Gatekeeper DNS host overrides\n")
+	b.WriteString("# DO NOT EDIT — managed by gatekeeperd\n\n")
+
+	for _, h := range hosts {
+		if !h.Enabled {
+			continue
+		}
+		fqdn := h.Hostname
+		if h.Domain != "" {
+			fqdn = h.Hostname + "." + h.Domain
+		} else if d.LocalDomain != "" {
+			fqdn = h.Hostname + "." + d.LocalDomain
+		}
+		switch h.RecordType {
+		case "A", "AAAA":
+			// address=/hostname.domain/IP
+			b.WriteString(fmt.Sprintf("address=/%s/%s\n", fqdn, h.Value))
+		case "CNAME":
+			// cname=alias,target
+			b.WriteString(fmt.Sprintf("cname=%s,%s\n", fqdn, h.Value))
+		case "ALLOW":
+			// Passthrough — domain explicitly allowed (not blocked by feeds).
+			// No dnsmasq directive needed; the filter engine checks this.
 		}
 	}
 
