@@ -135,6 +135,7 @@ Features needed for basic competitive parity with pfSense/GL.iNet.
 | **OpenVPN client** | Many VPN providers still require it | Medium |
 | **NAT reflection (hairpin)** | Needed for accessing port-forwards from inside | Small |
 | **1:1 NAT** | Required for server hosting scenarios | Small |
+| **Internet exposure safety system** | Any feature that exposes internal services to the public internet (DDNS, port forward, split DNS with public names) must trigger multi-step confirmation with security checklist: "Is auth configured? Is the service patched? Rate limiting on?" Suggest VPN as alternative. Dashboard warning badge when any exposure is active. Audit log tags with `internet_exposure`. Never auto-enable. | Medium |
 | **Config history GUI** | Commit/rollback + diff viewer in web UI | Medium |
 | **DNS host overrides** | Standalone hostname→IP table (A/AAAA/CNAME) independent of device assignments. Schema + API + web UI. "nas.home → 192.168.1.100" without creating a device. pfSense's most-used DNS feature. | Medium |
 | **DNS feed management** | Subscribe to blocklists (StevenBlack, OISD, hagezi, etc.), enable/disable per feed, auto-update on schedule | Medium |
