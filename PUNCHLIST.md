@@ -1,9 +1,9 @@
 # Gatekeeper Punchlist
 
 **Goal:** Production-ready network firewall appliance deployment.
-**Status:** CLOSED — 148/148 items resolved. 16/16 packages pass.
-**Updated:** 2026-03-22
-**Total commits:** 251
+**Status:** REOPENED — 148/148 original + 8 test fixes resolved. 55 new frontend findings from 6-agent audit.
+**Updated:** 2026-03-24
+**Total commits:** 255
 **Dependabot:** Active (6 PRs for dependency updates)
 **OpenAPI:** 103/103 endpoints documented (100%)
 **Smoke test:** 16/16 PASS — health, readiness, auth, zones, nft chains (input/forward/output/NAT), bogon set, web UI, metrics, CLI, logs, ICMP, TLS
@@ -268,3 +268,100 @@ Tests expect old string/value formats after code improvements. Functionality ver
 
 - [x] **T7 — TestDropInGateway_Validate**: FIXED: Use `"not-an-ip"` for DNS validation. `0198c00`
 - [x] **T8 — TestMapVersionIncrement**: FIXED: Stub mode version tracking + standard CIDR notation. `0198c00`
+
+---
+
+## FRONTEND AUDIT FINDINGS (2026-03-24)
+
+Found by 6 parallel agents: Frontend Engineer, Frontend Developer, Accessibility Auditor, CSS & Design System Engineer, UX Designer, Web Performance Engineer.
+
+### CRITICAL — Security & Correctness (4 items)
+
+- [ ] **FE-C1 — CSRF tokens missing from WireGuard fetch() calls**: `getHeaders()` in `wireguard.html:66-69` does not include `X-CSRF-Token`. All POST/DELETE WireGuard operations fail with 403 when CSRF is enforced. Fix: read `gk_csrf` cookie in `getHeaders()`.
+- [ ] **FE-C2 — CSRF cookie leaks session token**: `gk_csrf` cookie (JS-readable) contains the same value as `gk_session` (HttpOnly). Any XSS grants full session hijacking. Fix: derive CSRF token as `HMAC(session, "csrf")` in `web.go:567-591`.
+- [ ] **FE-C3 — render() writes partial HTML on template error**: `web.go:756-762` writes directly to ResponseWriter. Mid-render failure sends broken HTML with 200 status. Fix: buffer into `bytes.Buffer`, write only on success.
+- [ ] **FE-C4 — No commit/rollback UI in web interface**: `config.html` shows revision history but has no Commit button, no Rollback button, no Confirm countdown. Core admin workflow requires CLI/curl. Fix: add commit form, rollback buttons per revision, confirm timer banner.
+
+### CRITICAL — Accessibility (5 items)
+
+- [ ] **FE-C5 — Focus indicators destroyed on all inputs**: `_base.html:53` — `outline: none` with only subtle border-color change. WCAG 2.4.7 failure. Fix: `input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }`.
+- [ ] **FE-C6 — No focus styles on buttons or links**: No `:focus` or `:focus-visible` rule exists for `button`, `.btn`, `a`, or `nav a`. Fix: add `focus-visible` rules for all interactive elements.
+- [ ] **FE-C7 — No skip-to-content link**: 12 nav links before content. WCAG 2.4.1 failure. Fix: add visually-hidden skip link as first child of `<body>`, add `id="main-content"` to content wrapper.
+- [ ] **FE-C8 — No `<main>` landmark on any page**: All pages use `<div class="container">`. WCAG 1.3.1 failure. Fix: change to `<main class="container">` on all 13 authenticated templates.
+- [ ] **FE-C9 — WireGuard modal: no focus trap, no Escape key, no focus return**: `wireguard.html:51-59`. WCAG 2.4.3 failure. Fix: add keydown Escape listener, implement focus trap, store/restore trigger focus.
+
+### HIGH — Accessibility (10 items)
+
+- [ ] **FE-H1 — WireGuard form labels not associated**: `wireguard.html:26-36` — `<label>` elements missing `for` attribute. Screen readers announce unlabeled inputs. Fix: add `for="add-pubkey"`, `for="add-allowed"`, `for="add-name"`.
+- [ ] **FE-H2 — Tables lack `scope="col"` on `<th>`**: All 10+ tables across all templates. Screen readers can't associate headers with data cells. Fix: add `scope="col"` to every `<th>`.
+- [ ] **FE-H3 — Tables lack `<caption>` elements**: No table has a caption or `aria-label`. Fix: add `<caption>` to each table describing its content.
+- [ ] **FE-H4 — Firewall tabs missing `aria-controls`, `role="tabpanel"`, wrong tabindex**: `firewall.html:26-30,32-90`. Inactive tabs should have `tabindex="-1"`. Panels need `role="tabpanel"` and `aria-labelledby`. Fix: complete WAI-ARIA tabs pattern.
+- [ ] **FE-H5 — Login error not announced to screen readers**: `login.html:19` — error div has no `role="alert"`. Fix: add `role="alert"` and `aria-describedby` on the input.
+- [ ] **FE-H6 — Assign result div has no `aria-live`**: `assign.html:34` — htmx-injected content not announced. Fix: add `aria-live="polite" role="status"`.
+- [ ] **FE-H7 — WireGuard status messages not announced**: `wireguard.html:40` — `#status-msg` has no `aria-live`. Fix: add `aria-live="polite" role="status"`.
+- [ ] **FE-H8 — Service enable/disable buttons lack context**: `services.html:30-32` — buttons say "Enable"/"Disable" with no service name. Fix: add `aria-label="Disable {{.DisplayName}}"`.
+- [ ] **FE-H9 — WireGuard dynamic QR/Delete buttons lack accessible names**: `wireguard.html:109-118` (JS) — buttons say "QR"/"Delete" with no peer context. Fix: add `aria-label` with peer name.
+- [ ] **FE-H10 — Badge contrast fails WCAG AA in dark mode**: `_base.html:43-46` — green `#4ade80` on computed `#243f30` ≈ 3.2:1, yellow ≈ 4.0:1. Needs 4.5:1. Fix: lighten badge text or darken badge backgrounds.
+
+### HIGH — Performance (3 items)
+
+- [ ] **FE-H11 — No cache headers on static assets**: `web.go:72` — `embed.FS` FileServer has no `Cache-Control`/`ETag`. 106KB re-downloaded every nav. Fix: wrap with middleware setting `Cache-Control: public, max-age=3600`.
+- [ ] **FE-H12 — Render-blocking script in `<head>`**: `_base.html:4` — `<script src="/static/htmx.min.js">` without `defer`. Blocks DOM parsing. Fix: add `defer`.
+- [ ] **FE-H13 — No response compression**: No gzip/brotli middleware anywhere. 60-70% transfer waste. Fix: add gzip middleware.
+
+### HIGH — UX (4 items)
+
+- [ ] **FE-H14 — Assign form shows raw JSON on success/error**: `assign.html:11` — API returns JSON, htmx swaps it as plain text. Fix: return HTML partials from assign endpoint, or add JS error handler.
+- [ ] **FE-H15 — Services page reloads on error with no feedback**: `services.html:30,32` — `location.reload()` fires regardless of success/failure. Fix: check `event.detail.successful` before reload.
+- [ ] **FE-H16 — 401 silently returns empty peers**: `wireguard.html:81` — expired session shows "No peers" instead of redirecting to login. Fix: redirect to `/login` on 401.
+- [ ] **FE-H17 — Nav collapses into unusable word-wrap on mobile**: 12 links in flat flex row, touch targets ~24x20px. Fix: hamburger menu or collapsible sidebar on mobile.
+
+### MEDIUM — CSS & Architecture (10 items)
+
+- [ ] **FE-M1 — 3.5KB CSS inline (uncacheable) + near-empty external file**: `_base.html:13-59` has all base CSS inline; `style.css` is 17 lines. Fix: consolidate into `style.css`.
+- [ ] **FE-M2 — 18 inline `style` attributes across templates**: Creates parallel styling system, defeats CSP. Fix: extract into named CSS classes.
+- [ ] **FE-M3 — CSP allows `unsafe-inline` for scripts and styles**: `web.go:441`. Fix: move inline scripts to external `.js` files, use nonce-based CSP.
+- [ ] **FE-M4 — `class="dark"` on `<html>` is dead code**: All templates have it, no CSS targets it. Theme is `prefers-color-scheme` only. Fix: remove or implement toggle.
+- [ ] **FE-M5 — `--fg2` on `--bg2` contrast ~3.7:1**: Muted text on card/table backgrounds fails 4.5:1. Fix: lighten `--fg2` to `#b0bfd0`.
+- [ ] **FE-M6 — Badge backgrounds use raw `rgba()` that don't adapt to light mode**: `_base.html:43-46`. Fix: define badge background tokens per theme.
+- [ ] **FE-M7 — No `prefers-reduced-motion` handling**: Transitions on cards/inputs with no motion override. Fix: add `@media (prefers-reduced-motion: reduce)`.
+- [ ] **FE-M8 — Tables overflow on mobile with no scroll wrapper**: Fix: wrap tables in `overflow-x: auto` container.
+- [ ] **FE-M9 — No spacing/typography tokens**: 30+ raw `rem`/`px` values with no scale. Fix: define spacing token scale.
+- [ ] **FE-M10 — Button hover uses `opacity:0.9`; no `:active` state**: Fix: use `filter:brightness(0.9)` for hover, `transform:scale(0.98)` for active.
+
+### MEDIUM — UX & Functionality (9 items)
+
+- [ ] **FE-M11 — Nav lacks grouping — 11 flat items**: Violates 5-7 item maximum. "Assign" is a verb among nouns. Fix: group into sidebar categories (Network, Security, System).
+- [ ] **FE-M12 — Delete Peer uses `confirm()` with truncated key**: Fix: styled modal with peer name, consequence text, action-specific buttons.
+- [ ] **FE-M13 — Prune Stale sends `max_age_seconds:0` with no confirmation**: Potentially bulk-destructive. Fix: add confirmation dialog, show which peers will be pruned.
+- [ ] **FE-M14 — Config page JSON export has no controls**: No copy, no download, no collapse, `overflow-y` missing on `<pre>`. Fix: add copy/download buttons, `overflow-y:auto`.
+- [ ] **FE-M15 — Dashboard duplicates Zones/Leases tables without adding value**: Fix: replace with status indicators, recent activity, quick actions.
+- [ ] **FE-M16 — Tables have no pagination, sorting, or filtering**: Fix: add client-side sort, search filter for tables with 20+ rows.
+- [ ] **FE-M17 — Inconsistent empty states across pages**: Some use `.empty`, some `.text-muted`, Dashboard hides section entirely. Fix: standardize with `.empty` class + action link.
+- [ ] **FE-M18 — Logout is a GET link with no confirmation**: Prefetchable, no undo. Fix: change to POST form.
+- [ ] **FE-M19 — `Secure:true` on cookies breaks HTTP deployments**: `web.go:576,588`. Fix: set `Secure: r.TLS != nil`.
+
+### LOW (10 items)
+
+- [ ] **FE-L1 — Trust badge template duplicated 4x**: `dashboard.html`, `zones.html`, `zone_detail.html`, `firewall.html`. Fix: extract `{{define "trust-badge"}}`.
+- [ ] **FE-L2 — Policy rules table duplicated between `policies.html` and `firewall.html`**: Fix: extract `{{define "policy-table"}}`.
+- [ ] **FE-L3 — Dead `apiKey` variable in `wireguard.html:64`**: Never set, never used. Fix: remove.
+- [ ] **FE-L4 — `showStatus` setTimeout collision on rapid calls**: Fix: store timeout ID, `clearTimeout` before setting new.
+- [ ] **FE-L5 — Heading hierarchy skips (`h1` → `h3`) on zones/services**: Fix: use `h2` in cards.
+- [ ] **FE-L6 — Zone card links produce verbose screen reader announcements**: Fix: add `aria-label` with concise text.
+- [ ] **FE-L7 — No favicon — 404 on every page load**: Fix: `<link rel="icon" href="data:,">`.
+- [ ] **FE-L8 — Placeholder text as sole format hint (disappears on input)**: Fix: add persistent `aria-describedby` hint text.
+- [ ] **FE-L9 — `<pre>` has `overflow-x:auto` but no `overflow-y:auto`**: Config/firewall code blocks clip vertically. Fix: add `overflow-y:auto`.
+- [ ] **FE-L10 — Login rate limit returns unstyled plain text**: `web.go:528`. Fix: render login template with rate-limit error.
+
+### FRONTEND AUDIT SUMMARY
+
+| Severity | Count |
+|----------|-------|
+| Critical | 9 |
+| High | 17 |
+| Medium | 19 |
+| Low | 10 |
+| **Total** | **55** |
+
+**Audited by:** Frontend Engineer, Frontend Developer, Accessibility Auditor, CSS & Design System Engineer, UX Designer, Web Performance Engineer.
