@@ -38,7 +38,7 @@ jobs:
             -C "${{ github.workspace }}" scripts/install-alpine.sh scripts/install.sh \
             -C "${{ github.workspace }}" init/gatekeeperd.openrc init/gatekeeperd.service
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ${{ env.ARTIFACT_NAME }}
           path: ${{ env.ARTIFACT_NAME }}.tar.gz
